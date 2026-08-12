@@ -2,33 +2,59 @@
 
 ## Product shape
 
-SpaceLens is **not** primarily a GUI application. It is a native storage-analysis
-engine with multiple front ends:
+SpaceLens is a native C++ storage intelligence engine with multiple front ends. It
+helps people and software **find, understand, inspect, and plan** storage cleanup;
+it is not a filesystem mutation service.
 
 ```text
-            spacelens_core
-           /              \
-          /                \
-   spacelens (CLI)     SpaceLens (GUI)
-   agent / scripts     Qt Widgets desktop
+                 spacelens_core
+                /              \
+               /                \
+      spacelens (CLI)       SpaceLens (GUI)
+      humans / scripts /    human inspection
+      AI agents             and review planning
+      read-only
 ```
 
-The **CLI is a first-class product interface**. AI coding agents (Claude Code,
-Codex, OpenCode, etc.) and automation scripts are expected to drive SpaceLens
-from the terminal using deterministic, machine-readable output.
+The **CLI is a first-class product interface**. AI coding agents and automation
+scripts can use deterministic, machine-readable output without receiving a file
+delete or file-move capability. The GUI is an optional interactive surface over
+the same core snapshot and analysis types.
 
-The GUI is an optional interactive surface over the same core.
+## Scope: safety + storage intelligence milestone
 
-## Scope (current)
+This milestone defines the following product shape. Where executable wiring is
+not yet complete, the sections below describe the intended architecture rather
+than claiming a shipped feature.
 
-Phases covered here:
+- Native recursive scanning with logical file sizes, recursive aggregation,
+  bounded Top-K queries, cancellation, and progress reporting.
+- Immutable scan snapshots that can be inspected by the CLI, GUI, and analysis
+  layers without each front end re-enumerating the filesystem.
+- Deterministic, explainable **classification**: what an item appears to be,
+  with category, confidence, rule identifier, and reason.
+- Deterministic **location safety policy**: whether a path is Protected,
+  Sensitive, Ordinary, or Unknown. Location policy is independent of
+  classification and reclaimability.
+- Write-based **activity summaries** for files and directories, including
+  descendant activity for directories and bounded age/count/byte summaries.
+- **Read-only reclaim analysis** that combines size, activity evidence,
+  classification, reclaimability, and location policy to prioritize human review.
+- An in-memory **Cleanup Review** queue for planning and reporting. It does not
+  delete, move, or otherwise mutate filesystem content.
+- An agent-safe CLI contract with `capabilities`, `scan`, `top`, and `find`
+  query surfaces, filters, versioned JSON output, and explicit read-only
+  capability reporting.
 
-1. Functional scanner (enumeration, aggregation, Top-K, cancellation)
-2. CLI queries (`scan`, `top`, `--json`, exit codes)
-3. GUI shell wired to the same scanner
+The current checked-out CLI wires `scan`, `top`, `help`, and `version`. The
+`capabilities` / `find` surfaces and the analysis filters/schema additions are
+documented here as the milestone target contract unless the corresponding
+implementation is present in the build.
 
-Deferred: AI inside the product, SQLite history, NTFS MFT fast path, duplicates,
-persistent index / watch mode, automatic deletion.
+Deferred work includes AI inside the product, persistent scan history or SQLite,
+a persistent index and watch mode, an NTFS MFT fast path, duplicate detection,
+and any automatic deletion or movement. A future mutation service, if approved,
+must be a separately permissioned surface rather than an ordinary CLI verb.
 
 ## Layered architecture
 
@@ -37,19 +63,110 @@ cli / gui
     ↓
 app (GUI-only adapters, e.g. Qt ScanSession)
     ↓
-core  (ScanEngine, DirectoryTree, TopK, queries, formatting helpers)
+core (scan snapshots, queries, classification, policy, activity, review analysis)
     ↓
-platform/windows  (IFileEnumerator, FindHandle, Explorer helpers)
+platform/windows (IFileEnumerator, FindHandle, Explorer helpers)
 ```
 
 | Layer | Responsibility | Forbidden |
 |-------|----------------|-----------|
-| **core** | Scan algorithms, data model, Top-K, size formatting, JSON-friendly result shaping | Qt types, interactive prompts, stdout policy |
-| **platform** | Win32 enumeration and OS integration | Qt, CLI argument parsing |
-| **cli** | argv parsing, human/JSON rendering, exit codes, Ctrl+C → stop_token | GUI widgets |
-| **gui/app** | Qt windows, threads↔signals bridge | Scan algorithms |
+| **core** | Scan algorithms, owned data model, queries, classification, location policy, activity summaries, read-only reclaim analysis, cleanup-review values, size formatting | Qt types, interactive prompts, stdout policy, filesystem mutation |
+| **platform** | Win32 enumeration, file metadata, path/Explorer integration | Qt, CLI argument parsing, shell-command construction |
+| **cli** | argv parsing, capability declaration, human/JSON rendering, filters, exit codes, Ctrl+C → `stop_token` | GUI widgets, delete/move/execute commands |
+| **gui/app** | Qt windows, models/views, review planning, threads↔signals bridge | Scan algorithms, direct ownership of Win32 enumeration |
 
-Dependency direction is strictly **upward only**: core never includes CLI or GUI headers.
+Dependency direction is strictly **upward only**: core never includes CLI or GUI
+headers. Analysis results are data; neither an AI explanation nor a UI label can
+override the core location policy.
+
+## Safety and storage-intelligence layers
+
+The analysis pipeline keeps these concepts separate:
+
+```text
+scan snapshot at T1
+        ↓
+classification       what the item looks like
+        +
+location policy      where the item is and how cautious to be
+        +
+activity summary     deterministic write-based evidence
+        ↓
+read-only reclaim analysis   review priority, not permission
+        ↓
+Cleanup Review       human planning queue, not filesystem action
+```
+
+### Classification
+
+Classification is deterministic and explainable. A `Classification` contains a
+storage category, confidence, rule identifier, and reason. Typical categories
+include build artifacts, dependency directories, package caches, IDE caches, log
+or temporary data, application data, system data, user data, and Unknown.
+Classification describes *what* data appears to be; it does not say that the data
+may be deleted.
+
+### Location safety policy
+
+Location policy is deterministic, core-owned, and independent of AI output and
+classification. The intended policy classes are:
+
+| Class | Typical examples | Review posture |
+|-------|------------------|----------------|
+| **Protected** | Windows, Program Files, recovery/system volumes, drive roots | Do not manage deletion |
+| **Sensitive** | User profile roots, AppData, critical application configuration | Extra warnings and conservative review |
+| **Ordinary** | Typical project folders and downloaded content under user trees | Eligible for review workflows |
+| **Unknown** | Unrecognized layouts | Conservative treatment |
+
+`AppData` needs nuanced treatment; it is not a blanket deletion area or a blanket
+bulk-protected area. This milestone uses location policy for warnings, filtering,
+and candidate scoring only. It does not provide a protection override checkbox.
+
+### Activity summary
+
+A file uses its last-write time as its primary activity evidence. A directory is
+summarized from the descendants observed during the scan rather than relying only
+on the directory object's timestamp. The intended directory summary contains:
+
+- newest descendant modification time;
+- oldest descendant modification time when useful; and
+- counts and logical bytes modified within 30, 90, 180, and 365 days relative to
+  the analysis time.
+
+The summary is aggregated bottom-up in the same pass as recursive sizes. Access
+times may be retained as advisory metadata, but LastAccessTime is not proof of
+use and cannot alone produce a Strong candidate. Incomplete or inaccessible
+subtrees must remain visible as incomplete/unknown evidence rather than being
+silently treated as inactive.
+
+### Read-only reclaim analysis
+
+Reclaim analysis is a read-only calculation for human review prioritization. A
+candidate combines:
+
+```text
+logical size
+  + write/descendant-write inactivity evidence
+  + deterministic classification and reclaimability
+  + deterministic location safety policy
+```
+
+The result may expose `reclaimability` (`LikelyRegenerable`,
+`PossiblyRegenerable`, `Unknown`, or `NotApplicable`) and a candidate strength
+such as `None`, `ReviewOnly`, `Moderate`, or `Strong`. Protected locations remain
+non-actionable regardless of age or size. Old user data remains Review Only or
+Unknown reclaimability; age alone is never a deletion decision.
+
+No layer emits or stores `safe_to_delete`. That field is intentionally absent.
+
+### Cleanup Review
+
+`CleanupReview` owns value-type `CleanupCandidate` records for a human planning
+queue. A selected record retains the path, item kind, size at selection, write
+time, attributes, classification, and reason so a future action layer could
+revalidate it. The review queue currently supports planning operations such as
+add, remove from review, clear, and copy a report. It has no filesystem delete or
+move operation.
 
 ## Targets
 
@@ -68,96 +185,183 @@ Building the CLI must not require a running GUI. Qt is required only when
 
 ## Core types and ownership
 
-- **`DirectoryTree`** — owns all directory/file records for one scan; index-based parent/child links; reconstructs paths on demand.
+- **`DirectoryTree`** — owns all directory/file records for one scan; uses
+  index-based parent/child links and reconstructs paths on demand.
 - **`FileEntry` / `DirectoryNode`** — value records inside the tree.
+- **`ScanResult` / `ScanProgress` / `ScanOptions`** — plain C++ value types shared
+  by CLI and GUI.
+- **`Classification`** — deterministic category/confidence/rule/reason value.
+- **`LocationSafety`** — deterministic location-policy value.
+- **`ReclaimCandidate` / `ReclaimQuery`** — read-only analysis values; neither
+  carries mutation authority.
+- **`CleanupReview` / `CleanupCandidate`** — an owning in-memory review queue of
+  candidate values, not owners of filesystem objects.
 - **`IFileEnumerator`** — platform-neutral listing; tests use fakes.
-- **`ScanEngine`** — synchronous recursive scan; accepts `std::stop_token` and throttled progress callback; **no Qt**.
-- **`ScanResult` / `ScanProgress` / `ScanOptions`** — plain C++ value types shared by CLI and GUI.
+- **`ScanEngine`** — synchronous recursive scan; accepts `std::stop_token` and a
+  throttled progress callback; contains no Qt.
 - **`TopKCollector`** — bounded min-heap, O(N log K).
 
 GUI-only:
 
-- **`ScanSession`** (Qt) — owns `std::jthread`, marshals progress/completion to the GUI thread.
+- **`ScanSession`** — owns `std::jthread`, requests cooperative cancellation, and
+  marshals progress/completion to the GUI thread.
+- A Qt model/view may reference the currently published snapshot, but it does
+  not own or mutate the core scan records through raw pointers.
 
 CLI-only:
 
-- argument parsing, stdout/stderr policy, process exit codes, console Ctrl+C → `std::stop_source`.
+- argument parsing, capability/schema declaration, filter validation,
+  stdout/stderr policy, process exit codes, and console Ctrl+C →
+  `std::stop_source`.
 
 ## CLI design principles (agent-oriented)
 
-1. **No interactive prompts** unless a future flag explicitly requests them.
-2. **stdout** = primary result (human table or JSON).
-3. **stderr** = diagnostics, progress (optional), errors.
-4. **`--json`** = deterministic machine output; raw `size_bytes`; stable field names.
-5. **Exit codes** distinguish success, usage errors, inaccessible root, scan failure, cancellation.
-6. Commands are small verbs (`scan`, `top`, …) so agents can chain queries.
-7. Do **not** embed an LLM in the CLI; external agents supply reasoning.
+1. The CLI is read-only. It may enumerate and analyze; it must not delete, move,
+   rename, purge, execute shell commands, or turn model output into commands.
+2. No interactive prompts are required for query commands.
+3. **stdout** is the primary result (human table or JSON).
+4. **stderr** contains diagnostics, optional progress, and errors.
+5. `--json` is deterministic machine output with stable field names and raw
+   `size_bytes` values.
+6. JSON output carries an integer `schema_version` so agents can validate the
+   contract before consuming it.
+7. `capabilities --json` explicitly reports `filesystem_mutation: false`.
+8. Commands remain small verbs (`scan`, `top`, `find`) so agents can compose
+   queries without an embedded LLM.
 
-### Initial commands
+### Command contract
+
+The milestone target surface is:
 
 ```text
+spacelens capabilities [--json]
 spacelens scan <path> [--json]
 spacelens top  <path> (--files|--dirs) [--limit N] [--json]
+spacelens find <path> [--min-size SIZE] [--older-than DAYS]
+                    [--category CATEGORY] [--files|--dirs]
+                    [--limit N] [--json]
 spacelens help
 spacelens version
 ```
 
-Future (not implemented yet): `--min-size`, `--ext`, `index`, `query`, watch mode.
+`scan`, `top`, `help`, and `version` are the currently wired commands in the
+checked-out CLI. `capabilities`, `find`, and the analysis filters are the
+intended storage-intelligence extension; they must be treated as unavailable
+until the executable advertises them.
 
-### JSON contract (stable fields)
+`find` is a read-only query over a scan snapshot. It returns matching files and/or
+directories with analysis fields such as classification, location safety,
+activity evidence, reclaimability, candidate strength, and an explanation. It
+does not add items to a review queue unless a separate human UI operation does
+so, and it never mutates the filesystem.
 
-Common envelope:
+### Filters
+
+| Filter | Meaning |
+|--------|---------|
+| `--min-size SIZE` | Minimum logical size. JSON reports bytes; the input unit rules are below. |
+| `--older-than DAYS` | Require write-based activity older than the requested age. Directory age uses newest descendant write activity. |
+| `--category CATEGORY` | Restrict deterministic storage classification, for example `build-artifact`, `package-cache`, or `user-data`. |
+| `--files` | Include files; with `top`, select largest files. |
+| `--dirs` | Include directories; with `top`, select largest directories. |
+| `--limit N` | Bound the number of returned results. |
+| `--json` | Emit the machine-readable result on stdout. |
+
+Filters constrain observation or analysis only. They do not change protected
+location policy and do not turn a candidate into an authorization.
+
+### Size units
+
+Human size input uses binary powers of 1024:
+
+```text
+1 KB = 1 KiB = 1024 B
+1 MB = 1024 KB
+1 GB = 1024 MB
+1 TB = 1024 GB
+```
+
+Accepted forms are `B`, `K`/`KB`/`KiB`, `M`/`MB`/`MiB`,
+`G`/`GB`/`GiB`, and `T`/`TB`/`TiB`, with optional decimal fractions such as
+`1.5 GB`. Decimal SI units based on 1000 are intentionally not accepted. JSON
+always uses integer logical bytes in fields named `size_bytes`.
+
+### JSON schema and capabilities
+
+Machine-readable result envelopes use an integer `schema_version`. The milestone
+contract starts at version `1`; incompatible field or semantic changes require a
+new version. Additive fields must not change the meaning of existing fields.
+Human text is not part of the JSON schema.
+
+A capabilities response is intended to be shaped like this:
 
 ```json
 {
-  "ok": true,
-  "command": "top",
-  "root": "C:\\Users",
-  "files_scanned": 182391,
-  "directories_scanned": 18432,
-  "bytes_scanned": 1234567890,
-  "elapsed_ms": 8241,
-  "access_denied": 4,
-  "reparse_skipped": 3,
-  "other_errors": 0,
-  "state": "completed",
-  "results": [ { "path": "...", "size_bytes": 0 } ]
+  "schema_version": 1,
+  "product": "spacelens",
+  "read_only": true,
+  "filesystem_mutation": false,
+  "commands": ["capabilities", "scan", "top", "find", "help", "version"],
+  "filters": ["--min-size", "--older-than", "--category", "--files", "--dirs", "--limit"],
+  "size_units": "binary_1024"
 }
 ```
 
-- Sizes in JSON are always integer **bytes** (`size_bytes`).
-- Human mode may pretty-print with KB/MB/GB via `SizeFormatter`.
-- Decorative text never appears on JSON stdout.
+Scan and query responses retain the existing common counters where applicable:
+`ok`, `command`, `root`, `files_scanned`, `directories_scanned`,
+`bytes_scanned`, `elapsed_ms`, `access_denied`, `reparse_skipped`,
+`other_errors`, `state`, and command-specific `results`. Query result sizes are
+always integer `size_bytes`. Analysis results may add classification, policy,
+activity, and reclaim fields, but **must not add `safe_to_delete`**.
 
 ### Exit codes
 
 | Code | Meaning |
 |-----:|---------|
-| 0 | Success (completed scan/query) |
-| 2 | Invalid arguments / usage |
-| 3 | Inaccessible or missing root path |
-| 4 | Scan failed |
-| 5 | Cancelled (Ctrl+C / stop) |
+| 0 | Success, including a completed query with no matches |
 | 1 | Unexpected internal error |
+| 2 | Invalid arguments, unknown command, or unsupported filter |
+| 3 | Inaccessible or missing root path |
+| 4 | Scan or query failure |
+| 5 | Cancelled by Ctrl+C / stop request |
+
+## Mutation separation
+
+The ordinary CLI remains a read-only surface for agents, scripts, and humans.
+There are no delete, remove, `rm`, move, cleanup, purge, wipe, or execute
+commands, hidden aliases, generic shell execution, or automatic conversion of AI
+text into filesystem operations.
+
+The GUI may present inspection and Cleanup Review planning. Review actions such as
+open, reveal in Explorer, remove from review, clear review, and copy a report are
+not filesystem mutation. If destructive actions are ever approved, they belong in
+a separately permissioned maintenance executable/service or a clearly isolated
+human-authorized GUI path. That surface must revalidate every selected candidate
+against the filesystem and deterministic policy before acting.
 
 ## Memory model
 
-Index-based tree; leaf names only; full paths reconstructed. Avoids `shared_ptr`
-graphs and per-file absolute path duplication.
+The scan tree uses index-based ownership; leaf names only; full paths are
+reconstructed. This avoids `shared_ptr` graphs and per-file absolute path
+duplication. Published snapshots should be treated as immutable by readers and
+replaced as a whole for a new scan.
 
 ## Concurrency and cancellation
 
-- Core scan is synchronous + `stop_token` (easy to test).
+- Core scan is synchronous + `stop_token` and is straightforward to test.
 - GUI runs the engine on `std::jthread` via `ScanSession`.
-- CLI runs the engine on the main thread (or a worker) and maps console cancel to `stop_source`.
-- No global mutex held during filesystem I/O.
-- Progress is throttled (~100 ms) so consumers are not flooded.
+- CLI runs the engine on the main thread (or a worker) and maps console cancel to
+  `stop_source`.
+- No global mutex is held during filesystem I/O.
+- Progress is throttled (approximately 100 ms) so consumers are not flooded.
+- Worker code never touches Qt widgets. Results and progress cross into the GUI
+  through queued delivery on the GUI thread.
 
 ## Windows enumeration
 
 `FindFirstFileExW` + `FIND_FIRST_EX_LARGE_FETCH`, RAII `FindHandle` (`FindClose`).
 Default: **do not follow directory reparse points**. Access errors are non-fatal
-and counted.
+and counted. Future mutation code must never blindly traverse reparse points.
 
 ## Aggregation invariant
 
@@ -167,8 +371,9 @@ recursiveSize(dir) =
   + sum(recursiveSize(child directories))
 ```
 
-Root total equals the sum of every discovered file size exactly once (for fully
-scanned reachable content).
+Root total equals the sum of every discovered file size exactly once for fully
+scanned reachable content. Activity summaries use an analogous bottom-up
+aggregation over the descendants observed in the same snapshot.
 
 ## Future indexing (not implemented)
 
@@ -180,10 +385,13 @@ spacelens query ...
 spacelens index C:\ --watch
 ```
 
-without rewriting CLI/GUI. That implies: keep query surfaces on top of
-`ScanResult` / future `IndexStore` interfaces, not ad-hoc GUI models.
+without rewriting CLI/GUI. Query surfaces should sit on top of `ScanResult` and
+future `IndexStore` interfaces rather than ad-hoc GUI models. An index must retain
+the same safety distinctions and read-only agent boundary.
 
 ## Deferred
 
-AI product features, SQLite snapshots, MFT scanner, duplicates, deletion UX,
-persistent index. Keep interfaces replaceable; do not hard-wire GUI types into core.
+AI product features, SQLite snapshots, MFT scanning, duplicates, persistent
+indexing, watch mode, deletion UX, and mutation services remain deferred. Keep
+interfaces replaceable; do not hard-wire GUI types or filesystem authority into
+core analysis.

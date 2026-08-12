@@ -71,3 +71,59 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Ownership:** `MainWindow` owns `ScanSession` via `unique_ptr`. The session owns the worker thread and the latest `ScanResult` until the UI calls `takeResult()`.
 - **Lifetime:** Starting a scan spawns one worker. Cancel or destruction calls `request_stop()` then `join()`. Progress/completion are delivered with `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` so slots run on the GUI thread after the worker posts them.
 - **Bug prevented:** Scanning on the GUI thread (frozen UI), use-after-free if the window closes mid-scan, and cross-thread Qt widget access. Progress is throttled inside `ScanEngine` so the event queue is not flooded.
+
+## Cleanup candidate ownership
+
+- **Why used:** Cleanup Review is a planning queue, not a filesystem-operation owner.
+- **Ownership:** `CleanupReview` owns a `std::vector<CleanupCandidate>` by value. A candidate owns its path and copied selection metadata; it does not own a file handle, directory, or permission to mutate the filesystem.
+- **Lifetime:** A candidate remains valid until removed or the review queue is cleared. Its snapshot metadata is retained for future revalidation, not treated as current filesystem truth.
+- **Bug prevented:** Review state accidentally becoming delete authority, dangling references to scan entries, and hidden resource ownership in a UI queue.
+
+## Value types versus owning pointers
+
+- **Why used:** Scan records, classifications, policies, activity summaries, and reclaim results are ordinary data and should have explicit copy/move semantics.
+- **Ownership:** Prefer value types and containers for records. Use `std::unique_ptr` only when an object is exclusively owned, separately allocated, polymorphic, or has a lifetime that must be decoupled from its containing value. Do not introduce `shared_ptr` merely to connect tree records or UI selections.
+- **Lifetime:** A value lives with its owning snapshot/container; an owning pointer must make the owner and destruction boundary obvious.
+- **Bug prevented:** Accidental shared ownership, cycles, unclear destruction, and pointers that outlive the snapshot containing the data they reference.
+
+## Immutable scan snapshots
+
+- **Why used:** CLI, GUI, and analysis must reason about one consistent scan result instead of observing a tree while it is being built.
+- **Ownership:** The scan coordinator owns the current `ScanResult`; readers borrow const access or receive a copied/moved published snapshot. Publish a completed or cancelled snapshot as a whole and replace it for the next scan.
+- **Lifetime:** UI models and analysis results must not retain mutable references into a later scan. Refresh or translate selections when the published snapshot changes.
+- **Bug prevented:** Data races, mixed-scan totals, invalid indices after tree rebuilds, and views that display records from a destroyed result.
+
+## TOCTOU and future mutation gates
+
+- **Why used:** A scan is evidence at T1; a future action may run against a different filesystem state at T2.
+- **Ownership:** `CleanupCandidate` owns the path, item kind, size-at-selection, write time, attributes, and classification needed to request revalidation. A future mutation layer owns the revalidation decision, not the analysis layer or AI output.
+- **Lifetime:** Before any future action, recheck existence, item kind, reparse status, protected-location policy, expected parent, and material size/write-time changes. Reject stale or ambiguous candidates.
+- **Bug prevented:** Acting on a replaced path, traversing a newly introduced junction, deleting changed data, or trusting an old review selection as current authorization.
+
+## Path normalization for policy and review keys
+
+- **Why used:** Windows paths can vary by separator and trailing-slash spelling, while policy and duplicate-review checks need deterministic comparisons.
+- **Ownership:** `normalizePathForPolicy` returns an owning normalized string. Policy normalization is for classification/comparison; preserve the user/display path separately when presentation matters.
+- **Lifetime:** Normalize at policy boundaries and when deriving a case-insensitive review key. Do not store a non-owning view into temporary path text.
+- **Bug prevented:** Bypassing protected-root checks with alternate separators, duplicate review entries for equivalent spellings, and dangling path views.
+
+## Qt model/view ownership
+
+- **Why used:** Qt parent-child ownership is useful for widgets and models, but it must not replace core data ownership.
+- **Ownership:** A Qt parent owns its child `QObject`s. A view references its model; the model owns only its presentation state and either observes or receives a snapshot, while `DirectoryTree` remains owned by core/session state. Avoid raw owning pointers in item data.
+- **Lifetime:** Destroy or detach the model before its referenced snapshot is released, and reset the view when a new snapshot is published.
+- **Bug prevented:** Double deletion, views pointing at freed scan records, and accidental mutation of core data through UI pointers.
+
+## Worker-to-GUI handoff
+
+- **Why used:** Filesystem I/O and analysis must not block or touch the GUI thread.
+- **Ownership:** The worker owns only its operation-local values and publishes progress/result messages. The GUI thread owns widgets and applies queued updates.
+- **Lifetime:** Use queued delivery (`QMetaObject::invokeMethod(..., Qt::QueuedConnection)` or equivalent) and ensure session destruction requests stop and joins before session-owned state disappears.
+- **Bug prevented:** Cross-thread widget access, event-loop races, callbacks into destroyed windows, and completion handlers reading partially published results.
+
+## LastAccessTime is advisory
+
+- **Why used:** Windows last-access updates can be disabled, delayed, or caused by scanners and backup tools.
+- **Ownership:** Store LastAccessTime as optional/advisory metadata alongside write-based activity; it must not replace deterministic modification-time evidence.
+- **Lifetime:** Analysis may mention the value when known, but missing or surprising access time must remain unknown evidence rather than being normalized into "unused".
+- **Bug prevented:** Strong reclaim recommendations based only on an unreliable access timestamp and the false equation `old == unused == safe`.
