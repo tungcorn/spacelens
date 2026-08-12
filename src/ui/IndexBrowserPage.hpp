@@ -5,9 +5,13 @@
 #include "core/index/IndexCatalog.hpp"
 #include "core/index/IndexQuery.hpp"
 
+#include <QAbstractTableModel>
 #include <QWidget>
 
+#include <atomic>
+#include <mutex>
 #include <optional>
+#include <thread>
 #include <vector>
 
 class QListWidget;
@@ -18,11 +22,59 @@ class QPushButton;
 class QLineEdit;
 class QComboBox;
 class QSpinBox;
+class QTableView;
+class QButtonGroup;
+class QToolButton;
+class QShortcut;
+class QHBoxLayout;
+class QWidget;
 
 namespace spacelens {
 
-/// Indexed-roots browser: list/status/query/refresh/rebuild via core APIs only.
-/// No SQLite usage in this translation unit; no delete/move; no treemap.
+/// Qt model for indexed discovery hits (no QWidget-per-row).
+class IndexHitTableModel final : public QAbstractTableModel {
+    Q_OBJECT
+public:
+    enum Column {
+        ColName = 0,
+        ColSize,
+        ColType,
+        ColActivity,
+        ColClassification,
+        ColReclaim,
+        ColPath,
+        ColCount
+    };
+
+    explicit IndexHitTableModel(QObject* parent = nullptr);
+
+    void setHits(std::vector<IndexHit> hits, std::uint64_t indexAgeMs,
+                 std::string indexedAtIso);
+    void clear();
+
+    [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
+    [[nodiscard]] int columnCount(const QModelIndex& parent = {}) const override;
+    [[nodiscard]] QVariant data(const QModelIndex& index,
+                                int role = Qt::DisplayRole) const override;
+    [[nodiscard]] QVariant headerData(int section, Qt::Orientation orientation,
+                                      int role = Qt::DisplayRole) const override;
+
+    [[nodiscard]] const IndexHit* hitAt(int row) const;
+    [[nodiscard]] std::uint64_t indexAgeMs() const { return m_indexAgeMs; }
+    [[nodiscard]] const std::string& indexedAtIso() const
+    {
+        return m_indexedAtIso;
+    }
+
+private:
+    std::vector<IndexHit> m_hits;
+    std::uint64_t m_indexAgeMs = 0;
+    std::string m_indexedAtIso;
+};
+
+/// Indexed storage discovery: presets, search, filters, navigation, review.
+/// Qt calls core APIs only — no SQLite in this translation unit.
+/// No delete/move; filesystem_mutation remains false.
 class IndexBrowserPage final : public QWidget {
     Q_OBJECT
 
@@ -44,44 +96,78 @@ private slots:
     void onIndexNewRoot();
     void onCancelJob();
     void onHitSelectionChanged();
+    void onHitDoubleClicked(const QModelIndex& index);
+    void onHitsContextMenu(const QPoint& pos);
     void onAddToReview();
+    void onOpenSelected();
+    void onRevealSelected();
+    void onOpenFolderSelected();
+    void onCopyPath();
+    void onCopyDetails();
+    void onPresetClicked(int id);
+    void onBreadcrumbClicked(int segmentIndex);
     void onBuildFinished(spacelens::IndexBuildState state);
     void onRefreshFinished(spacelens::IndexRefreshOutcome outcome);
     void onSessionStatus(const QString& message);
+    void onQueryFinished(quint64 generation);
 
 private:
-    struct HitRow {
-        IndexHit hit;
-        std::uint64_t indexAgeMs = 0;
-        std::string indexedAtIso;
-    };
-
     void buildUi();
     void updateActionState();
     void clearHits();
     void updateInspector();
+    void updateRootHeader();
+    void updateBreadcrumb();
+    void applyPresetDefaults(IndexDiscoveryPreset preset);
+    [[nodiscard]] IndexQuerySpec buildQuerySpec() const;
     [[nodiscard]] std::optional<IndexRootSummary> selectedRoot() const;
-    [[nodiscard]] std::vector<HitRow> selectedHits() const;
+    [[nodiscard]] std::vector<int> selectedRows() const;
+    [[nodiscard]] std::vector<IndexHit> selectedHits() const;
     void setBusy(bool busy);
+    void browseInto(const std::wstring& path);
+    void focusSearch();
+    [[nodiscard]] bool ensurePathExists(const std::wstring& path,
+                                        QString* message) const;
+    void applyQueryResult(IndexQueryResult result, quint64 generation);
 
     CleanupReview& m_review;
     IndexSession* m_session = nullptr;
 
     std::vector<IndexRootSummary> m_roots;
-    std::vector<HitRow> m_hits;
     std::optional<IndexRootSummary> m_activeRoot;
+    std::wstring m_browsePath;  // empty = index root view
+    IndexDiscoveryPreset m_preset = IndexDiscoveryPreset::Largest;
+    bool m_sortUserOverride = false;
+
+    IndexHitTableModel* m_hitModel = nullptr;
+
+    // Async query worker (separate from build/refresh session).
+    std::jthread m_queryWorker;
+    std::mutex m_queryMutex;
+    std::atomic<quint64> m_queryGeneration{0};
+    std::optional<IndexQueryResult> m_pendingQueryResult;
+    bool m_queryRunning = false;
 
     QListWidget* m_rootsList = nullptr;
-    QListWidget* m_hitsList = nullptr;
+    QTableView* m_hitsView = nullptr;
     QTextEdit* m_inspector = nullptr;
     QLabel* m_rootMeta = nullptr;
     QLabel* m_queryMeta = nullptr;
+    QLabel* m_selectionMeta = nullptr;
+    QLabel* m_emptyLabel = nullptr;
+    QWidget* m_breadcrumbBar = nullptr;
+    QHBoxLayout* m_breadcrumbLayout = nullptr;
 
+    QButtonGroup* m_presetGroup = nullptr;
+    QLineEdit* m_searchEdit = nullptr;
     QComboBox* m_kindFilter = nullptr;
-    QLineEdit* m_minSizeFilter = nullptr;
+    QComboBox* m_minSizeFilter = nullptr;
+    QLineEdit* m_minSizeCustom = nullptr;
+    QComboBox* m_activityFilter = nullptr;
     QLineEdit* m_extFilter = nullptr;
     QComboBox* m_classFilter = nullptr;
     QComboBox* m_strengthFilter = nullptr;
+    QComboBox* m_sortFilter = nullptr;
     QSpinBox* m_limitSpin = nullptr;
 
     QPushButton* m_reloadButton = nullptr;
@@ -91,6 +177,9 @@ private:
     QPushButton* m_indexNewButton = nullptr;
     QPushButton* m_cancelButton = nullptr;
     QPushButton* m_addReviewButton = nullptr;
+    QPushButton* m_openButton = nullptr;
+    QPushButton* m_revealButton = nullptr;
+    QPushButton* m_copyPathButton = nullptr;
 };
 
 }  // namespace spacelens
