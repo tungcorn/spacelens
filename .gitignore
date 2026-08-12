@@ -1,0 +1,38 @@
+# Build
+/build/
+/out/
+/cmake-build-*/
+/.vs/
+/*.user
+/*.suo
+CMakeUserPresets.json
+
+# Qt / moc
+*.autosave
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Logs / local installs
+aqtinstall.log
+*.log
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Compiled
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.exp
