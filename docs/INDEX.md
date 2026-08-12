@@ -25,8 +25,9 @@ analyzed user data.
 - Auto-refresh on `query` (refresh is always explicit)
 - Creating or configuring the USN journal
 - Writing into the analyzed root
-- GUI polish, treemap, MCP, product AI, deletion/movement
+- Treemap / storage overview charts, MCP, product AI, deletion/movement
 - MFT-based initial scan (future)
+- Fuzzy/semantic search, watch mode, new USN optimizations
 
 ## Storage layout
 
@@ -168,24 +169,77 @@ Capabilities advertise:
 "index_schema_version": 2
 ```
 
-## GUI — Index Browser V1
+## GUI — Index Browser V2 (storage discovery)
 
-The GUI hosts an **Indexed** tab alongside **Live Scan**:
+The GUI hosts an **Indexed** tab alongside **Live Scan**. The Indexed tab is the
+main **fast storage-discovery** surface: choose a published root, pick a discovery
+mode, search/filter/sort, inspect, then Open / Reveal / Copy / Add to Cleanup Review.
 
 | Piece | Role |
 |-------|------|
-| `IndexCatalog` (core) | List/summarize roots, map freshness, build query specs |
+| `IndexCatalog` (core) | List/summarize roots, freshness, discovery presets → `IndexQuerySpec` |
+| `IndexQuery` (core) | Typed filters, text search, sort, browse path; all SQL stays here |
 | `IndexSession` (app) | Async full rebuild / USN refresh (ScanSession pattern) |
-| `IndexBrowserPage` (ui) | Roots list, filters, query hits, inspector, review queue |
+| `IndexBrowserPage` (ui) | Roots, header, presets, filters, table model, breadcrumb, inspector, review |
 
-Rules:
+### Practical workflow
+
+```text
+choose indexed root
+    ↓
+see storage overview (counts, logical size, snapshot age, freshness)
+    ↓
+choose discovery mode (Largest / Old & Large / Developer / Reclaim / Custom)
+    ↓
+search / filter / sort (typed IndexQuerySpec — no raw SQL in Qt)
+    ↓
+inspect interesting item (classification, rule id, reclaim strength)
+    ↓
+Open / Reveal / Copy  ·  Add to Cleanup Review
+    ↓
+(optional) drill into a folder via breadcrumb — still index-only, no live rescan
+```
+
+### Discovery presets (`IndexDiscoveryPreset`)
+
+| Preset | Query semantics |
+|--------|-----------------|
+| Largest | Files + folders, sort size DESC |
+| Old & Large | Default min size 100 MiB + activity older than 90 days (write/descendant), size DESC |
+| Developer Storage | Classification IN BuildArtifact, DependencyDirectory, PackageCache, IdeCache, DownloadedAiModel, LogData |
+| Reclaim Candidates | Strength IN Strong, Moderate; sort strength then size |
+| Custom | User filters only |
+
+Presets call `applyDiscoveryPreset` / `makeDiscoveryQuery`. GUI kind/sort/search
+overrides still win when the user changes them.
+
+### Search and filters
+
+- **Search:** case-insensitive substring (`LIKE %needle% ESCAPE '\'`) on `name`,
+  `path`, and `extension`. Empty query disables search. Not fuzzy/semantic.
+- **Filters:** type (all/files/folders), min size, activity age, extension,
+  classification, reclaim strength, limit (default 200).
+- **Sort:** size, name, activity (last write), classification, reclaim strength.
+- **Browse path:** double-click a folder or use the breadcrumb to set
+  `browsePath` → immediate children via `parent_id` (index data only).
+- **Result summary:** `matched_items`, `matched_logical_bytes`, `returned_items`,
+  `query_elapsed_ms` — UI shows “Showing N of M matches” and never pretends the
+  page is the full set.
+
+### Rules
 
 - Qt code calls **core APIs only** (`listIndexSummaries`, `queryIndex`,
-  `probeIncremental` via catalog, `refreshIndex`, `buildIndexForRoot`) — no SQLite
-  in the UI layer.
-- Queries always declare **snapshot** source; inspector shows age / indexed-at.
-- Cleanup Review items from the index carry `source=persistent_index` and age.
-- Refresh / rebuild are **explicit** buttons; cancel is cooperative.
+  `makeDiscoveryQuery`, `probeIncremental` via catalog, `refreshIndex`,
+  `buildIndexForRoot`) — **no SQLite in the UI layer**.
+- Queries always declare **snapshot** source; inspector shows age / indexed-at /
+  matched rule id when stored.
+- Cleanup Review items from the index carry `source=persistent_index`, age, and
+  captured classification metadata.
+- Refresh / rebuild are **explicit**; full rebuild is never silent after
+  `full_rebuild_required`. Incremental USN may require elevation — the GUI does
+  not spam UAC; it states incremental unavailable and offers Rebuild.
+- Open / Reveal check live path existence; missing paths show a stale-snapshot
+  message. Multi-select supports Copy Paths and Add to Review only (no bulk Open).
 - No treemap, delete, move, MCP, or product AI in this milestone.
 
 Freshness labels (display):

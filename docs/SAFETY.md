@@ -68,6 +68,20 @@ with:
 "filesystem_mutation": false
 ```
 
+### GUI Index Browser (V2)
+
+The Indexed tab is discovery and planning only:
+
+- No Delete / Move / Rename controls.
+- Cleanup Review remains an in-memory planning queue (`source=persistent_index`
+  preserves snapshot age and classification metadata).
+- Open / Reveal / default-app launch are human-initiated shell actions on paths
+  the user selected; missing paths surface a stale-snapshot message rather than
+  rewriting the index.
+- Incremental refresh does not self-elevate in a loop; when USN access is denied,
+  the UI states that incremental refresh is unavailable and offers an explicit
+  Rebuild.
+
 ### Future mutation separation
 
 Destructive capability, if ever implemented, must be a **separately permissioned**

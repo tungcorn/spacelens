@@ -67,6 +67,13 @@ never `record.usn+1`; empty tails are not discontinuities. Journal
 create/resize/delete is never used. Access denied or journal discontinuity
 → `full_rebuild_required` without guessing.
 
+**Index Browser V2** (GUI Indexed tab) maps UI state into core
+`IndexDiscoveryPreset` + `IndexQuerySpec` (`searchText`, filters, sort,
+`browsePath`). All SQL remains in `IndexQuery`; the Qt layer uses
+`IndexHitTableModel` and never opens SQLite. Queries run off the UI thread;
+refresh/rebuild stay on `IndexSession`. Open/Reveal validate live paths and
+treat missing entries as stale snapshot, not index rewrites.
+
 Deferred work includes AI inside the product, auto-refresh on query, MFT-based
 initial scan, watch mode, duplicate detection, treemap, MCP, and any automatic
 deletion or movement. A future mutation service, if approved, must be a separately

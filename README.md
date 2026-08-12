@@ -23,8 +23,9 @@ spacelens_core  →  spacelens (CLI, read-only)
   (no live query fallback; USN incremental when volume access allows)
 - CLI: `scan`, `top`, `find`, `index*`, `query`, `capabilities`, `help`,
   `version` with versioned JSON and `filesystem_mutation: false`
-- GUI: async scan, navigation, filters, details, Explorer/copy, Cleanup Review
-  (planning only — no delete/move)
+- GUI: Live Scan + **Indexed** storage discovery (presets, search, filters,
+  breadcrumb navigation, inspector, Explorer/copy, Cleanup Review planning only —
+  no delete/move)
 - Not yet: auto-refresh on query, journal creation, duplicates, MFT initial
   scan, MCP, product AI, automatic deletion, or automatic movement
 
@@ -44,6 +45,10 @@ spacelens_core  →  spacelens (CLI, read-only)
   humans, scripts, and AI agents
 - Optional Qt desktop UI with live progress, cancel, Explorer, and clipboard
   actions
+- **Index Browser V2:** discover largest / old-and-large / developer / reclaim
+  candidates from a published index without rescanning; search name/path/ext;
+  drill into folders via breadcrumbs; add snapshot-provenance items to Cleanup
+  Review
 - Directory reparse points not followed by default; access errors are non-fatal
   and counted
 
@@ -94,6 +99,23 @@ NTFS is case-insensitive and those names would collide):
 ```powershell
 .\build\gui\spacelens-gui.exe
 ```
+
+### Indexed storage discovery (GUI)
+
+1. **Index Folder…** (or CLI `index <root>`) to publish a snapshot under AppData.
+2. Open the **Indexed** tab and select a root — header shows age, freshness,
+   file/folder counts, and logical size.
+3. Pick a discovery mode: **Largest**, **Old & Large**, **Developer Storage**,
+   or **Reclaim Candidates** (or **Custom** filters).
+4. Optionally search (`Ctrl+F`), tighten min size / activity / classification,
+   then inspect a row.
+5. **Open** / **Show in Explorer** / **Copy Path**, or **Add to Cleanup Review**
+   (planning only). Double-click a folder to browse inside the index.
+6. **Refresh Index** uses USN when available; otherwise the UI reports
+   incremental unavailable and **Rebuild** remains explicit.
+
+All Indexed queries hit the persistent SQLite snapshot — they do not rescan the
+analyzed tree. See [`docs/INDEX.md`](docs/INDEX.md).
 
 Tests:
 

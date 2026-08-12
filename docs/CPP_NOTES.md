@@ -94,6 +94,22 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Ownership:** Identity values are plain structs; no long-lived file handles from identity queries.
 - **Bug prevented:** Applying volume-wide USN noise outside the indexed subdirectory root; orphan inserts when a parent directory is missing under the root (force full rebuild instead).
 
+## Indexed discovery queries (Index Browser V2)
+
+- **Why used:** The GUI must answer “what is large / old / developer / reclaimable”
+  from the published SQLite index without ad-hoc SQL in widgets and without a live rescan.
+- **Ownership:** `IndexQuerySpec` / `IndexDiscoveryPreset` live in core
+  (`IndexQuery`, `IndexCatalog`). `IndexBrowserPage` owns only UI state and an
+  `IndexHitTableModel`; query work runs on a page-local `std::jthread` with a
+  generation counter so late results are dropped after cancel or a newer query.
+- **Lifetime:** One short-lived read-only `IndexStore` connection per
+  `queryIndex` call. `browsePath` restricts to immediate children via `parent_id`.
+- **Search:** `LIKE %needle% ESCAPE '\'` with `COLLATE NOCASE` on name/path/extension;
+  user `%` / `_` / `\` are escaped so matching is literal substring.
+- **Bug prevented:** SQL in Qt, unbounded full-table UI loads (limit + matched
+  count), treating snapshot paths as live truth without existence checks, and
+  blocking the GUI thread on large COUNT/SUM queries.
+
 ## Cleanup candidate ownership
 
 - **Why used:** Cleanup Review is a planning queue, not a filesystem-operation owner.
