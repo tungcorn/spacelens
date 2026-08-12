@@ -37,8 +37,10 @@ SPACELENS_TEST(CliReadonly_registered_commands_only_safe)
 {
     // Explicit allow-list — destructive verbs must never appear here.
     constexpr std::array allowed{
-        Command::Help,         Command::Version, Command::Scan,
-        Command::Top,          Command::Find,    Command::Capabilities,
+        Command::Help,         Command::Version,     Command::Scan,
+        Command::Top,          Command::Find,        Command::Capabilities,
+        Command::Index,        Command::IndexStatus, Command::IndexList,
+        Command::Query,
     };
     SPACELENS_REQUIRE_EQ(kRegisteredCommands.size(), allowed.size());
     for (const Command c : kRegisteredCommands) {

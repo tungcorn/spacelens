@@ -11,6 +11,7 @@ set(SPACELENS_TEST_SOURCES
     test_safety_policy.cpp
     test_cleanup_review.cpp
     test_reclaim.cpp
+    test_index.cpp
     TestRunner.hpp
     FakeFileEnumerator.hpp
 )
