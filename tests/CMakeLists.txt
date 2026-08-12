@@ -15,6 +15,7 @@ set(SPACELENS_TEST_SOURCES
     test_index_refresh.cpp
     test_usn_parity.cpp
     test_index_catalog.cpp
+    test_index_discovery.cpp
     TestRunner.hpp
     FakeFileEnumerator.hpp
 )
