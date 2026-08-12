@@ -4,6 +4,7 @@
 #include "core/FileTime.hpp"
 #include "core/SizeFormatter.hpp"
 #include "core/SizeParse.hpp"
+#include "core/index/IndexOverview.hpp"
 #include "platform/windows/ExplorerIntegration.hpp"
 
 #include <QAbstractItemView>
@@ -275,6 +276,16 @@ const IndexHit* IndexHitTableModel::hitAt(int row) const
     return &m_hits[static_cast<std::size_t>(row)];
 }
 
+int IndexHitTableModel::findRowByPath(const std::wstring& path) const
+{
+    for (std::size_t i = 0; i < m_hits.size(); ++i) {
+        if (m_hits[i].path == path) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
 // ---------------------------------------------------------------------------
 // IndexBrowserPage
 // ---------------------------------------------------------------------------
@@ -472,6 +483,7 @@ void IndexBrowserPage::buildUi()
 
     m_rootMeta = new QLabel(QStringLiteral("No index selected."), this);
     m_rootMeta->setWordWrap(true);
+    m_rootMeta->setTextFormat(Qt::RichText);
     rootLayout->addWidget(m_rootMeta);
 
     m_breadcrumbBar = new QWidget(this);
@@ -479,6 +491,14 @@ void IndexBrowserPage::buildUi()
     m_breadcrumbLayout->setContentsMargins(0, 0, 0, 0);
     m_breadcrumbLayout->setSpacing(2);
     rootLayout->addWidget(m_breadcrumbBar);
+
+    m_overviewLabel = new QLabel(QStringLiteral(""), this);
+    m_overviewLabel->setWordWrap(true);
+    m_overviewLabel->setTextFormat(Qt::RichText);
+    m_overviewLabel->setStyleSheet(
+        QStringLiteral("QLabel { background: #F0F2F5; padding: 8px 10px; "
+                       "border-radius: 4px; }"));
+    rootLayout->addWidget(m_overviewLabel);
 
     m_queryMeta = new QLabel(QStringLiteral(""), this);
     rootLayout->addWidget(m_queryMeta);
@@ -493,6 +513,10 @@ void IndexBrowserPage::buildUi()
     m_rootsList->setMinimumWidth(220);
 
     auto* rightSplit = new QSplitter(Qt::Vertical, splitter);
+
+    m_treemap = new TreemapWidget(rightSplit);
+    m_treemap->setMinimumHeight(160);
+
     auto* hitsHost = new QWidget(rightSplit);
     auto* hitsLayout = new QVBoxLayout(hitsHost);
     hitsLayout->setContentsMargins(0, 0, 0, 0);
@@ -522,10 +546,12 @@ void IndexBrowserPage::buildUi()
 
     m_inspector = new QTextEdit(rightSplit);
     m_inspector->setReadOnly(true);
+    rightSplit->addWidget(m_treemap);
     rightSplit->addWidget(hitsHost);
     rightSplit->addWidget(m_inspector);
-    rightSplit->setStretchFactor(0, 3);
-    rightSplit->setStretchFactor(1, 2);
+    rightSplit->setStretchFactor(0, 2);
+    rightSplit->setStretchFactor(1, 3);
+    rightSplit->setStretchFactor(2, 2);
 
     splitter->addWidget(m_rootsList);
     splitter->addWidget(rightSplit);
@@ -577,6 +603,10 @@ void IndexBrowserPage::buildUi()
             &IndexBrowserPage::onHitsContextMenu);
     connect(m_searchEdit, &QLineEdit::returnPressed, this,
             &IndexBrowserPage::onQuery);
+    connect(m_treemap, &TreemapWidget::itemClicked, this,
+            &IndexBrowserPage::onTreemapItemClicked);
+    connect(m_treemap, &TreemapWidget::itemDoubleClicked, this,
+            &IndexBrowserPage::onTreemapItemDoubleClicked);
 
     auto* findSc = new QShortcut(QKeySequence::Find, this);
     connect(findSc, &QShortcut::activated, this, [this]() { focusSearch(); });
@@ -972,6 +1002,15 @@ void IndexBrowserPage::clearHits()
     m_queryMeta->clear();
     m_selectionMeta->clear();
     m_inspector->clear();
+    m_hierarchyChildren.clear();
+    m_overview = {};
+    m_otherSelection.reset();
+    if (m_treemap) {
+        m_treemap->clear();
+    }
+    if (m_overviewLabel) {
+        m_overviewLabel->clear();
+    }
 }
 
 void IndexBrowserPage::onQuery()
@@ -1013,19 +1052,25 @@ void IndexBrowserPage::onQuery()
     updateActionState();
 
     const std::wstring rootPath = root->rootPath;
-    m_queryWorker = std::jthread([this, gen, rootPath, spec](
+    const std::wstring location =
+        m_browsePath.empty() ? rootPath : m_browsePath;
+    m_queryWorker = std::jthread([this, gen, rootPath, location, spec](
                                      std::stop_token stop) {
         if (stop.stop_requested()) {
             return;
         }
-        IndexQueryResult result = queryIndex(rootPath, spec);
-        if (stop.stop_requested() ||
-            m_queryGeneration.load() != gen) {
+        PendingBrowsePayload payload;
+        payload.discovery = queryIndex(rootPath, spec);
+        if (stop.stop_requested() || m_queryGeneration.load() != gen) {
+            return;
+        }
+        payload.hierarchy = queryHierarchyChildren(rootPath, location, 10000);
+        if (stop.stop_requested() || m_queryGeneration.load() != gen) {
             return;
         }
         {
             std::lock_guard lock(m_queryMutex);
-            m_pendingQueryResult = std::move(result);
+            m_pendingBrowse = std::move(payload);
         }
         QMetaObject::invokeMethod(
             this,
@@ -1039,21 +1084,109 @@ void IndexBrowserPage::onQueryFinished(quint64 generation)
     if (generation != m_queryGeneration.load()) {
         return;
     }
-    IndexQueryResult result;
+    PendingBrowsePayload payload;
     {
         std::lock_guard lock(m_queryMutex);
-        if (!m_pendingQueryResult) {
+        if (!m_pendingBrowse) {
             m_queryRunning = false;
             updateActionState();
             return;
         }
-        result = std::move(*m_pendingQueryResult);
-        m_pendingQueryResult.reset();
+        payload = std::move(*m_pendingBrowse);
+        m_pendingBrowse.reset();
     }
-    applyQueryResult(std::move(result), generation);
+    applyQueryResult(std::move(payload), generation);
 }
 
-void IndexBrowserPage::applyQueryResult(IndexQueryResult result,
+void IndexBrowserPage::updateOverviewLabel(const StorageOverview& overview)
+{
+    if (!m_overviewLabel) {
+        return;
+    }
+    QString text;
+    text += QStringLiteral("<b>Storage overview</b> · ");
+    text += fromWide(overview.locationPath);
+    text += QStringLiteral("<br/>");
+    text += QStringLiteral("Indexed logical size: <b>%1</b>")
+                .arg(QString::fromStdString(
+                    SizeFormatter::format(overview.locationLogicalBytes)));
+    text += QStringLiteral(" · Direct children: %1 files, %2 folders")
+                .arg(overview.directFileCount)
+                .arg(overview.directDirCount);
+    text += QStringLiteral(" · Snapshot age: %1")
+                .arg(formatAge(overview.snapshotAgeMs));
+    if (overview.hasLargestChild) {
+        text += QStringLiteral("<br/>Largest immediate child: <b>%1</b> (%2)")
+                    .arg(fromWide(overview.largestChildName),
+                         QString::fromStdString(SizeFormatter::format(
+                             overview.largestChildBytes)));
+    }
+    // Counts only — never a sum of recursive directory sizes as "reclaimable".
+    QStringList intel;
+    if (overview.developerCandidateCount > 0) {
+        intel << QStringLiteral("%1 developer candidates")
+                     .arg(overview.developerCandidateCount);
+    }
+    if (overview.strongReclaimCount > 0) {
+        intel << QStringLiteral("%1 strong reclaim")
+                     .arg(overview.strongReclaimCount);
+    }
+    if (overview.moderateReclaimCount > 0) {
+        intel << QStringLiteral("%1 moderate reclaim")
+                     .arg(overview.moderateReclaimCount);
+    }
+    if (overview.oldAndLargeCount > 0) {
+        intel << QStringLiteral("%1 old & large")
+                     .arg(overview.oldAndLargeCount);
+    }
+    if (!intel.isEmpty()) {
+        text += QStringLiteral("<br/>Among direct children: ") +
+                intel.join(QStringLiteral(" · "));
+    }
+    text += QStringLiteral(
+        "<br/><span style='color:#666'>Sizes are logical bytes from the index "
+        "snapshot (not physical size-on-disk).</span>");
+    m_overviewLabel->setText(text);
+}
+
+void IndexBrowserPage::applyHierarchyResult(
+    const HierarchyChildrenResult& hierarchy)
+{
+    m_hierarchyChildren.clear();
+    m_otherSelection.reset();
+    if (!hierarchy.ok) {
+        if (m_treemap) {
+            m_treemap->clear();
+        }
+        if (m_overviewLabel) {
+            m_overviewLabel->setText(
+                QStringLiteral("Overview unavailable: %1")
+                    .arg(QString::fromStdString(hierarchy.error)));
+        }
+        return;
+    }
+    m_hierarchyChildren = hierarchy.children;
+    m_overview = hierarchy.overview;
+    updateOverviewLabel(m_overview);
+
+    std::vector<TreemapDisplayItem> display;
+    display.reserve(hierarchy.children.size());
+    for (const auto& h : hierarchy.children) {
+        TreemapDisplayItem d;
+        d.path = h.path;
+        d.name = h.name;
+        d.sizeBytes = h.size_bytes;
+        d.kind = h.kind;
+        d.classification = h.classification;
+        d.candidateStrength = h.candidate_strength;
+        display.push_back(std::move(d));
+    }
+    if (m_treemap) {
+        m_treemap->setItems(std::move(display), hierarchy.locationLogicalBytes);
+    }
+}
+
+void IndexBrowserPage::applyQueryResult(PendingBrowsePayload payload,
                                         quint64 generation)
 {
     if (generation != m_queryGeneration.load()) {
@@ -1061,6 +1194,9 @@ void IndexBrowserPage::applyQueryResult(IndexQueryResult result,
     }
     m_queryRunning = false;
 
+    applyHierarchyResult(payload.hierarchy);
+
+    auto& result = payload.discovery;
     if (!result.ok) {
         m_hitModel->clear();
         m_queryMeta->setText(QStringLiteral("Query failed: %1")
@@ -1104,12 +1240,13 @@ void IndexBrowserPage::applyQueryResult(IndexQueryResult result,
     m_queryMeta->setText(
         QStringLiteral(
             "%1 matches · %2 represented · Showing %3 · Query: %4 ms · "
-            "preset=%5 · source=persistent_index · age %6")
+            "Hierarchy: %5 ms · preset=%6 · source=persistent_index · age %7")
             .arg(result.matched_items)
             .arg(QString::fromStdString(
                 SizeFormatter::format(result.matched_logical_bytes)))
             .arg(result.returned_items)
             .arg(result.query_elapsed_ms)
+            .arg(payload.hierarchy.query_elapsed_ms)
             .arg(presetName)
             .arg(formatAge(result.age_ms)));
 
@@ -1294,11 +1431,18 @@ void IndexBrowserPage::onSessionStatus(const QString& message)
 
 void IndexBrowserPage::onHitSelectionChanged()
 {
+    if (m_syncingSelection) {
+        return;
+    }
+    m_otherSelection.reset();
     updateInspector();
     updateActionState();
     const auto rows = selectedRows();
     if (rows.empty()) {
         m_selectionMeta->clear();
+        if (m_treemap) {
+            m_treemap->clearSelection();
+        }
         return;
     }
     ByteSize total = 0;
@@ -1311,6 +1455,15 @@ void IndexBrowserPage::onHitSelectionChanged()
         QStringLiteral("Selected: %1 item(s) · Logical size: %2")
             .arg(rows.size())
             .arg(QString::fromStdString(SizeFormatter::format(total))));
+
+    // Highlight corresponding treemap cell when a single immediate child is selected.
+    if (rows.size() == 1 && m_treemap) {
+        if (const auto* h = m_hitModel->hitAt(rows.front())) {
+            m_syncingSelection = true;
+            m_treemap->setSelectedPath(h->path);
+            m_syncingSelection = false;
+        }
+    }
 }
 
 std::vector<int> IndexBrowserPage::selectedRows() const
@@ -1338,9 +1491,158 @@ std::vector<IndexHit> IndexBrowserPage::selectedHits() const
     return out;
 }
 
+void IndexBrowserPage::showOtherInspector(const TreemapDisplayItem& item)
+{
+    QString text;
+    text += QStringLiteral("Other (visualization aggregate)\n\n");
+    text += QStringLiteral("%1 smaller items\n%2 combined logical size\n\n")
+                .arg(item.otherItemCount)
+                .arg(QString::fromStdString(SizeFormatter::format(item.sizeBytes)));
+    text += QStringLiteral(
+        "This rectangle is not a filesystem item, not a cleanup candidate, "
+        "and not an indexed database row.\n\n"
+        "Use the discovery table below (or clear size filters) to inspect "
+        "individual smaller items. Double-click folders in the treemap to "
+        "drill down.");
+    if (m_overview.locationLogicalBytes > 0) {
+        const double pct =
+            100.0 * static_cast<double>(item.sizeBytes) /
+            static_cast<double>(m_overview.locationLogicalBytes);
+        text += QStringLiteral("\n\nShare of current location: %1%")
+                    .arg(pct, 0, 'f', 1);
+    }
+    m_inspector->setPlainText(text);
+}
+
+void IndexBrowserPage::selectTablePath(const std::wstring& path)
+{
+    if (!m_hitsView || !m_hitModel) {
+        return;
+    }
+    const int row = m_hitModel->findRowByPath(path);
+    m_syncingSelection = true;
+    if (row >= 0) {
+        m_hitsView->selectionModel()->select(
+            m_hitModel->index(row, 0),
+            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        m_hitsView->scrollTo(m_hitModel->index(row, 0));
+    } else if (m_hitsView->selectionModel()) {
+        m_hitsView->selectionModel()->clearSelection();
+    }
+    m_syncingSelection = false;
+}
+
+void IndexBrowserPage::onTreemapItemClicked(const TreemapDisplayItem& item)
+{
+    if (m_syncingSelection) {
+        return;
+    }
+    if (item.isOther) {
+        m_otherSelection = item;
+        if (m_hitsView && m_hitsView->selectionModel()) {
+            m_syncingSelection = true;
+            m_hitsView->selectionModel()->clearSelection();
+            m_syncingSelection = false;
+        }
+        showOtherInspector(item);
+        m_selectionMeta->setText(
+            QStringLiteral("Selected: Other · %1 items · %2")
+                .arg(item.otherItemCount)
+                .arg(QString::fromStdString(
+                    SizeFormatter::format(item.sizeBytes))));
+        updateActionState();
+        return;
+    }
+    m_otherSelection.reset();
+    // Prefer hierarchy hit metadata for inspector when the path is not in the
+    // discovery table (filters may hide it).
+    selectTablePath(item.path);
+    const int row = m_hitModel->findRowByPath(item.path);
+    if (row < 0) {
+        // Build a synthetic inspector from hierarchy children.
+        const IndexHit* hier = nullptr;
+        for (const auto& h : m_hierarchyChildren) {
+            if (h.path == item.path) {
+                hier = &h;
+                break;
+            }
+        }
+        if (hier) {
+            QString text;
+            text += QStringLiteral("%1\n%2\n\n")
+                        .arg(fromWide(hier->name),
+                             QString::fromStdString(
+                                 SizeFormatter::format(hier->size_bytes)));
+            text += QStringLiteral("Path\n%1\n\n").arg(fromWide(hier->path));
+            text += QStringLiteral("Type\n%1\n\n")
+                        .arg(hier->kind == IndexEntryKind::Directory
+                                 ? QStringLiteral("Folder")
+                                 : QStringLiteral("File"));
+            if (m_overview.locationLogicalBytes > 0) {
+                const double pct =
+                    100.0 * static_cast<double>(hier->size_bytes) /
+                    static_cast<double>(m_overview.locationLogicalBytes);
+                text += QStringLiteral("Share of current location\n%1%\n\n")
+                            .arg(pct, 0, 'f', 1);
+            }
+            text += QStringLiteral("Classification\n%1\nConfidence\n%2\n")
+                        .arg(QString::fromStdString(hier->classification),
+                             QString::fromStdString(hier->confidence));
+            if (!hier->rule_id.empty()) {
+                text += QStringLiteral("Matched rule\n%1\n")
+                            .arg(QString::fromStdString(hier->rule_id));
+            }
+            text += QStringLiteral("\nActivity\n%1\n")
+                        .arg(formatActivity(hier->last_write_ticks));
+            text += QStringLiteral("Location safety\n%1\n\n")
+                        .arg(QString::fromStdString(hier->location_safety));
+            text +=
+                QStringLiteral("Reclaimability\n%1\nCandidate strength\n%2\n\n")
+                    .arg(QString::fromStdString(hier->reclaimability),
+                         QString::fromStdString(hier->candidate_strength));
+            text += QStringLiteral("Source\npersistent_index (hierarchy)\n");
+            text += QStringLiteral("Snapshot age\n%1\n")
+                        .arg(formatAge(m_overview.snapshotAgeMs));
+            text += QStringLiteral(
+                "\nLogical size from the index snapshot — not physical "
+                "size-on-disk. Not permission to delete.");
+            m_inspector->setPlainText(text);
+            m_selectionMeta->setText(
+                QStringLiteral("Selected: %1 · Logical size: %2")
+                    .arg(fromWide(hier->name),
+                         QString::fromStdString(
+                             SizeFormatter::format(hier->size_bytes))));
+        }
+    } else {
+        updateInspector();
+    }
+    updateActionState();
+}
+
+void IndexBrowserPage::onTreemapItemDoubleClicked(const TreemapDisplayItem& item)
+{
+    if (item.isOther) {
+        // Visualization aggregate only — surface table view of smaller items.
+        m_otherSelection = item;
+        showOtherInspector(item);
+        emit statusMessage(
+            QStringLiteral("Other groups %1 smaller items — use the table or "
+                           "filters to inspect them.")
+                .arg(item.otherItemCount));
+        return;
+    }
+    if (item.kind == IndexEntryKind::Directory) {
+        browseInto(item.path);
+    }
+}
+
 void IndexBrowserPage::updateInspector()
 {
     m_inspector->clear();
+    if (m_otherSelection) {
+        showOtherInspector(*m_otherSelection);
+        return;
+    }
     const auto selected = selectedHits();
     if (selected.empty()) {
         if (m_activeRoot) {
@@ -1350,9 +1652,16 @@ void IndexBrowserPage::updateInspector()
                         .arg(fromWide(m_activeRoot->rootPath));
             text += QStringLiteral("Freshness\n%1\n")
                         .arg(QString::fromStdString(m_activeRoot->freshnessLabel));
+            if (m_overview.locationLogicalBytes > 0) {
+                text += QStringLiteral("\nCurrent location\n%1\n")
+                            .arg(fromWide(m_overview.locationPath));
+                text += QStringLiteral("Indexed logical size\n%1\n")
+                            .arg(QString::fromStdString(SizeFormatter::format(
+                                m_overview.locationLogicalBytes)));
+            }
             text += QStringLiteral(
-                "\nSelect a result to inspect classification, activity, and "
-                "reclaim reasoning. This is not a live listing.");
+                "\nClick the treemap or a table row to inspect. Double-click a "
+                "folder rectangle to drill down. This is not a live listing.");
             m_inspector->setPlainText(text);
         }
         return;
@@ -1384,6 +1693,14 @@ void IndexBrowserPage::updateInspector()
                 .arg(h.kind == IndexEntryKind::Directory
                          ? QStringLiteral("Folder")
                          : QStringLiteral("File"));
+    if (m_overview.locationLogicalBytes > 0) {
+        const double pct = 100.0 * static_cast<double>(h.size_bytes) /
+                           static_cast<double>(m_overview.locationLogicalBytes);
+        text += QStringLiteral("Share of current location\n%1%\n\n")
+                    .arg(pct, 0, 'f', 1);
+    }
+    text += QStringLiteral("Logical size\n%1\n\n")
+                .arg(QString::fromStdString(SizeFormatter::format(h.size_bytes)));
     text += QStringLiteral("Classification\n%1\nConfidence\n%2\n")
                 .arg(QString::fromStdString(h.classification),
                      QString::fromStdString(h.confidence));
@@ -1437,6 +1754,7 @@ bool IndexBrowserPage::ensurePathExists(const std::wstring& path,
 void IndexBrowserPage::browseInto(const std::wstring& path)
 {
     m_browsePath = path;
+    m_otherSelection.reset();
     updateBreadcrumb();
     onQuery();
 }

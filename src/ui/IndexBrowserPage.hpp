@@ -3,7 +3,9 @@
 #include "app/IndexSession.hpp"
 #include "core/CleanupReview.hpp"
 #include "core/index/IndexCatalog.hpp"
+#include "core/index/IndexOverview.hpp"
 #include "core/index/IndexQuery.hpp"
+#include "ui/TreemapWidget.hpp"
 
 #include <QAbstractTableModel>
 #include <QWidget>
@@ -60,6 +62,7 @@ public:
                                       int role = Qt::DisplayRole) const override;
 
     [[nodiscard]] const IndexHit* hitAt(int row) const;
+    [[nodiscard]] int findRowByPath(const std::wstring& path) const;
     [[nodiscard]] std::uint64_t indexAgeMs() const { return m_indexAgeMs; }
     [[nodiscard]] const std::string& indexedAtIso() const
     {
@@ -72,8 +75,7 @@ private:
     std::string m_indexedAtIso;
 };
 
-/// Indexed storage discovery: presets, search, filters, navigation, review.
-/// Qt calls core APIs only — no SQLite in this translation unit.
+/// Indexed storage discovery + overview/treemap. Qt calls core APIs only.
 /// No delete/move; filesystem_mutation remains false.
 class IndexBrowserPage final : public QWidget {
     Q_OBJECT
@@ -110,14 +112,23 @@ private slots:
     void onRefreshFinished(spacelens::IndexRefreshOutcome outcome);
     void onSessionStatus(const QString& message);
     void onQueryFinished(quint64 generation);
+    void onTreemapItemClicked(const TreemapDisplayItem& item);
+    void onTreemapItemDoubleClicked(const TreemapDisplayItem& item);
 
 private:
+    struct PendingBrowsePayload {
+        IndexQueryResult discovery{};
+        HierarchyChildrenResult hierarchy{};
+    };
+
     void buildUi();
     void updateActionState();
     void clearHits();
     void updateInspector();
     void updateRootHeader();
     void updateBreadcrumb();
+    void updateOverviewLabel(const StorageOverview& overview);
+    void applyHierarchyResult(const HierarchyChildrenResult& hierarchy);
     void applyPresetDefaults(IndexDiscoveryPreset preset);
     [[nodiscard]] IndexQuerySpec buildQuerySpec() const;
     [[nodiscard]] std::optional<IndexRootSummary> selectedRoot() const;
@@ -128,7 +139,9 @@ private:
     void focusSearch();
     [[nodiscard]] bool ensurePathExists(const std::wstring& path,
                                         QString* message) const;
-    void applyQueryResult(IndexQueryResult result, quint64 generation);
+    void applyQueryResult(PendingBrowsePayload payload, quint64 generation);
+    void selectTablePath(const std::wstring& path);
+    void showOtherInspector(const TreemapDisplayItem& item);
 
     CleanupReview& m_review;
     IndexSession* m_session = nullptr;
@@ -138,6 +151,12 @@ private:
     std::wstring m_browsePath;  // empty = index root view
     IndexDiscoveryPreset m_preset = IndexDiscoveryPreset::Largest;
     bool m_sortUserOverride = false;
+    bool m_syncingSelection = false;
+
+    /// Immediate children of the current location (hierarchy, not discovery filters).
+    std::vector<IndexHit> m_hierarchyChildren;
+    StorageOverview m_overview{};
+    std::optional<TreemapDisplayItem> m_otherSelection;
 
     IndexHitTableModel* m_hitModel = nullptr;
 
@@ -145,13 +164,15 @@ private:
     std::jthread m_queryWorker;
     std::mutex m_queryMutex;
     std::atomic<quint64> m_queryGeneration{0};
-    std::optional<IndexQueryResult> m_pendingQueryResult;
+    std::optional<PendingBrowsePayload> m_pendingBrowse;
     bool m_queryRunning = false;
 
     QListWidget* m_rootsList = nullptr;
     QTableView* m_hitsView = nullptr;
+    TreemapWidget* m_treemap = nullptr;
     QTextEdit* m_inspector = nullptr;
     QLabel* m_rootMeta = nullptr;
+    QLabel* m_overviewLabel = nullptr;
     QLabel* m_queryMeta = nullptr;
     QLabel* m_selectionMeta = nullptr;
     QLabel* m_emptyLabel = nullptr;
