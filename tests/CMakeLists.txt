@@ -4,6 +4,7 @@ add_executable(spacelens_tests
     test_directory_tree.cpp
     test_topk.cpp
     test_scan_engine.cpp
+    test_windows_integration.cpp
     TestRunner.hpp
     FakeFileEnumerator.hpp
 )

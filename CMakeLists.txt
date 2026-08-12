@@ -48,6 +48,8 @@ add_library(spacelens_core STATIC
     src/platform/windows/FindHandle.hpp
     src/platform/windows/WindowsFileEnumerator.hpp
     src/platform/windows/WindowsFileEnumerator.cpp
+    src/platform/windows/ExplorerIntegration.hpp
+    src/platform/windows/ExplorerIntegration.cpp
 )
 
 target_include_directories(spacelens_core
@@ -55,9 +57,9 @@ target_include_directories(spacelens_core
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Windows enumerator needs the system libraries; core stays free of Qt.
+# Win32 APIs used by the platform layer.
 if(WIN32)
-    target_link_libraries(spacelens_core PUBLIC)
+    target_link_libraries(spacelens_core PUBLIC shell32)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -67,6 +69,8 @@ add_executable(SpaceLens
     src/main.cpp
     src/app/Application.hpp
     src/app/Application.cpp
+    src/app/ScanSession.hpp
+    src/app/ScanSession.cpp
     src/ui/MainWindow.hpp
     src/ui/MainWindow.cpp
 )
