@@ -18,8 +18,9 @@ enum class EntryKind {
 struct EnumeratedEntry {
     std::wstring name;  // leaf name only
     EntryKind kind = EntryKind::Other;
-    ByteSize size = 0;               // logical size for files
-    std::uint64_t lastWriteTime = 0; // FILETIME-compatible 64-bit value
+    ByteSize size = 0;                // logical size for files
+    std::uint64_t lastWriteTime = 0;  // FILETIME-compatible 64-bit value
+    std::uint64_t lastAccessTime = 0; // FILETIME-compatible 64-bit value
     std::uint32_t attributes = 0;
 };
 

@@ -28,6 +28,9 @@ add_library(spacelens_core STATIC
     src/core/Types.hpp
     src/core/SizeFormatter.hpp
     src/core/SizeFormatter.cpp
+    src/core/SizeParse.hpp
+    src/core/SizeParse.cpp
+    src/core/FileTime.hpp
     src/core/DirectoryTree.hpp
     src/core/DirectoryTree.cpp
     src/core/TopKCollector.hpp
@@ -36,6 +39,14 @@ add_library(spacelens_core STATIC
     src/core/ScanEngine.hpp
     src/core/ScanEngine.cpp
     src/core/Query.hpp
+    src/core/Classification.hpp
+    src/core/Classification.cpp
+    src/core/SafetyPolicy.hpp
+    src/core/SafetyPolicy.cpp
+    src/core/CleanupReview.hpp
+    src/core/CleanupReview.cpp
+    src/core/ReclaimAnalysis.hpp
+    src/core/ReclaimAnalysis.cpp
     src/platform/windows/FindHandle.hpp
     src/platform/windows/WindowsFileEnumerator.hpp
     src/platform/windows/WindowsFileEnumerator.cpp

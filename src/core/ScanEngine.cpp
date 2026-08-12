@@ -1,8 +1,19 @@
 #include "core/ScanEngine.hpp"
 
+#include "core/FileTime.hpp"
 #include "core/TopKCollector.hpp"
 
 #include <utility>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+#endif
 
 namespace spacelens {
 namespace {
@@ -88,7 +99,18 @@ ScanResult ScanEngine::scan(const std::wstring& rootPath,
         result.state = ScanState::Completed;
     }
 
-    result.tree.recomputeAggregates();
+    FileTimeTicks nowTicks = 0;
+#if defined(_WIN32)
+    {
+        FILETIME ft{};
+        ::GetSystemTimeAsFileTime(&ft);
+        ULARGE_INTEGER value;
+        value.LowPart = ft.dwLowDateTime;
+        value.HighPart = ft.dwHighDateTime;
+        nowTicks = value.QuadPart;
+    }
+#endif
+    result.tree.recomputeAggregates(nowTicks);
 
     for (auto& item : topFiles.collector.sortedDescending()) {
         LargestFileItem out;
@@ -156,7 +178,8 @@ void ScanEngine::scanDirectory(DirectoryTree& tree,
                                               std::move(entry.name),
                                               entry.size,
                                               entry.lastWriteTime,
-                                              entry.attributes);
+                                              entry.attributes,
+                                              entry.lastAccessTime);
             const std::wstring filePath = tree.pathOfFile(fi);
             topFiles.consider(fi, entry.size, filePath);
             progress.filesSeen += 1;

@@ -18,6 +18,17 @@ struct DirectoryNode {
     std::uint64_t fileCount = 0;   // files stored directly under this dir
     std::uint64_t totalFileCount = 0; // recursive file count
     std::uint64_t childDirCount = 0;  // direct child directories
+    // Descendant-aware activity (files under this subtree).
+    std::uint64_t newestDescendantWrite = 0;
+    std::uint64_t oldestDescendantWrite = 0;  // 0 = unknown
+    std::uint64_t filesModifiedLast30Days = 0;
+    std::uint64_t filesModifiedLast90Days = 0;
+    std::uint64_t filesModifiedLast180Days = 0;
+    std::uint64_t filesModifiedLast365Days = 0;
+    ByteSize bytesModifiedLast30Days = 0;
+    ByteSize bytesModifiedLast90Days = 0;
+    ByteSize bytesModifiedLast180Days = 0;
+    ByteSize bytesModifiedLast365Days = 0;
     std::vector<DirIndex> children;
     std::vector<FileIndex> files;
 };
@@ -28,6 +39,7 @@ struct FileEntry {
     DirIndex parent = InvalidDirIndex;
     ByteSize size = 0;
     std::uint64_t lastWriteTime = 0;  // FILETIME as 64-bit, 0 if unknown
+    std::uint64_t lastAccessTime = 0; // FILETIME as 64-bit, 0 if unknown
     std::uint32_t attributes = 0;
 };
 
@@ -63,11 +75,12 @@ public:
                       std::wstring name,
                       ByteSize size,
                       std::uint64_t lastWriteTime = 0,
-                      std::uint32_t attributes = 0);
+                      std::uint32_t attributes = 0,
+                      std::uint64_t lastAccessTime = 0);
 
-    /// Bottom-up aggregation: set recursiveSize / totalFileCount for all nodes.
+    /// Bottom-up aggregation: set recursive size/count and activity summaries.
     /// Call after the full tree is built (or after a subtree is complete).
-    void recomputeAggregates();
+    void recomputeAggregates(std::uint64_t nowFileTime = 0);
 
     /// Reconstruct absolute path for a directory or file.
     [[nodiscard]] std::wstring pathOfDirectory(DirIndex index) const;
@@ -78,7 +91,7 @@ public:
                                                                 std::size_t limit) const;
 
 private:
-    void recomputeNode(DirIndex index);
+    void recomputeNode(DirIndex index, std::uint64_t nowFileTime);
 
     std::vector<DirectoryNode> m_dirs;
     std::vector<FileEntry> m_files;

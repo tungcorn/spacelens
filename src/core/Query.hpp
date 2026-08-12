@@ -1,10 +1,17 @@
 #pragma once
 
+#include "core/Classification.hpp"
 #include "core/DirectoryTree.hpp"
+#include "core/FileTime.hpp"
 #include "core/ScanTypes.hpp"
 #include "core/TopKCollector.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <cwctype>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace spacelens {

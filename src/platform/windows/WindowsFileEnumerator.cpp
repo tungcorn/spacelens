@@ -92,6 +92,7 @@ EnumerateResult WindowsFileEnumerator::enumerate(const std::wstring& directoryPa
         entry.name = data.cFileName;
         entry.attributes = data.dwFileAttributes;
         entry.lastWriteTime = fileTimeToU64(data.ftLastWriteTime);
+        entry.lastAccessTime = fileTimeToU64(data.ftLastAccessTime);
 
         const bool isDirectory =
             (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
