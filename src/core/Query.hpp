@@ -1,15 +1,13 @@
 #pragma once
 
-#include "core/Classification.hpp"
 #include "core/DirectoryTree.hpp"
 #include "core/FileTime.hpp"
 #include "core/ScanTypes.hpp"
 #include "core/TopKCollector.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cwctype>
-#include <optional>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,6 +18,77 @@ struct PathSizeItem {
     std::wstring path;
     ByteSize size_bytes = 0;
 };
+
+struct FileQuery {
+    ByteSize minSize = 0;
+    std::wstring extension;  // normalized without a leading dot
+    std::uint64_t olderThanDays = 0;
+    FileTimeTicks nowTicks = 0;
+    std::size_t limit = 20;
+    std::function<bool(std::wstring_view, const FileEntry&)> predicate;
+};
+
+/// Find files matching the supplied filters, sorted largest first.
+[[nodiscard]] inline std::vector<PathSizeItem> findFiles(
+    const DirectoryTree& tree,
+    const FileQuery& query)
+{
+    if (tree.empty() || query.limit == 0) {
+        return {};
+    }
+
+    auto extensionMatches = [&query](std::wstring_view name) {
+        if (query.extension.empty()) {
+            return true;
+        }
+        const std::size_t dot = name.rfind(L'.');
+        if (dot == std::wstring_view::npos || dot + 1 >= name.size()) {
+            return false;
+        }
+        const std::wstring_view actual = name.substr(dot + 1);
+        if (actual.size() != query.extension.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < actual.size(); ++i) {
+            if (std::towlower(actual[i]) != std::towlower(query.extension[i])) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    std::vector<PathSizeItem> out;
+    out.reserve(tree.fileCount());
+    for (std::size_t i = 0; i < tree.fileCount(); ++i) {
+        const auto fileIndex = static_cast<FileIndex>(i);
+        const FileEntry& file = tree.file(fileIndex);
+        if (file.size < query.minSize || !extensionMatches(file.name)) {
+            continue;
+        }
+        if (query.olderThanDays > 0 &&
+            !isOlderThanDays(file.lastWriteTime, query.nowTicks,
+                             query.olderThanDays)) {
+            continue;
+        }
+        const std::wstring path = tree.pathOfFile(fileIndex);
+        if (query.predicate && !query.predicate(path, file)) {
+            continue;
+        }
+        out.push_back(PathSizeItem{path, file.size});
+    }
+
+    std::sort(out.begin(), out.end(), [](const PathSizeItem& a,
+                                         const PathSizeItem& b) {
+        if (a.size_bytes != b.size_bytes) {
+            return a.size_bytes > b.size_bytes;
+        }
+        return a.path < b.path;
+    });
+    if (out.size() > query.limit) {
+        out.resize(query.limit);
+    }
+    return out;
+}
 
 /// Largest directories by recursiveSize (includes root). O(D log K).
 [[nodiscard]] inline std::vector<PathSizeItem> topDirectories(

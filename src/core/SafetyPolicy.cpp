@@ -1,30 +1,12 @@
 #include "core/SafetyPolicy.hpp"
 
 #include <cwctype>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace spacelens {
 namespace {
-
-void toLowerInPlace(std::wstring& s)
-{
-    for (wchar_t& ch : s) {
-        ch = static_cast<wchar_t>(std::towlower(ch));
-    }
-}
-
-bool startsWithIgnoreCase(std::wstring_view path, std::wstring_view prefix)
-{
-    if (path.size() < prefix.size()) {
-        return false;
-    }
-    for (std::size_t i = 0; i < prefix.size(); ++i) {
-        if (std::towlower(path[i]) != std::towlower(prefix[i])) {
-            return false;
-        }
-    }
-    return true;
-}
 
 bool equalsIgnoreCase(std::wstring_view a, std::wstring_view b)
 {
@@ -39,40 +21,51 @@ bool equalsIgnoreCase(std::wstring_view a, std::wstring_view b)
     return true;
 }
 
-/// True for "C:\" style drive roots after normalization.
+bool isAsciiDriveLetter(wchar_t ch)
+{
+    return (ch >= L'A' && ch <= L'Z') || (ch >= L'a' && ch <= L'z');
+}
+
 bool isDriveRoot(std::wstring_view path)
 {
-    return path.size() == 3 &&
-           ((path[0] >= L'A' && path[0] <= L'Z') ||
-            (path[0] >= L'a' && path[0] <= L'z')) &&
+    return path.size() == 3 && isAsciiDriveLetter(path[0]) &&
            path[1] == L':' && path[2] == L'\\';
 }
 
-std::vector<std::wstring_view> splitComponents(std::wstring_view path)
+std::vector<std::wstring_view> componentsOf(std::wstring_view path)
 {
-    std::vector<std::wstring_view> parts;
-    std::size_t i = 0;
-    // Skip drive prefix "C:"
-    if (path.size() >= 2 && path[1] == L':') {
-        i = 2;
-        if (i < path.size() && path[i] == L'\\') {
-            ++i;
-        }
+    std::vector<std::wstring_view> components;
+    std::size_t pos = 0;
+
+    if (path.size() >= 2 && isAsciiDriveLetter(path[0]) && path[1] == L':') {
+        pos = 2;
     }
-    while (i < path.size()) {
-        while (i < path.size() && path[i] == L'\\') {
-            ++i;
+
+    while (pos < path.size()) {
+        while (pos < path.size() && path[pos] == L'\\') {
+            ++pos;
         }
-        if (i >= path.size()) {
+        if (pos == path.size()) {
             break;
         }
-        const std::size_t start = i;
-        while (i < path.size() && path[i] != L'\\') {
-            ++i;
+        const std::size_t begin = pos;
+        while (pos < path.size() && path[pos] != L'\\') {
+            ++pos;
         }
-        parts.push_back(path.substr(start, i - start));
+        components.push_back(path.substr(begin, pos - begin));
     }
-    return parts;
+    return components;
+}
+
+bool isProtectedRootComponent(std::wstring_view component)
+{
+    return equalsIgnoreCase(component, L"Windows") ||
+           equalsIgnoreCase(component, L"Program Files") ||
+           equalsIgnoreCase(component, L"Program Files (x86)") ||
+           equalsIgnoreCase(component, L"ProgramData") ||
+           equalsIgnoreCase(component, L"Recovery") ||
+           equalsIgnoreCase(component, L"System Volume Information") ||
+           equalsIgnoreCase(component, L"$Recycle.Bin");
 }
 
 }  // namespace
@@ -94,39 +87,33 @@ const char* toString(LocationSafety safety) noexcept
 
 std::wstring normalizePathForPolicy(std::wstring_view path)
 {
-    std::wstring out;
-    out.reserve(path.size());
-    for (wchar_t ch : path) {
-        if (ch == L'/') {
-            ch = L'\\';
-        }
-        out.push_back(ch);
+    std::wstring normalized;
+    normalized.reserve(path.size());
+    for (const wchar_t ch : path) {
+        normalized.push_back(ch == L'/' ? L'\\' : ch);
     }
-    // Collapse duplicate separators (keep leading drive form).
-    std::wstring collapsed;
-    collapsed.reserve(out.size());
-    for (std::size_t i = 0; i < out.size(); ++i) {
-        if (out[i] == L'\\' && !collapsed.empty() && collapsed.back() == L'\\') {
-            continue;
-        }
-        collapsed.push_back(out[i]);
+
+    // Keep exactly one separator for a drive root, while removing separators
+    // from all other path tails. Internal separators are left intact.
+    const bool driveRoot = normalized.size() >= 2 &&
+                           isAsciiDriveLetter(normalized[0]) &&
+                           normalized[1] == L':' &&
+                           normalized.find_first_not_of(L'\\', 2) ==
+                               std::wstring::npos;
+    if (driveRoot) {
+        normalized.resize(3);
+        normalized[2] = L'\\';
+        return normalized;
     }
-    // Strip trailing separators except drive roots ("C:\").
-    while (collapsed.size() > 3 && collapsed.back() == L'\\') {
-        collapsed.pop_back();
+
+    while (!normalized.empty() && normalized.back() == L'\\') {
+        normalized.pop_back();
     }
-    if (collapsed.size() == 2 && collapsed[1] == L':') {
-        collapsed.push_back(L'\\');
-    }
-    return collapsed;
+    return normalized;
 }
 
 LocationSafety classifyLocation(std::wstring_view path)
 {
-    if (path.empty()) {
-        return LocationSafety::Unknown;
-    }
-
     const std::wstring normalized = normalizePathForPolicy(path);
     if (normalized.empty()) {
         return LocationSafety::Unknown;
@@ -136,61 +123,49 @@ LocationSafety classifyLocation(std::wstring_view path)
         return LocationSafety::Protected;
     }
 
-    const auto parts = splitComponents(normalized);
-    if (parts.empty()) {
+    const auto components = componentsOf(normalized);
+    if (components.empty()) {
         return LocationSafety::Unknown;
     }
 
-    auto matchPart = [](std::wstring_view part, std::wstring_view expected) {
-        return equalsIgnoreCase(part, expected);
-    };
-
-    // First component checks (under drive).
-    const auto& p0 = parts[0];
-    if (matchPart(p0, L"Windows") || matchPart(p0, L"Program Files") ||
-        matchPart(p0, L"Program Files (x86)") || matchPart(p0, L"ProgramData") ||
-        matchPart(p0, L"System Volume Information") ||
-        matchPart(p0, L"$Recycle.Bin") || matchPart(p0, L"Recovery") ||
-        matchPart(p0, L"Boot") || matchPart(p0, L"PerfLogs") ||
-        matchPart(p0, L"Documents and Settings")) {
+    // These names are protected only when they are direct children of a drive
+    // root (or the first component of a rooted path).
+    if (isProtectedRootComponent(components.front())) {
         return LocationSafety::Protected;
     }
 
-    // Nested protected names anywhere.
-    for (const auto& part : parts) {
-        if (matchPart(part, L"System Volume Information") ||
-            matchPart(part, L"$Recycle.Bin")) {
+    // System Volume Information and the recycle bin remain protected when a
+    // path representation includes a server/share prefix.
+    for (const auto component : components) {
+        if (equalsIgnoreCase(component, L"System Volume Information") ||
+            equalsIgnoreCase(component, L"$Recycle.Bin")) {
             return LocationSafety::Protected;
         }
     }
 
-    // User profile root: C:\Users\<name>
-    if (parts.size() >= 2 && matchPart(parts[0], L"Users")) {
-        if (parts.size() == 2) {
-            // C:\Users\<name>
+    // C:\Users\<name> is the profile root. A path below it is ordinary unless
+    // it enters AppData, which is sensitive regardless of its depth.
+    if (components.size() >= 2 &&
+        equalsIgnoreCase(components[0], L"Users")) {
+        if (components.size() == 2) {
             return LocationSafety::Sensitive;
         }
-        // C:\Users\<name>\AppData\...
-        if (parts.size() >= 3 && matchPart(parts[2], L"AppData")) {
-            return LocationSafety::Sensitive;
+        for (std::size_t i = 2; i < components.size(); ++i) {
+            if (equalsIgnoreCase(components[i], L"AppData")) {
+                return LocationSafety::Sensitive;
+            }
         }
-        // Deeper under profile — ordinary project/data areas by default.
         return LocationSafety::Ordinary;
     }
 
-    // AppData outside Users (unusual) still sensitive if present.
-    for (const auto& part : parts) {
-        if (matchPart(part, L"AppData")) {
+    for (const auto component : components) {
+        if (equalsIgnoreCase(component, L"AppData")) {
             return LocationSafety::Sensitive;
         }
     }
 
-    // UNC or non-drive paths.
-    if (startsWithIgnoreCase(normalized, L"\\\\")) {
-        return LocationSafety::Unknown;
-    }
-
-    return LocationSafety::Ordinary;
+    // Relative, UNC, and non-user layouts are intentionally conservative.
+    return LocationSafety::Unknown;
 }
 
 bool isMutationDisallowed(LocationSafety safety) noexcept

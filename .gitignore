@@ -1,7 +1,9 @@
 # Build
 /build/
+/build-release/
 /out/
 /cmake-build-*/
+/.tmp-*/
 /.vs/
 /*.user
 /*.suo

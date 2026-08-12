@@ -122,6 +122,8 @@ if(SPACELENS_BUILD_GUI)
         src/app/ScanSession.cpp
         src/ui/MainWindow.hpp
         src/ui/MainWindow.cpp
+        src/ui/CleanupReviewDialog.hpp
+        src/ui/CleanupReviewDialog.cpp
     )
 
     target_link_libraries(SpaceLens
