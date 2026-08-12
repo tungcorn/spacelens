@@ -308,3 +308,176 @@ SPACELENS_TEST(UsnParity_subdirectory_root_boundary_or_skip)
         SPACELENS_REQUIRE(row.path.find(L"\\outside\\") == std::wstring::npos);
     }
 }
+
+// Multi-batch refresh regression: the pre-fix bug stored max(record.usn)+1 as
+// next_usn, which is not a valid record boundary. Second refresh then hit
+// ERROR_INVALID_PARAMETER → HistoryLost → full_rebuild_required with 0 records.
+SPACELENS_TEST(UsnParity_multi_refresh_batches_or_skip)
+{
+    const std::wstring root = makeTempRoot("multi");
+    const fs::path rootPath(root);
+
+    if (!usnSupportedFor(root)) {
+        std::cout << "  [skip] USN not Supported — multi-refresh skipped\n";
+        return;
+    }
+
+    auto built = buildIndexForRoot(root, {});
+    SPACELENS_REQUIRE(built.state == IndexBuildState::Completed);
+    auto probe0 = probeIncremental(root);
+    SPACELENS_REQUIRE(probe0.incrementalState ==
+                      IncrementalRefreshState::Supported);
+    const std::uint64_t cp0 = probe0.checkpoint.nextUsn;
+    std::cout << "  [multi] checkpoint_after_full next_usn=" << cp0 << '\n';
+
+    auto requireRefreshOk = [](const IndexRefreshResult& r, const char* label) {
+        if (r.outcome == IndexRefreshOutcome::FullRebuildRequired) {
+            throw spacelens::test::Failure(
+                std::string(label) +
+                " unexpected full_rebuild_required reason=" + r.reason +
+                " journal_records_seen=" +
+                std::to_string(r.journalRecordsSeen) +
+                " start_usn=" + std::to_string(r.diagStartUsn) +
+                " cont_usn=" + std::to_string(r.diagContinuationUsn) +
+                " committed=" + std::to_string(r.diagCommittedNextUsn));
+        }
+        SPACELENS_REQUIRE(r.outcome == IndexRefreshOutcome::Refreshed ||
+                          r.outcome == IndexRefreshOutcome::AlreadyCurrent);
+    };
+
+    // Batch A: 1 change
+    writeFile(rootPath / "batch_a.txt", "a");
+    sleepUsn();
+    auto rA = refreshIndex(root, {});
+    requireRefreshOk(rA, "batch_A");
+    std::cout << "  [multi] batch_A outcome=" << toString(rA.outcome)
+              << " records=" << rA.journalRecordsSeen
+              << " start=" << rA.diagStartUsn
+              << " cont=" << rA.diagContinuationUsn
+              << " committed=" << rA.diagCommittedNextUsn << '\n';
+    SPACELENS_REQUIRE(rA.diagCommittedNextUsn == 0 ||
+                      rA.diagCommittedNextUsn >= rA.diagStartUsn);
+    if (rA.outcome == IndexRefreshOutcome::Refreshed) {
+        SPACELENS_REQUIRE(rA.checkpoint.nextUsn >= cp0);
+        // Committed cursor must not be record.usn+1 style (we cannot prove the
+        // absolute value, but it must equal the driver continuation).
+        SPACELENS_REQUIRE(rA.diagCommittedNextUsn == rA.diagContinuationUsn ||
+                          rA.diagCommittedNextUsn == rA.checkpoint.nextUsn);
+    }
+    const IndexSnapshot snapA = captureSnapshot(root);
+
+    // Batch B: ~100 changes on same index (no full rebuild between)
+    for (int i = 0; i < 100; ++i) {
+        writeFile(rootPath / "bulk_b" / ("f" + std::to_string(i) + ".txt"),
+                  std::string(static_cast<std::size_t>(i % 32) + 1, 'b'));
+    }
+    sleepUsn();
+    auto rB = refreshIndex(root, {});
+    requireRefreshOk(rB, "batch_B");
+    std::cout << "  [multi] batch_B outcome=" << toString(rB.outcome)
+              << " records=" << rB.journalRecordsSeen
+              << " start=" << rB.diagStartUsn
+              << " cont=" << rB.diagContinuationUsn
+              << " committed=" << rB.diagCommittedNextUsn << '\n';
+    // The critical regression: batch B must not fail after A succeeded.
+    SPACELENS_REQUIRE(rB.reason != "history_lost");
+    if (rB.outcome == IndexRefreshOutcome::Refreshed &&
+        rA.outcome == IndexRefreshOutcome::Refreshed) {
+        SPACELENS_REQUIRE(rB.diagStartUsn == rA.checkpoint.nextUsn);
+    }
+    const IndexSnapshot snapB = captureSnapshot(root);
+
+    // Batch C: another ~20 changes + rename
+    writeFile(rootPath / "batch_c.txt", std::string(256, 'c'));
+    fs::rename(rootPath / "batch_a.txt", rootPath / "batch_a_renamed.txt");
+    for (int i = 0; i < 20; ++i) {
+        writeFile(rootPath / "bulk_c" / ("g" + std::to_string(i) + ".txt"),
+                  "g");
+    }
+    sleepUsn();
+    auto rC = refreshIndex(root, {});
+    requireRefreshOk(rC, "batch_C");
+    std::cout << "  [multi] batch_C outcome=" << toString(rC.outcome)
+              << " records=" << rC.journalRecordsSeen
+              << " start=" << rC.diagStartUsn
+              << " cont=" << rC.diagContinuationUsn
+              << " committed=" << rC.diagCommittedNextUsn << '\n';
+    const IndexSnapshot afterInc = captureSnapshot(root);
+
+    // Empty-tail refresh must stay Supported / already_current — not HistoryLost.
+    auto rEmpty = refreshIndex(root, {});
+    requireRefreshOk(rEmpty, "empty_tail");
+    SPACELENS_REQUIRE(rEmpty.outcome != IndexRefreshOutcome::FullRebuildRequired);
+
+    // Oracle parity after multi-batch.
+    auto full = buildIndexForRoot(root, {});
+    SPACELENS_REQUIRE(full.state == IndexBuildState::Completed);
+    const IndexSnapshot afterFull = captureSnapshot(root);
+    requireParity(afterInc, afterFull, "multi_refresh");
+
+    // Snapshots must have grown across batches (sanity).
+    SPACELENS_REQUIRE(snapB.fileCount >= snapA.fileCount);
+    SPACELENS_REQUIRE(afterInc.fileCount >= snapB.fileCount);
+}
+
+// Process-restart simulation: close all handles, re-open published index via
+// refreshIndex on a fresh call path (same process but fully re-probed checkpoint).
+SPACELENS_TEST(UsnParity_checkpoint_survives_reopen_or_skip)
+{
+    const std::wstring root = makeTempRoot("reopen");
+    const fs::path rootPath(root);
+
+    if (!usnSupportedFor(root)) {
+        std::cout << "  [skip] USN not Supported — reopen checkpoint skipped\n";
+        return;
+    }
+
+    auto built = buildIndexForRoot(root, {});
+    SPACELENS_REQUIRE(built.state == IndexBuildState::Completed);
+
+    writeFile(rootPath / "before_restart.txt", "v1");
+    sleepUsn();
+    auto r1 = refreshIndex(root, {});
+    if (r1.outcome == IndexRefreshOutcome::FullRebuildRequired) {
+        throw spacelens::test::Failure(
+            std::string("pre-restart refresh failed: ") + r1.reason);
+    }
+    SPACELENS_REQUIRE(r1.outcome == IndexRefreshOutcome::Refreshed ||
+                      r1.outcome == IndexRefreshOutcome::AlreadyCurrent);
+    const std::uint64_t committed = r1.checkpoint.nextUsn;
+    std::cout << "  [reopen] after_r1 next_usn=" << committed
+              << " cont=" << r1.diagContinuationUsn << '\n';
+
+    // Drop local result; re-probe from disk as a new process would.
+    auto probe = probeIncremental(root);
+    SPACELENS_REQUIRE(probe.incrementalState ==
+                      IncrementalRefreshState::Supported);
+    SPACELENS_REQUIRE(probe.checkpoint.nextUsn == committed);
+    SPACELENS_REQUIRE(probe.checkpoint.status == "ready");
+
+    // Mutate after "process exit", then refresh from persisted checkpoint.
+    writeFile(rootPath / "after_restart.txt", "v2");
+    writeFile(rootPath / "before_restart.txt", "v1-updated");
+    sleepUsn();
+    auto r2 = refreshIndex(root, {});
+    if (r2.outcome == IndexRefreshOutcome::FullRebuildRequired) {
+        throw spacelens::test::Failure(
+            std::string("post-restart refresh failed: ") + r2.reason +
+            " start_usn=" + std::to_string(r2.diagStartUsn) +
+            " journal_records_seen=" +
+            std::to_string(r2.journalRecordsSeen));
+    }
+    SPACELENS_REQUIRE(r2.outcome == IndexRefreshOutcome::Refreshed ||
+                      r2.outcome == IndexRefreshOutcome::AlreadyCurrent);
+    SPACELENS_REQUIRE(r2.diagStartUsn == committed);
+    std::cout << "  [reopen] after_r2 outcome=" << toString(r2.outcome)
+              << " start=" << r2.diagStartUsn
+              << " cont=" << r2.diagContinuationUsn
+              << " records=" << r2.journalRecordsSeen << '\n';
+
+    const IndexSnapshot afterInc = captureSnapshot(root);
+    auto full = buildIndexForRoot(root, {});
+    SPACELENS_REQUIRE(full.state == IndexBuildState::Completed);
+    const IndexSnapshot afterFull = captureSnapshot(root);
+    requireParity(afterInc, afterFull, "reopen_checkpoint");
+}
