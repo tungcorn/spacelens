@@ -22,6 +22,30 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# SQLite amalgamation (vendored) — C compilation unit for index storage
+# ---------------------------------------------------------------------------
+enable_language(C)
+add_library(spacelens_sqlite STATIC
+    third_party/sqlite/sqlite3.c
+)
+set_target_properties(spacelens_sqlite PROPERTIES LINKER_LANGUAGE C)
+target_include_directories(spacelens_sqlite
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite
+)
+target_compile_definitions(spacelens_sqlite
+    PUBLIC
+        SQLITE_THREADSAFE=1
+        SQLITE_DEFAULT_MEMSTATUS=0
+        SQLITE_OMIT_LOAD_EXTENSION
+        SQLITE_DQS=0
+)
+if(MSVC)
+    # sqlite3.c is third-party; keep warnings quiet for the amalgamation only.
+    target_compile_options(spacelens_sqlite PRIVATE /W2)
+endif()
+
+# ---------------------------------------------------------------------------
 # Core library — no Qt
 # ---------------------------------------------------------------------------
 add_library(spacelens_core STATIC
@@ -47,6 +71,16 @@ add_library(spacelens_core STATIC
     src/core/CleanupReview.cpp
     src/core/ReclaimAnalysis.hpp
     src/core/ReclaimAnalysis.cpp
+    src/core/index/Sqlite.hpp
+    src/core/index/Sqlite.cpp
+    src/core/index/IndexPaths.hpp
+    src/core/index/IndexPaths.cpp
+    src/core/index/IndexStore.hpp
+    src/core/index/IndexStore.cpp
+    src/core/index/IndexBuilder.hpp
+    src/core/index/IndexBuilder.cpp
+    src/core/index/IndexQuery.hpp
+    src/core/index/IndexQuery.cpp
     src/platform/windows/FindHandle.hpp
     src/platform/windows/WindowsFileEnumerator.hpp
     src/platform/windows/WindowsFileEnumerator.cpp
@@ -64,8 +98,10 @@ target_compile_definitions(spacelens_core
         SPACELENS_VERSION_STRING="${PROJECT_VERSION}"
 )
 
+target_link_libraries(spacelens_core PUBLIC spacelens_sqlite)
+
 if(WIN32)
-    target_link_libraries(spacelens_core PUBLIC shell32)
+    target_link_libraries(spacelens_core PUBLIC shell32 ole32)
 endif()
 
 # ---------------------------------------------------------------------------
