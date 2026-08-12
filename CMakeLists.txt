@@ -85,6 +85,10 @@ add_library(spacelens_core STATIC
     src/core/index/IndexRefresh.cpp
     src/core/index/IndexCatalog.hpp
     src/core/index/IndexCatalog.cpp
+    src/core/index/IndexOverview.hpp
+    src/core/index/IndexOverview.cpp
+    src/core/treemap/TreemapLayout.hpp
+    src/core/treemap/TreemapLayout.cpp
     src/platform/windows/FindHandle.hpp
     src/platform/windows/VolumeHandle.hpp
     src/platform/windows/VolumeHandle.cpp
@@ -172,6 +176,8 @@ if(SPACELENS_BUILD_GUI)
         src/ui/MainWindow.cpp
         src/ui/IndexBrowserPage.hpp
         src/ui/IndexBrowserPage.cpp
+        src/ui/TreemapWidget.hpp
+        src/ui/TreemapWidget.cpp
         src/ui/CleanupReviewDialog.hpp
         src/ui/CleanupReviewDialog.cpp
     )
