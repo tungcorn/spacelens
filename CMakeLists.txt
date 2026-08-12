@@ -81,7 +81,15 @@ add_library(spacelens_core STATIC
     src/core/index/IndexBuilder.cpp
     src/core/index/IndexQuery.hpp
     src/core/index/IndexQuery.cpp
+    src/core/index/IndexRefresh.hpp
+    src/core/index/IndexRefresh.cpp
     src/platform/windows/FindHandle.hpp
+    src/platform/windows/VolumeHandle.hpp
+    src/platform/windows/VolumeHandle.cpp
+    src/platform/windows/FileIdentity.hpp
+    src/platform/windows/FileIdentity.cpp
+    src/platform/windows/UsnJournal.hpp
+    src/platform/windows/UsnJournal.cpp
     src/platform/windows/WindowsFileEnumerator.hpp
     src/platform/windows/WindowsFileEnumerator.cpp
     src/platform/windows/ExplorerIntegration.hpp
