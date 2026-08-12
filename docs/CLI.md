@@ -5,9 +5,10 @@ and AI agents. It performs read-only scanning and storage analysis. It does not
 delete, move, rename, purge, wipe, execute shell commands, or grant filesystem
 mutation authority.
 
-The checked-out executable currently wires `scan`, `top`, `help`, and `version`.
-The `capabilities` and `find` commands below are the milestone target contract;
-use `capabilities --json` to discover what a particular build actually exposes.
+The executable wires `scan`, `top`, `find`, `index`, `index status`,
+`index list`, `query`, `capabilities`, `help`, and `version`. Use
+`capabilities --json` to discover flags for a particular build (including
+`persistent_index` and `indexed_query`).
 
 ## Build
 
@@ -44,20 +45,31 @@ spacelens capabilities [--json]
 
 The intended JSON response includes:
 
+Representative JSON (fields may grow; treat unknown keys as forward-compatible):
+
 ```json
 {
   "schema_version": 1,
-  "product": "spacelens",
+  "version": "0.1.0",
+  "commands": ["scan", "top", "find", "index", "index status", "index list", "query", "capabilities", "help", "version"],
+  "features": {
+    "json": true,
+    "cancellation": true,
+    "persistent_index": true,
+    "indexed_query": true,
+    "incremental_index": false,
+    "filesystem_mutation": false,
+    "classification": true,
+    "filters": true
+  },
   "read_only": true,
   "filesystem_mutation": false,
-  "commands": ["capabilities", "scan", "top", "find", "help", "version"],
-  "filters": ["--min-size", "--older-than", "--category", "--files", "--dirs", "--limit"],
-  "size_units": "binary_1024"
+  "index_schema_version": 1
 }
 ```
 
 A build must not be assumed to support a command or filter until it advertises
-that capability.
+that capability. Indexed query requires a prior successful `index` for that root.
 
 ### `scan`
 
@@ -97,7 +109,43 @@ spacelens find <path> [--min-size SIZE] [--older-than DAYS]
 
 `find` is analysis, not deletion. It does not add results to Cleanup Review
 unless a separate human UI action explicitly chooses to do so. It never changes
-the filesystem.
+the filesystem. Unlike `query`, `find` always performs a live scan.
+
+### `index`
+
+Builds or rebuilds the persistent SQLite index for a root (full scan + publish).
+
+```text
+spacelens index <path> [--json]
+```
+
+The index is written under `%LOCALAPPDATA%\SpaceLens\indexes\<rootKey>\`.
+Rebuilds stage to `index.db.building` and publish atomically; cancel/fail leaves
+any previous good index intact. See [`docs/INDEX.md`](INDEX.md).
+
+### `index status` / `index list`
+
+```text
+spacelens index status <path> [--json]
+spacelens index list [--json]
+```
+
+`status` reports existence, age, counts, and readiness. `list` enumerates
+published indexes under AppData. Neither command scans the analyzed root for
+content mutation; both are read-only with respect to user data.
+
+### `query`
+
+Runs a filtered query against a **published** index only. No live-scan fallback.
+
+```text
+spacelens query <path> [--files|--dirs] [--min-size SIZE] [--ext EXT]
+                     [--older-than DAYS] [--category CATEGORY]
+                     [--strength STRENGTH] [--limit N] [--json]
+```
+
+Missing index → exit code **6** (`index_not_found`). Successful JSON includes
+`"source": "persistent_index"` and `index.age_ms`.
 
 ### `help` and `version`
 

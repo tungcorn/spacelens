@@ -16,15 +16,16 @@ spacelens_core  →  spacelens (CLI, read-only)
 
 - Core scanner: working (Win32 enumeration, logical-size aggregation, Top-K,
   cancellation, progress, and reparse-point policy)
-- Storage-intelligence foundations: intended architecture documented for
-  deterministic classification, location safety policy, cleanup-review values,
-  and read-only reclaim analysis
-- CLI: working baseline (`scan`, `top`, `help`, `version`, `--json`); the
-  `capabilities` and `find` milestone surfaces are documented as intended and
-  should be discovered from the executable before use
-- GUI: basic async scan UI present; cleanup review is a planning concept, not a
-  filesystem mutation feature
-- Not yet: persistent index/history, duplicates, MFT fast path, product AI,
+- Storage intelligence: deterministic classification, location safety policy,
+  cleanup-review values, and read-only reclaim analysis
+- **Persistent Index V1:** SQLite full-root index under AppData; CLI
+  `index` / `index status` / `index list` / `query` (no live fallback,
+  no incremental USN/MFT yet)
+- CLI: `scan`, `top`, `find`, `index*`, `query`, `capabilities`, `help`,
+  `version` with versioned JSON and `filesystem_mutation: false`
+- GUI: async scan, navigation, filters, details, Explorer/copy, Cleanup Review
+  (planning only — no delete/move)
+- Not yet: incremental index, duplicates, MFT fast path, MCP, product AI,
   automatic deletion, or automatic movement
 
 ## Features
@@ -36,6 +37,7 @@ spacelens_core  →  spacelens (CLI, read-only)
 - Write-based file and descendant-based directory activity summaries
 - Read-only reclaim analysis for human review prioritization
 - Cleanup Review planning data with no delete or move operation
+- Persistent SQLite index for fast repeated filtered queries
 - Read-only CLI with human and machine-readable (`--json`) output for
   humans, scripts, and AI agents
 - Optional Qt desktop UI with live progress, cancel, Explorer, and clipboard
@@ -44,8 +46,8 @@ spacelens_core  →  spacelens (CLI, read-only)
   and counted
 
 **Safety contract:** the CLI is read-only by design. See
-[`docs/SAFETY.md`](docs/SAFETY.md) for the product safety architecture, policy
-boundaries, review flow, TOCTOU requirements, and future mutation separation.
+[`docs/SAFETY.md`](docs/SAFETY.md). Index design: [`docs/INDEX.md`](docs/INDEX.md).
+Measured baselines: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ## Build prerequisites
 
@@ -72,13 +74,16 @@ cmake -S . -B build-cli -G Ninja -DCMAKE_BUILD_TYPE=Release -DSPACELENS_BUILD_GU
 cmake --build build-cli --target spacelens
 .\build-cli\cli\spacelens.exe scan C:\Users --json
 .\build-cli\cli\spacelens.exe top C:\Users --dirs --limit 20 --json
+.\build-cli\cli\spacelens.exe index C:\Users --json
+.\build-cli\cli\spacelens.exe query C:\Users --files --min-size 100MB --limit 20 --json
 ```
 
-The CLI is read-only; its intended capability discovery command is:
+The CLI is read-only; capability discovery:
 
 ```powershell
 .\build-cli\cli\spacelens.exe capabilities --json
 ```
+
 
 GUI (Windows output name is `spacelens-gui.exe` — not `spacelens.exe`, because
 NTFS is case-insensitive and those names would collide):
@@ -93,8 +98,9 @@ Tests:
 ctest --test-dir build --output-on-failure
 ```
 
-See [`docs/CLI.md`](docs/CLI.md), [`docs/SAFETY.md`](docs/SAFETY.md), and
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+See [`docs/CLI.md`](docs/CLI.md), [`docs/SAFETY.md`](docs/SAFETY.md),
+[`docs/INDEX.md`](docs/INDEX.md), [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md),
+and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Architecture
 

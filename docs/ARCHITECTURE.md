@@ -46,15 +46,22 @@ than claiming a shipped feature.
   query surfaces, filters, versioned JSON output, and explicit read-only
   capability reporting.
 
-The current checked-out CLI wires `scan`, `top`, `help`, and `version`. The
-`capabilities` / `find` surfaces and the analysis filters/schema additions are
-documented here as the milestone target contract unless the corresponding
-implementation is present in the build.
+The CLI wires `scan`, `top`, `find`, `capabilities`, `index`, `index status`,
+`index list`, `query`, `help`, and `version`. Analysis filters and versioned
+JSON (`schema_version: 1`) are implemented. See [`docs/CLI.md`](CLI.md) and
+[`docs/INDEX.md`](INDEX.md).
 
-Deferred work includes AI inside the product, persistent scan history or SQLite,
-a persistent index and watch mode, an NTFS MFT fast path, duplicate detection,
-and any automatic deletion or movement. A future mutation service, if approved,
-must be a separately permissioned surface rather than an ordinary CLI verb.
+**Persistent Index V1** stores a full SQLite snapshot under
+`%LOCALAPPDATA%\SpaceLens\indexes\<rootKey>\index.db` for fast repeated
+read-only queries. Rebuilds use a staging file and atomic publish so a failed
+or cancelled rebuild never destroys the previous good index. Queries report
+`source: persistent_index` and fail with exit code 6 when no index exists —
+there is no silent live-scan fallback.
+
+Deferred work includes AI inside the product, incremental/USN/MFT index updates,
+watch mode, duplicate detection, treemap, MCP, and any automatic deletion or
+movement. A future mutation service, if approved, must be a separately
+permissioned surface rather than an ordinary CLI verb.
 
 ## Layered architecture
 
@@ -70,10 +77,14 @@ platform/windows (IFileEnumerator, FindHandle, Explorer helpers)
 
 | Layer | Responsibility | Forbidden |
 |-------|----------------|-----------|
-| **core** | Scan algorithms, owned data model, queries, classification, location policy, activity summaries, read-only reclaim analysis, cleanup-review values, size formatting | Qt types, interactive prompts, stdout policy, filesystem mutation |
+| **core** | Scan algorithms, owned data model, live queries, classification, location policy, activity summaries, read-only reclaim analysis, cleanup-review values, size formatting, **persistent index** (SQLite schema, builder, query) | Qt types, interactive prompts, stdout policy, filesystem mutation of analyzed roots |
 | **platform** | Win32 enumeration, file metadata, path/Explorer integration | Qt, CLI argument parsing, shell-command construction |
-| **cli** | argv parsing, capability declaration, human/JSON rendering, filters, exit codes, Ctrl+C → `stop_token` | GUI widgets, delete/move/execute commands |
+| **cli** | argv parsing, capability declaration, human/JSON rendering, filters, exit codes, Ctrl+C → `stop_token`, index/query commands | GUI widgets, delete/move/execute commands |
 | **gui/app** | Qt windows, models/views, review planning, threads↔signals bridge | Scan algorithms, direct ownership of Win32 enumeration |
+
+Index storage is AppData-only metadata. Core may create/replace files under
+`%LOCALAPPDATA%\SpaceLens\`; it must never delete or move user content under a
+scanned root.
 
 Dependency direction is strictly **upward only**: core never includes CLI or GUI
 headers. Analysis results are data; neither an AI explanation nor a UI label can

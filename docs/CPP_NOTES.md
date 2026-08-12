@@ -79,6 +79,27 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Lifetime:** A candidate remains valid until removed or the review queue is cleared. Its snapshot metadata is retained for future revalidation, not treated as current filesystem truth.
 - **Bug prevented:** Review state accidentally becoming delete authority, dangling references to scan entries, and hidden resource ownership in a UI queue.
 
+## SQLite RAII (`SqliteDb` / `SqliteStmt` / `SqliteTxn`)
+
+- **Why used:** The amalgamation C API is error-code oriented; RAII makes open/prepare/finalize/close exception-safe and keeps a single writer path obvious.
+- **Ownership:** `SqliteDb` owns one `sqlite3*`. `SqliteStmt` owns one `sqlite3_stmt*` and must be destroyed before the DB is closed. `SqliteTxn` issues `BEGIN` and `COMMIT`/`ROLLBACK` on scope exit.
+- **Lifetime:** Staging builds open `index.db.building`; after inserts complete, statements are finalized and the DB is closed **before** `publishIndexDatabase` renames files. Read queries open the published DB read-only for the duration of one status/query call.
+- **Bug prevented:** SQLITE_BUSY / unable-to-close with live statements; leaked prepares; half-published indexes when an exception aborts mid-insert.
+
+## Staging publish for index rebuilds
+
+- **Why used:** A full rebuild must not destroy a good previous index if the new build fails or is cancelled.
+- **Ownership:** `IndexBuilder` owns the staging store until publish. AppData paths come from `locateIndex` (FNV-1a root key under LocalAppData).
+- **Lifetime:** Write staging → close → `MoveFile` live to `.bak` → move staging to live → delete `.bak`. On failure after moving live aside, restore from `.bak`. Cancel/fail before publish only deletes staging.
+- **Bug prevented:** Users losing the last good index mid-rebuild; partial DBs left as the published path.
+
+## Roots meta upsert (no CASCADE wipe)
+
+- **Why used:** `entries.root_id` references `roots(id) ON DELETE CASCADE`.
+- **Ownership:** One logical root row (`id = 1`) per V1 database.
+- **Lifetime:** `writeRootMeta` uses `INSERT … ON CONFLICT(id) DO UPDATE`. Never `DELETE FROM roots` while entries exist.
+- **Bug prevented:** A second meta write after inserts silently deleting every entry via CASCADE (observed during V1 development as “publish succeeded, query returned 0 rows”).
+
 ## Value types versus owning pointers
 
 - **Why used:** Scan records, classifications, policies, activity summaries, and reclaim results are ordinary data and should have explicit copy/move semantics.

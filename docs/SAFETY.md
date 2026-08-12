@@ -32,7 +32,7 @@ The primary executable:
 build/cli/spacelens.exe
 ```
 
-exposes deterministic **scan / query / classify / report** operations only.
+exposes deterministic **scan / query / classify / report / index** operations only.
 
 It must **not** register commands such as:
 
@@ -43,6 +43,12 @@ delete  remove  rm  move  cleanup execute  purge  wipe
 There are no hidden aliases for destructive operations.
 There is no generic shell-execution feature.
 LLM output must never be turned into a filesystem command automatically.
+
+Persistent index build and query write **only** SpaceLens metadata under
+`%LOCALAPPDATA%\SpaceLens\`. They never delete, move, or rewrite files under
+the analyzed root. `query` is read-only against the index database; a missing
+index fails closed (exit 6) instead of falling back to a silent live path that
+could be mistaken for authority over live data.
 
 Agents can discover this contract:
 
