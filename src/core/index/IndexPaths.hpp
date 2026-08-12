@@ -8,7 +8,8 @@
 namespace spacelens {
 
 /// Index schema version stored inside the database (not CLI JSON schema_version).
-inline constexpr int kIndexSchemaVersion = 1;
+/// V2 adds file_id/parent_file_id on entries and refresh_checkpoint for USN.
+inline constexpr int kIndexSchemaVersion = 2;
 
 /// Paths and keys for SpaceLens-owned index files under LocalAppData.
 /// Never writes into the scanned source tree.

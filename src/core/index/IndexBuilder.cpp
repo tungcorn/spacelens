@@ -5,6 +5,8 @@
 #include "core/ReclaimAnalysis.hpp"
 #include "core/SafetyPolicy.hpp"
 #include "core/ScanEngine.hpp"
+#include "core/index/IndexRefresh.hpp"
+#include "platform/windows/FileIdentity.hpp"
 #include "platform/windows/WindowsFileEnumerator.hpp"
 
 #ifndef NOMINMAX
@@ -117,11 +119,14 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
                 "id, root_id, parent_id, kind, name, path, size_bytes, recursive_size, "
                 "extension, last_write_ticks, last_access_ticks, attributes, is_reparse, "
                 "classification, confidence, rule_id, location_safety, reclaimability, "
-                "candidate_strength, newest_descendant_write, oldest_descendant_write) "
+                "candidate_strength, newest_descendant_write, oldest_descendant_write, "
+                "file_id, parent_file_id) "
                 "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,"
-                "?19,?20,?21);");
+                "?19,?20,?21,?22,?23);");
 
             SqliteTxn txn(store.db());
+            std::unordered_map<DirIndex, std::uint64_t> dirFileIds;
+            dirFileIds.reserve(scan.tree.directoryCount());
 
             // Insert directories first so parents exist.
             const std::size_t dirCount = scan.tree.directoryCount();
@@ -143,6 +148,16 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
                 const auto reclaim = analyzeItem(
                     path, ItemKind::Directory, node.recursiveSize,
                     node.newestDescendantWrite, cls, safety, now, 0);
+
+                std::uint64_t fileId = 0;
+                std::uint64_t parentFileId = 0;
+                if (auto id = queryFileIdentity(path)) {
+                    fileId = id->fileId;
+                }
+                if (node.parent != InvalidDirIndex) {
+                    parentFileId = dirFileIds[node.parent];
+                }
+                dirFileIds[di] = fileId;
 
                 const std::int64_t id = nextId++;
                 dirEntryIds[di] = id;
@@ -177,6 +192,8 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
                     20, static_cast<std::int64_t>(node.newestDescendantWrite));
                 insert.bindInt64(
                     21, static_cast<std::int64_t>(node.oldestDescendantWrite));
+                insert.bindInt64(22, static_cast<std::int64_t>(fileId));
+                insert.bindInt64(23, static_cast<std::int64_t>(parentFileId));
                 insert.stepDone();
             }
 
@@ -199,6 +216,15 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
                 const auto reclaim = analyzeItem(
                     path, ItemKind::File, file.size, file.lastWriteTime, cls,
                     safety, now, file.lastAccessTime);
+
+                std::uint64_t fileId = 0;
+                std::uint64_t parentFileId = 0;
+                if (auto id = queryFileIdentity(path)) {
+                    fileId = id->fileId;
+                }
+                if (file.parent != InvalidDirIndex) {
+                    parentFileId = dirFileIds[file.parent];
+                }
 
                 const std::int64_t id = nextId++;
                 insert.reset();
@@ -228,11 +254,16 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
                 insert.bindText(19, toString(reclaim.strength));
                 insert.bindInt64(20, 0);
                 insert.bindInt64(21, 0);
+                insert.bindInt64(22, static_cast<std::int64_t>(fileId));
+                insert.bindInt64(23, static_cast<std::int64_t>(parentFileId));
                 insert.stepDone();
             }
 
             meta.status = IndexStatus::Ready;
             store.writeRootMeta(meta);
+            // USN checkpoint after body is written; still inside the same txn.
+            writeRefreshCheckpointAfterFullBuild(store, result.location.rootPath,
+                                                 meta.indexedAtTicks);
             txn.commit();
             insert.finalize();
         }

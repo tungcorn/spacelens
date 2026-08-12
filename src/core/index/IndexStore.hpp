@@ -37,8 +37,11 @@ struct IndexRootInfo {
 /// Caller owns the SqliteDb lifetime; IndexStore does not share across threads.
 class IndexStore {
 public:
-    /// Open an existing ready index for read queries.
+    /// Open an existing ready index for read queries (migrates schema if needed).
     [[nodiscard]] static IndexStore openRead(const IndexLocation& loc);
+
+    /// Open published index for incremental refresh (read/write, no staging).
+    [[nodiscard]] static IndexStore openReadWrite(const IndexLocation& loc);
 
     /// Create a new staging database for a full rebuild.
     [[nodiscard]] static IndexStore createStaging(const IndexLocation& loc);
@@ -50,6 +53,9 @@ public:
     [[nodiscard]] const IndexLocation& location() const noexcept { return m_loc; }
 
     void applySchema();
+    /// Apply schema and migrate older versions up to kIndexSchemaVersion.
+    void migrateSchemaIfNeeded();
+
     void writeRootMeta(const IndexRootInfo& info);
     [[nodiscard]] std::optional<IndexRootInfo> readRootMeta() const;
 

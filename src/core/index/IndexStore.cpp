@@ -56,6 +56,24 @@ CREATE TABLE IF NOT EXISTS entries (
   candidate_strength TEXT NOT NULL DEFAULT 'None',
   newest_descendant_write INTEGER NOT NULL DEFAULT 0,
   oldest_descendant_write INTEGER NOT NULL DEFAULT 0,
+  file_id INTEGER NOT NULL DEFAULT 0,
+  parent_file_id INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY(root_id) REFERENCES roots(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS refresh_checkpoint (
+  root_id INTEGER PRIMARY KEY NOT NULL,
+  volume_device_path TEXT NOT NULL DEFAULT '',
+  volume_root_path TEXT NOT NULL DEFAULT '',
+  volume_serial INTEGER NOT NULL DEFAULT 0,
+  filesystem TEXT NOT NULL DEFAULT '',
+  usn_journal_id INTEGER NOT NULL DEFAULT 0,
+  next_usn INTEGER NOT NULL DEFAULT 0,
+  lowest_valid_usn INTEGER NOT NULL DEFAULT 0,
+  full_indexed_at_ticks INTEGER NOT NULL DEFAULT 0,
+  last_refresh_at_ticks INTEGER NOT NULL DEFAULT 0,
+  last_refresh_method TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'unavailable',
   FOREIGN KEY(root_id) REFERENCES roots(id) ON DELETE CASCADE
 );
 
@@ -73,7 +91,77 @@ CREATE INDEX IF NOT EXISTS idx_entries_root_strength
   ON entries(root_id, candidate_strength);
 CREATE INDEX IF NOT EXISTS idx_entries_root_path
   ON entries(root_id, path);
+CREATE INDEX IF NOT EXISTS idx_entries_root_file_id
+  ON entries(root_id, file_id);
 )SQL";
+
+int readSchemaVersion(SqliteDb& db)
+{
+    try {
+        SqliteStmt stmt(db, "SELECT value FROM meta WHERE key = ?1;");
+        stmt.bindText(1, "index_schema_version");
+        if (!stmt.step()) {
+            return 0;
+        }
+        return std::stoi(stmt.columnText(0));
+    } catch (...) {
+        return 0;
+    }
+}
+
+void writeSchemaVersion(SqliteDb& db, int version)
+{
+    SqliteStmt del(db, "DELETE FROM meta WHERE key = ?1;");
+    del.bindText(1, "index_schema_version");
+    del.stepDone();
+    SqliteStmt ins(db, "INSERT INTO meta(key, value) VALUES(?1, ?2);");
+    ins.bindText(1, "index_schema_version");
+    ins.bindText(2, std::to_string(version));
+    ins.stepDone();
+}
+
+bool columnExists(SqliteDb& db, const char* table, const char* column)
+{
+    // PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
+    const std::string sql = std::string("PRAGMA table_info(") + table + ");";
+    SqliteStmt stmt(db, sql);
+    while (stmt.step()) {
+        if (stmt.columnText(1) == column) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void migrateToV2(SqliteDb& db)
+{
+    if (!columnExists(db, "entries", "file_id")) {
+        db.exec("ALTER TABLE entries ADD COLUMN file_id INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!columnExists(db, "entries", "parent_file_id")) {
+        db.exec(
+            "ALTER TABLE entries ADD COLUMN parent_file_id INTEGER NOT NULL DEFAULT 0;");
+    }
+    db.exec(R"SQL(
+CREATE TABLE IF NOT EXISTS refresh_checkpoint (
+  root_id INTEGER PRIMARY KEY NOT NULL,
+  volume_device_path TEXT NOT NULL DEFAULT '',
+  volume_root_path TEXT NOT NULL DEFAULT '',
+  volume_serial INTEGER NOT NULL DEFAULT 0,
+  filesystem TEXT NOT NULL DEFAULT '',
+  usn_journal_id INTEGER NOT NULL DEFAULT 0,
+  next_usn INTEGER NOT NULL DEFAULT 0,
+  lowest_valid_usn INTEGER NOT NULL DEFAULT 0,
+  full_indexed_at_ticks INTEGER NOT NULL DEFAULT 0,
+  last_refresh_at_ticks INTEGER NOT NULL DEFAULT 0,
+  last_refresh_method TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'unavailable',
+  FOREIGN KEY(root_id) REFERENCES roots(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_entries_root_file_id
+  ON entries(root_id, file_id);
+)SQL");
+}
 
 }  // namespace
 
@@ -97,7 +185,6 @@ std::string fileTimeTicksToIsoUtc(std::uint64_t ticks)
     if (ticks == 0) {
         return {};
     }
-    // FILETIME epochs: 100ns since 1601-01-01. Convert to Unix seconds.
     constexpr std::uint64_t kEpochDiff = 11644473600ULL;
     const std::uint64_t seconds = ticks / 10'000'000ULL;
     if (seconds < kEpochDiff) {
@@ -132,8 +219,25 @@ IndexStore IndexStore::openRead(const IndexLocation& loc)
     if (!indexDatabaseExists(loc)) {
         throw SqliteError("index database not found");
     }
-    SqliteDb db(loc.dbPath, SqliteOpen::ReadOnly);
+    SqliteDb db(loc.dbPath, SqliteOpen::ReadWrite);  // migrate may need write
     IndexStore store(loc, std::move(db));
+    store.migrateSchemaIfNeeded();
+    // Reopen read-only for pure queries is optional; keep RW for simplicity
+    // of shared open path. Query only SELECTs.
+    if (!store.schemaSupported()) {
+        throw SqliteError("unsupported index_schema_version");
+    }
+    return store;
+}
+
+IndexStore IndexStore::openReadWrite(const IndexLocation& loc)
+{
+    if (!indexDatabaseExists(loc)) {
+        throw SqliteError("index database not found");
+    }
+    SqliteDb db(loc.dbPath, SqliteOpen::ReadWrite);
+    IndexStore store(loc, std::move(db));
+    store.migrateSchemaIfNeeded();
     if (!store.schemaSupported()) {
         throw SqliteError("unsupported index_schema_version");
     }
@@ -146,9 +250,8 @@ IndexStore IndexStore::createStaging(const IndexLocation& loc)
         throw SqliteError("failed to create index directory");
     }
     discardStagingDatabase(loc);
-    ::DeleteFileW(loc.stagingDbPath.c_str());  // ignore errors
-    SqliteDb db(loc.stagingDbPath,
-                SqliteOpen::ReadWrite | SqliteOpen::Create);
+    ::DeleteFileW(loc.stagingDbPath.c_str());
+    SqliteDb db(loc.stagingDbPath, SqliteOpen::ReadWrite | SqliteOpen::Create);
     IndexStore store(loc, std::move(db));
     store.applySchema();
     return store;
@@ -157,26 +260,39 @@ IndexStore IndexStore::createStaging(const IndexLocation& loc)
 void IndexStore::applySchema()
 {
     m_db.exec(kSchemaSql);
-    SqliteStmt del(m_db, "DELETE FROM meta WHERE key = ?1;");
-    del.bindText(1, "index_schema_version");
-    del.stepDone();
-    SqliteStmt ins(
-        m_db, "INSERT INTO meta(key, value) VALUES(?1, ?2);");
-    ins.bindText(1, "index_schema_version");
-    ins.bindText(2, std::to_string(kIndexSchemaVersion));
-    ins.stepDone();
+    writeSchemaVersion(m_db, kIndexSchemaVersion);
+}
+
+void IndexStore::migrateSchemaIfNeeded()
+{
+    // Ensure base tables exist for empty/corrupt edge cases.
+    m_db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY NOT NULL, "
+              "value TEXT NOT NULL);");
+
+    int version = readSchemaVersion(m_db);
+    if (version == 0) {
+        // Might be a fresh partial DB — apply full schema.
+        applySchema();
+        return;
+    }
+    if (version > kIndexSchemaVersion) {
+        throw SqliteError("unsupported index_schema_version");
+    }
+    if (version < 2) {
+        migrateToV2(m_db);
+        writeSchemaVersion(m_db, 2);
+        version = 2;
+    }
+    if (version < kIndexSchemaVersion) {
+        // Future migrations chain here.
+        writeSchemaVersion(m_db, kIndexSchemaVersion);
+    }
 }
 
 bool IndexStore::schemaSupported() const
 {
     try {
-        SqliteStmt stmt(const_cast<SqliteDb&>(m_db),
-                        "SELECT value FROM meta WHERE key = ?1;");
-        stmt.bindText(1, "index_schema_version");
-        if (!stmt.step()) {
-            return false;
-        }
-        const int version = std::stoi(stmt.columnText(0));
+        const int version = readSchemaVersion(const_cast<SqliteDb&>(m_db));
         return version == kIndexSchemaVersion;
     } catch (...) {
         return false;
