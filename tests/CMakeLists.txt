@@ -1,11 +1,16 @@
 set(SPACELENS_TEST_SOURCES
     main.cpp
     test_size_formatter.cpp
+    test_size_parse.cpp
     test_directory_tree.cpp
     test_topk.cpp
     test_scan_engine.cpp
     test_windows_integration.cpp
     test_query.cpp
+    test_classification.cpp
+    test_safety_policy.cpp
+    test_cleanup_review.cpp
+    test_reclaim.cpp
     TestRunner.hpp
     FakeFileEnumerator.hpp
 )
@@ -15,6 +20,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/cli/Args.cpp")
     list(APPEND SPACELENS_TEST_SOURCES
         test_cli_args.cpp
         test_cli_json.cpp
+        test_cli_readonly.cpp
         ${CMAKE_SOURCE_DIR}/src/cli/Args.cpp
         ${CMAKE_SOURCE_DIR}/src/cli/Json.cpp
     )
