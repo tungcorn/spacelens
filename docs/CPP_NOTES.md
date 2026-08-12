@@ -43,3 +43,17 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Ownership:** `DirectoryTree` owns all node and file records. Parent/child relationships are integer indices; indices are invalid after the owning storage is destroyed or reallocated according to the container contract.
 - **Lifetime:** The tree and every index referring to it belong to one `ScanSession` result. UI selections must be translated into stable IDs or refreshed snapshots rather than retaining raw references across mutations.
 - **Bug prevented:** Reference cycles, accidental shared ownership, recursive destruction overhead, and unclear mutation/lifetime rules. It also supports reconstructing paths from parent indices instead of duplicating full paths for every node.
+
+## `IFileEnumerator` abstraction
+
+- **Why used:** Keeps `ScanEngine` free of Win32 so tests can inject a fake filesystem and a future NTFS fast path can plug in without rewriting aggregation.
+- **Ownership:** The caller owns the enumerator instance; `ScanEngine` only borrows a reference for the duration of `scan()`.
+- **Lifetime:** The enumerator must outlive the scan call. Fake enumerators live on the test stack; the production Windows enumerator is owned by the app/session.
+- **Bug prevented:** Core logic coupled to live disks (flaky tests) and duplicated scan algorithms per platform backend.
+
+## Reparse-point policy
+
+- **Why used:** Junctions and directory symlinks can create cycles or double-count storage if followed blindly.
+- **Ownership:** Classification is done by the platform enumerator (`EntryKind::ReparseDirectory`); the engine decides whether to recurse via `ScanOptions`.
+- **Lifetime:** Policy is fixed for a single scan operation.
+- **Bug prevented:** Infinite recursion through junction loops and inflated totals when the same files appear under multiple linked paths.

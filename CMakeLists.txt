@@ -38,12 +38,27 @@ add_library(spacelens_core STATIC
     src/core/Types.hpp
     src/core/SizeFormatter.hpp
     src/core/SizeFormatter.cpp
+    src/core/DirectoryTree.hpp
+    src/core/DirectoryTree.cpp
+    src/core/TopKCollector.hpp
+    src/core/IFileEnumerator.hpp
+    src/core/ScanTypes.hpp
+    src/core/ScanEngine.hpp
+    src/core/ScanEngine.cpp
+    src/platform/windows/FindHandle.hpp
+    src/platform/windows/WindowsFileEnumerator.hpp
+    src/platform/windows/WindowsFileEnumerator.cpp
 )
 
 target_include_directories(spacelens_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
+# Windows enumerator needs the system libraries; core stays free of Qt.
+if(WIN32)
+    target_link_libraries(spacelens_core PUBLIC)
+endif()
 
 # ---------------------------------------------------------------------------
 # Application executable
