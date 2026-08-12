@@ -1,77 +1,189 @@
 # SpaceLens Architecture
 
-## Scope and goals
+## Product shape
 
-This document describes the architecture for Phases 1–3. These phases establish a functional Windows disk-space analyzer: enumerate files and directories, aggregate directory sizes, present the results in a responsive Qt Widgets UI, support cancellation and progress reporting, and provide useful navigation and largest-item views. AI-assisted analysis, SQLite persistence, NTFS MFT access, and duplicate detection are deliberately outside this scope.
+SpaceLens is **not** primarily a GUI application. It is a native storage-analysis
+engine with multiple front ends:
+
+```text
+            spacelens_core
+           /              \
+          /                \
+   spacelens (CLI)     SpaceLens (GUI)
+   agent / scripts     Qt Widgets desktop
+```
+
+The **CLI is a first-class product interface**. AI coding agents (Claude Code,
+Codex, OpenCode, etc.) and automation scripts are expected to drive SpaceLens
+from the terminal using deterministic, machine-readable output.
+
+The GUI is an optional interactive surface over the same core.
+
+## Scope (current)
+
+Phases covered here:
+
+1. Functional scanner (enumeration, aggregation, Top-K, cancellation)
+2. CLI queries (`scan`, `top`, `--json`, exit codes)
+3. GUI shell wired to the same scanner
+
+Deferred: AI inside the product, SQLite history, NTFS MFT fast path, duplicates,
+persistent index / watch mode, automatic deletion.
 
 ## Layered architecture
 
-SpaceLens follows a one-way dependency flow:
-
 ```text
-UI -> app -> core/analysis -> platform
+cli / gui
+    ↓
+app (GUI-only adapters, e.g. Qt ScanSession)
+    ↓
+core  (ScanEngine, DirectoryTree, TopK, queries, formatting helpers)
+    ↓
+platform/windows  (IFileEnumerator, FindHandle, Explorer helpers)
 ```
 
-- **UI** contains Qt Widgets, presentation state, user interaction, and view-model-style adapters. It does not enumerate Windows files or implement scan algorithms.
-- **app** coordinates commands and application state. It creates scan sessions, connects progress/results to the UI, and owns the lifetime of long-running operations.
-- **core/analysis** contains platform-neutral data structures and scan/aggregation algorithms. It depends on abstractions such as `IFileEnumerator`, not on Qt or Win32 details.
-- **platform** contains Windows-specific enumeration and handle/error adapters. It translates Win32 results into core-facing types and policies.
+| Layer | Responsibility | Forbidden |
+|-------|----------------|-----------|
+| **core** | Scan algorithms, data model, Top-K, size formatting, JSON-friendly result shaping | Qt types, interactive prompts, stdout policy |
+| **platform** | Win32 enumeration and OS integration | Qt, CLI argument parsing |
+| **cli** | argv parsing, human/JSON rendering, exit codes, Ctrl+C → stop_token | GUI widgets |
+| **gui/app** | Qt windows, threads↔signals bridge | Scan algorithms |
 
-Lower layers must not depend on higher layers. The core must remain testable with a fake `IFileEnumerator`; platform code must not leak Win32 handles or error conventions into UI code.
+Dependency direction is strictly **upward only**: core never includes CLI or GUI headers.
 
-## Key types and ownership
+## Targets
 
-- **`DirectoryTree`** owns the indexed directory and file records for one scan result. A directory node stores its parent index, child-directory indices, file indices, and aggregate `recursiveSize`.
-- **`FileEntry`** is a value-like record owned by the tree or its file-record storage. It contains the file name/path components needed to reconstruct a path, size, and relevant metadata.
-- **`IFileEnumerator`** is the core-facing enumeration abstraction. A platform implementation emits directory and file observations; tests can provide deterministic fakes.
-- **`ScanEngine`** owns the scan algorithm and writes observations into a scan-owned tree/session. It performs traversal, aggregation, and largest-file selection without owning UI objects.
-- **`ScanSession`** owns the state of one operation: the result tree, cancellation/progress state, scan status, and any bounded worker execution resources. The app owns the active session and releases it after completion or cancellation.
+| CMake target | Kind | Output (Windows) | Links |
+|--------------|------|------------------|-------|
+| `spacelens_core` | static library | `spacelens_core.lib` | Win32 — **no Qt** |
+| `spacelens` | CLI executable | `build/cli/spacelens.exe` (console) | `spacelens_core` only |
+| `SpaceLens` | GUI executable | `build/gui/spacelens-gui.exe` | `spacelens_core` + Qt6 |
+| `spacelens_tests` | unit tests | `spacelens_tests.exe` | `spacelens_core` (+ CLI helpers) |
 
-Ownership is explicit. Long-lived objects use value storage or `std::unique_ptr` where polymorphism or deferred construction is required. No scan result is retained by a global service.
+**Windows case-insensitivity:** `spacelens.exe` and `SpaceLens.exe` are the same
+path. CLI and GUI therefore use distinct output names/directories.
 
-## Memory model and paths
+Building the CLI must not require a running GUI. Qt is required only when
+`SPACELENS_BUILD_GUI=ON` (default ON if Qt is found).
 
-The directory hierarchy uses indices into stable storage rather than a graph of `shared_ptr` nodes. A node stores a parent index and child indices; files are similarly referenced by indices or compact records. This avoids reference cycles, makes ownership unambiguous, improves locality, and allows a complete scan result to be discarded in one operation.
+## Core types and ownership
 
-Names and parent indices are sufficient to reconstruct a full path by walking from a node to the root and joining components in reverse order. The implementation should avoid storing a duplicated absolute path on every descendant unless a measured requirement justifies it. Temporary path strings are created at I/O boundaries or when requested by the UI.
+- **`DirectoryTree`** — owns all directory/file records for one scan; index-based parent/child links; reconstructs paths on demand.
+- **`FileEntry` / `DirectoryNode`** — value records inside the tree.
+- **`IFileEnumerator`** — platform-neutral listing; tests use fakes.
+- **`ScanEngine`** — synchronous recursive scan; accepts `std::stop_token` and throttled progress callback; **no Qt**.
+- **`ScanResult` / `ScanProgress` / `ScanOptions`** — plain C++ value types shared by CLI and GUI.
+- **`TopKCollector`** — bounded min-heap, O(N log K).
+
+GUI-only:
+
+- **`ScanSession`** (Qt) — owns `std::jthread`, marshals progress/completion to the GUI thread.
+
+CLI-only:
+
+- argument parsing, stdout/stderr policy, process exit codes, console Ctrl+C → `std::stop_source`.
+
+## CLI design principles (agent-oriented)
+
+1. **No interactive prompts** unless a future flag explicitly requests them.
+2. **stdout** = primary result (human table or JSON).
+3. **stderr** = diagnostics, progress (optional), errors.
+4. **`--json`** = deterministic machine output; raw `size_bytes`; stable field names.
+5. **Exit codes** distinguish success, usage errors, inaccessible root, scan failure, cancellation.
+6. Commands are small verbs (`scan`, `top`, …) so agents can chain queries.
+7. Do **not** embed an LLM in the CLI; external agents supply reasoning.
+
+### Initial commands
+
+```text
+spacelens scan <path> [--json]
+spacelens top  <path> (--files|--dirs) [--limit N] [--json]
+spacelens help
+spacelens version
+```
+
+Future (not implemented yet): `--min-size`, `--ext`, `index`, `query`, watch mode.
+
+### JSON contract (stable fields)
+
+Common envelope:
+
+```json
+{
+  "ok": true,
+  "command": "top",
+  "root": "C:\\Users",
+  "files_scanned": 182391,
+  "directories_scanned": 18432,
+  "bytes_scanned": 1234567890,
+  "elapsed_ms": 8241,
+  "access_denied": 4,
+  "reparse_skipped": 3,
+  "other_errors": 0,
+  "state": "completed",
+  "results": [ { "path": "...", "size_bytes": 0 } ]
+}
+```
+
+- Sizes in JSON are always integer **bytes** (`size_bytes`).
+- Human mode may pretty-print with KB/MB/GB via `SizeFormatter`.
+- Decorative text never appears on JSON stdout.
+
+### Exit codes
+
+| Code | Meaning |
+|-----:|---------|
+| 0 | Success (completed scan/query) |
+| 2 | Invalid arguments / usage |
+| 3 | Inaccessible or missing root path |
+| 4 | Scan failed |
+| 5 | Cancelled (Ctrl+C / stop) |
+| 1 | Unexpected internal error |
+
+## Memory model
+
+Index-based tree; leaf names only; full paths reconstructed. Avoids `shared_ptr`
+graphs and per-file absolute path duplication.
 
 ## Concurrency and cancellation
 
-Phase 1 begins with a synchronous engine so the traversal and invariants are easy to test. The asynchronous implementation uses bounded workers and `std::jthread`/`std::stop_token` (or a thin application-level equivalent if Qt thread integration is required). Work is partitioned only where it improves throughput; thread creation is bounded and there is no unbounded task queue.
-
-Workers check the stop token at directory and batch boundaries. Cancellation is cooperative: the current Win32 operation is allowed to return, then the scan exits cleanly and reports a cancelled status. No global lock is held during filesystem I/O. Shared result mutations use narrow synchronization or ownership transfer, and progress updates are throttled/coalesced so the UI is not flooded by per-file signals.
+- Core scan is synchronous + `stop_token` (easy to test).
+- GUI runs the engine on `std::jthread` via `ScanSession`.
+- CLI runs the engine on the main thread (or a worker) and maps console cancel to `stop_source`.
+- No global mutex held during filesystem I/O.
+- Progress is throttled (~100 ms) so consumers are not flooded.
 
 ## Windows enumeration
 
-The Windows platform enumerator uses `FindFirstFileExW`/`FindNextFileW` and closes the search handle through an RAII wrapper. Directory traversal does not follow reparse points by default; reparse-point directories are recorded or skipped according to the scan policy, but are not recursively entered. Permission-denied and other per-entry access errors are non-fatal: the scan records the limitation when possible, skips the inaccessible branch, and continues with siblings. Fatal setup or invariant failures are reported to the session.
+`FindFirstFileExW` + `FIND_FIRST_EX_LARGE_FETCH`, RAII `FindHandle` (`FindClose`).
+Default: **do not follow directory reparse points**. Access errors are non-fatal
+and counted.
 
 ## Aggregation invariant
 
-For every directory node, `recursiveSize` equals the sum of the sizes of files directly contained by that directory plus the `recursiveSize` of every scanned child directory. A directory is finalized only after its descendants have been processed, or its aggregate is updated through an equivalent bottom-up algorithm. Skipped or inaccessible content must not be silently counted as zero without preserving the scan's partial/incomplete status.
+```text
+recursiveSize(dir) =
+    sum(direct file sizes)
+  + sum(recursiveSize(child directories))
+```
 
-## Top-K largest files
+Root total equals the sum of every discovered file size exactly once (for fully
+scanned reachable content).
 
-The largest-file view maintains a bounded min-heap of at most `K` entries while scanning. Each candidate is inserted until the heap is full; thereafter it replaces the smallest retained candidate only when it is larger. This uses `O(N log K)` time and `O(K)` additional memory instead of sorting every file. The final heap is converted to a deterministic descending list for presentation, with a stable tie-breaker such as reconstructed path.
+## Future indexing (not implemented)
 
-## UI structure
+Architecture must allow:
 
-`MainWindow` is organized around a scan toolbar/status area and three complementary panels:
+```text
+spacelens index C:\
+spacelens query ...
+spacelens index C:\ --watch
+```
 
-- a directory tree for hierarchical sizes and navigation;
-- a details/list panel for the selected directory's files and child directories;
-- a largest-items panel for the global Top-K files.
+without rewriting CLI/GUI. That implies: keep query surfaces on top of
+`ScanResult` / future `IndexStore` interfaces, not ad-hoc GUI models.
 
-The UI displays scan state, progress, partial/error information, and cancellation controls. Explorer launch and clipboard copy operate on paths produced by the app/core layer; widgets do not derive paths by reaching into platform handles.
+## Deferred
 
-## Dependency direction rules
-
-1. UI may depend on app-facing interfaces and Qt, but not directly on Win32 enumeration.
-2. App may coordinate UI and core, but core types do not depend on app or UI types.
-3. Core/analysis may depend on standard C++20 and narrow interfaces, but not Qt or Win32 headers.
-4. Platform may depend on Win32 and standard C++20, and implements core interfaces.
-5. Cross-layer data crosses through explicit value types, callbacks, or interfaces; do not expose framework-owned objects across boundaries.
-6. Cancellation, errors, and progress are represented by policies/types that can be tested without a live UI.
-
-## Deferred past Phase 3
-
-The following are intentionally deferred: AI explanations or recommendations, SQLite history/index persistence, direct NTFS MFT scanning, duplicate-file analysis, content hashing at scale, cloud/network volumes as a specialized mode, and broad plugin/extensibility infrastructure. They should not shape Phase 1–3 interfaces beyond keeping the current boundaries replaceable.
+AI product features, SQLite snapshots, MFT scanner, duplicates, deletion UX,
+persistent index. Keep interfaces replaceable; do not hard-wire GUI types into core.

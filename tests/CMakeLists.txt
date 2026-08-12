@@ -1,13 +1,26 @@
-add_executable(spacelens_tests
+set(SPACELENS_TEST_SOURCES
     main.cpp
     test_size_formatter.cpp
     test_directory_tree.cpp
     test_topk.cpp
     test_scan_engine.cpp
     test_windows_integration.cpp
+    test_query.cpp
     TestRunner.hpp
     FakeFileEnumerator.hpp
 )
+
+# CLI helper sources (no main) for unit tests — keep CLI free of Qt.
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/cli/Args.cpp")
+    list(APPEND SPACELENS_TEST_SOURCES
+        test_cli_args.cpp
+        test_cli_json.cpp
+        ${CMAKE_SOURCE_DIR}/src/cli/Args.cpp
+        ${CMAKE_SOURCE_DIR}/src/cli/Json.cpp
+    )
+endif()
+
+add_executable(spacelens_tests ${SPACELENS_TEST_SOURCES})
 
 target_link_libraries(spacelens_tests
     PRIVATE

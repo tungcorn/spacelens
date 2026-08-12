@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(SpaceLens
     VERSION 0.1.0
-    DESCRIPTION "Native Windows disk-space analyzer"
+    DESCRIPTION "Native Windows disk-space analyzer (core + CLI + GUI)"
     LANGUAGES CXX
 )
 
@@ -10,15 +10,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
-
 option(SPACELENS_BUILD_TESTS "Build unit tests" ON)
+option(SPACELENS_BUILD_GUI "Build Qt GUI (SpaceLens.exe)" ON)
+option(SPACELENS_BUILD_CLI "Build CLI (spacelens.exe)" ON)
 
-# ---------------------------------------------------------------------------
-# Compiler warnings
-# ---------------------------------------------------------------------------
 if(MSVC)
     add_compile_options(/W4 /permissive- /Zc:__cplusplus /utf-8 /EHsc)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
@@ -27,12 +22,7 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Qt 6
-# ---------------------------------------------------------------------------
-find_package(Qt6 REQUIRED COMPONENTS Widgets Concurrent)
-
-# ---------------------------------------------------------------------------
-# Core library (no Qt dependency)
+# Core library — no Qt
 # ---------------------------------------------------------------------------
 add_library(spacelens_core STATIC
     src/core/Types.hpp
@@ -45,6 +35,7 @@ add_library(spacelens_core STATIC
     src/core/ScanTypes.hpp
     src/core/ScanEngine.hpp
     src/core/ScanEngine.cpp
+    src/core/Query.hpp
     src/platform/windows/FindHandle.hpp
     src/platform/windows/WindowsFileEnumerator.hpp
     src/platform/windows/WindowsFileEnumerator.cpp
@@ -57,47 +48,106 @@ target_include_directories(spacelens_core
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Win32 APIs used by the platform layer.
+target_compile_definitions(spacelens_core
+    PUBLIC
+        SPACELENS_VERSION_STRING="${PROJECT_VERSION}"
+)
+
 if(WIN32)
     target_link_libraries(spacelens_core PUBLIC shell32)
 endif()
 
 # ---------------------------------------------------------------------------
-# Application executable
+# CLI — console subsystem, core only
 # ---------------------------------------------------------------------------
-add_executable(SpaceLens
-    src/main.cpp
-    src/app/Application.hpp
-    src/app/Application.cpp
-    src/app/ScanSession.hpp
-    src/app/ScanSession.cpp
-    src/ui/MainWindow.hpp
-    src/ui/MainWindow.cpp
-)
+if(SPACELENS_BUILD_CLI)
+    set(SPACELENS_CLI_SOURCES
+        src/cli/main.cpp
+        src/cli/ExitCodes.hpp
+        src/cli/Args.hpp
+        src/cli/Args.cpp
+        src/cli/Json.hpp
+        src/cli/Json.cpp
+        src/cli/Commands.hpp
+        src/cli/Commands.cpp
+    )
 
-target_link_libraries(SpaceLens
-    PRIVATE
-        spacelens_core
-        Qt6::Widgets
-        Qt6::Concurrent
-)
-
-if(WIN32)
-    set_target_properties(SpaceLens PROPERTIES WIN32_EXECUTABLE TRUE)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/main.cpp")
+        add_executable(spacelens ${SPACELENS_CLI_SOURCES})
+        target_link_libraries(spacelens PRIVATE spacelens_core)
+        # Console subsystem. On Windows, keep CLI out of the same case-insensitive
+        # path as the GUI (spacelens.exe vs SpaceLens.exe collide).
+        set_target_properties(spacelens PROPERTIES
+            OUTPUT_NAME "spacelens"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/cli"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/cli"
+            ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/cli"
+        )
+        if(WIN32)
+            # Force console subsystem even if a global flag tries to set windows.
+            target_link_options(spacelens PRIVATE "/SUBSYSTEM:CONSOLE")
+            set_target_properties(spacelens PROPERTIES WIN32_EXECUTABLE FALSE)
+        endif()
+    else()
+        message(WARNING "SPACELENS_BUILD_CLI=ON but src/cli/main.cpp missing; CLI target skipped")
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
-# Tests
+# GUI — optional Qt
+# ---------------------------------------------------------------------------
+if(SPACELENS_BUILD_GUI)
+    set(CMAKE_AUTOMOC ON)
+    set(CMAKE_AUTORCC ON)
+    set(CMAKE_AUTOUIC ON)
+
+    find_package(Qt6 REQUIRED COMPONENTS Widgets Concurrent)
+
+    add_executable(SpaceLens
+        src/main.cpp
+        src/app/Application.hpp
+        src/app/Application.cpp
+        src/app/ScanSession.hpp
+        src/app/ScanSession.cpp
+        src/ui/MainWindow.hpp
+        src/ui/MainWindow.cpp
+    )
+
+    target_link_libraries(SpaceLens
+        PRIVATE
+            spacelens_core
+            Qt6::Widgets
+            Qt6::Concurrent
+    )
+
+    # Windows file systems are case-insensitive: "SpaceLens.exe" and
+    # "spacelens.exe" are the same path. Emit the GUI under a distinct name
+    # and directory so the CLI is never overwritten.
+    set_target_properties(SpaceLens PROPERTIES
+        OUTPUT_NAME "spacelens-gui"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/gui"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/gui"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/gui"
+    )
+    if(WIN32)
+        set_target_properties(SpaceLens PROPERTIES WIN32_EXECUTABLE TRUE)
+        target_link_options(SpaceLens PRIVATE "/SUBSYSTEM:WINDOWS")
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Tests — core only (no Qt)
 # ---------------------------------------------------------------------------
 if(SPACELENS_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
 
-# ---------------------------------------------------------------------------
-# Convenience: copy Qt runtime next to the binary on Windows (optional later)
-# ---------------------------------------------------------------------------
 message(STATUS "SpaceLens ${PROJECT_VERSION}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
-message(STATUS "  Qt6 dir: ${Qt6_DIR}")
-message(STATUS "  Tests: ${SPACELENS_BUILD_TESTS}")
+message(STATUS "  CLI:  ${SPACELENS_BUILD_CLI}")
+message(STATUS "  GUI:  ${SPACELENS_BUILD_GUI}")
+message(STATUS "  Tests:${SPACELENS_BUILD_TESTS}")
+if(SPACELENS_BUILD_GUI)
+    message(STATUS "  Qt6:  ${Qt6_DIR}")
+endif()

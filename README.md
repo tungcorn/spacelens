@@ -1,20 +1,29 @@
 # SpaceLens
 
-SpaceLens is a native Windows disk-space analyzer built with modern C++20, CMake, and Qt 6 Widgets. Its initial goal is to scan a selected directory, aggregate space usage through the directory hierarchy, and present the results in a responsive desktop interface.
+Native Windows disk-space analyzer written in modern C++20.
+
+SpaceLens is **core-first**: a UI-independent scanner library with a first-class
+**CLI** for humans and AI agents, plus an optional **Qt GUI**.
+
+```text
+spacelens_core  →  spacelens (CLI)
+                →  SpaceLens (GUI)
+```
 
 ## Status
 
-Phase 1 is in progress. The repository currently contains the project planning and architecture documentation; implementation and performance measurements should not be inferred until they are added and validated.
+- Core scanner: working (Win32 enumeration, aggregation, Top-K, cancellation)
+- CLI: in progress (`scan`, `top`, `--json`)
+- GUI: basic async scan UI present
+- Not yet: persistent index, duplicates, MFT fast path, product AI
 
-## Planned features
+## Features
 
-- Scan a selected Windows directory using native filesystem enumeration.
-- Show recursive directory sizes in a navigable tree.
-- List files and subdirectories for the selected location.
-- Show a bounded Top-K list of the largest files.
-- Report progress, access limitations, errors, and cancellation clearly.
-- Open selected paths in Windows Explorer and copy paths to the clipboard.
-- Later phases may add history, richer analysis, and other explicitly planned capabilities.
+- Fast native recursive scan (logical file sizes)
+- Largest files (bounded Top-K) and largest directories
+- CLI with human and machine-readable (`--json`) output for agents/scripts
+- Optional Qt desktop UI (live progress, cancel, Explorer, clipboard)
+- Reparse points not followed by default; access errors non-fatal
 
 ## Build prerequisites
 
@@ -29,22 +38,34 @@ See [`docs/SURVEY.md`](docs/SURVEY.md) for the environment used during bootstrap
 ## Build and run
 
 ```powershell
-# From a shell where cl.exe and the Windows SDK are available:
-$env:CMAKE_PREFIX_PATH = "D:\Qt\6.8.3\msvc2022_64"
+. .\scripts\dev-env.ps1
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-.\build\SpaceLens.exe
 ```
 
-Debug:
+CLI only (no Qt required):
 
 ```powershell
-cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="D:\Qt\6.8.3\msvc2022_64"
-cmake --build build-debug
-ctest --test-dir build-debug --output-on-failure
+cmake -S . -B build-cli -G Ninja -DCMAKE_BUILD_TYPE=Release -DSPACELENS_BUILD_GUI=OFF
+cmake --build build-cli --target spacelens
+.\build-cli\cli\spacelens.exe scan C:\Users --json
+.\build-cli\cli\spacelens.exe top C:\Users --dirs --limit 20 --json
 ```
 
-If `cl` is not on PATH, run the Visual Studio developer environment first, or use `scripts\dev-env.ps1` once it is added.
+GUI (Windows output name is `spacelens-gui.exe` — not `spacelens.exe`, because
+NTFS is case-insensitive and those names would collide):
+
+```powershell
+.\build\gui\spacelens-gui.exe
+```
+
+Tests:
+
+```powershell
+ctest --test-dir build --output-on-failure
+```
+
+See [`docs/CLI.md`](docs/CLI.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Architecture
 

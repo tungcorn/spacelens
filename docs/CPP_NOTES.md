@@ -58,6 +58,13 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Lifetime:** Policy is fixed for a single scan operation.
 - **Bug prevented:** Infinite recursion through junction loops and inflated totals when the same files appear under multiple linked paths.
 
+## Windows case-insensitive executables
+
+- **Why it matters:** NTFS treats `spacelens.exe` and `SpaceLens.exe` as the same path. Linking both CLI and GUI into `build/` under those names overwrites one binary with the other (and can launch the GUI when you meant the CLI).
+- **Ownership:** CMake assigns distinct `OUTPUT_NAME` / `RUNTIME_OUTPUT_DIRECTORY` values (`build/cli/spacelens.exe` vs `build/gui/spacelens-gui.exe`).
+- **Lifetime:** Applies for the whole Windows product layout.
+- **Bug prevented:** “CLI opens a window / produces no stdout” caused by accidentally executing the Qt GUI binary.
+
 ## `ScanSession` + `std::jthread` with Qt signals
 
 - **Why used:** Keep the GUI responsive while `ScanEngine` walks the filesystem. `std::jthread` joins on destruction and exposes `std::stop_token` for cooperative cancel.
