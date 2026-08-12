@@ -5,6 +5,8 @@
 /cmake-build-*/
 /.tmp-*/
 /.vs/
+/_bench_*/
+
 /*.user
 /*.suo
 CMakeUserPresets.json

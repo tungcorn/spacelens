@@ -1,158 +1,181 @@
-# Persistent Index V1
+# Persistent Index (V1 + V2)
 
-SpaceLens can build a **read-only SQLite index** of a scanned root and answer
+SpaceLens builds a **read-only SQLite index** of a scanned root and answers
 repeated size/classification queries without rescanning the filesystem.
 
-This is **not** a mutation surface, incremental USN/MFT watcher, MCP server, or
-AI feature. Indexed queries never delete, move, or rewrite source files.
+**Incremental Index V2** can refresh that index from the NTFS **USN Change
+Journal** when a volume handle can be opened read-only and a checkpoint is ready.
+It never creates, resizes, deletes, or reconfigures the journal, and never mutates
+analyzed user data.
 
-## Goals (V1)
+## Goals
 
 | Goal | Behavior |
 |------|----------|
 | Full rebuild | `index <root>` scans once and publishes `index.db` |
 | Fast re-query | `query` reads only the published DB |
 | Safe rebuild | Staging DB + atomic publish; cancel/fail discards staging only |
-| Explicit failure | Missing index → exit code **6** (`index_not_found`); **no live fallback** |
-| Agent-safe | `filesystem_mutation: false`; index lives under AppData only |
+| Incremental refresh | `index refresh <root>` applies USN deltas when checkpoint is ready |
+| Explicit failure | Missing index → exit **6**; no live query fallback |
+| Discontinuity | Journal/volume mismatch → `full_rebuild_required` (no guessing) |
+| Agent-safe | `filesystem_mutation: false`; AppData-only index writes |
 
-## Non-goals (V1)
+## Non-goals
 
-- Incremental / USN / MFT delta updates (`incremental_index: false`)
-- Watching directories or background refresh
-- Querying without a prior successful `index`
+- Auto-refresh on `query` (refresh is always explicit)
+- Creating or configuring the USN journal
 - Writing into the analyzed root
-- Treemap, duplicates, MCP, product AI
+- GUI polish, treemap, MCP, product AI, deletion/movement
+- MFT-based initial scan (future)
 
 ## Storage layout
-
-Indexes live under the per-user Local AppData tree (never next to the scanned data):
 
 ```text
 %LOCALAPPDATA%\SpaceLens\indexes\<rootKey>\
     index.db              published, ready for query
-    index.db.building     staging during rebuild (ephemeral)
+    index.db.building     staging during full rebuild (ephemeral)
     index.db.bak          temporary during publish swap
 ```
 
 - **rootKey**: FNV-1a 64-bit hex of the case-folded normalized root path
-- **Normalization**: drive roots and trailing-slash rules match safety policy
-  (`normalizePathForPolicy`)
-- **Schema version**: `index_schema_version = 1` (stored in `meta` and reported
-  separately from CLI JSON `schema_version`)
+- **index_schema_version**: **2** (CLI JSON still uses `schema_version: 1` for the
+  response envelope)
 
 ## Schema (logical)
 
 | Table | Role |
 |-------|------|
-| `meta` | `index_schema_version` and future key/value metadata |
-| `roots` | One row per DB (V1: single root): path, key, counts, ISO timestamp, status |
-| `entries` | Files and directories with size, times, classification, safety, reclaim fields |
-
-Indexes cover `(root_id, kind, size)`, extension, write time, classification,
-candidate strength, and path for deterministic filtered queries.
+| `meta` | `index_schema_version` and key/value metadata |
+| `roots` | One row per DB: path, key, counts, ISO timestamp, status |
+| `entries` | Files/directories + classification/safety/reclaim fields; V2 adds `file_id`, `parent_file_id` (NTFS FRN) |
+| `refresh_checkpoint` | Volume identity, USN journal id, next USN, method, status |
 
 `roots` is **upserted**. Never `DELETE FROM roots` while `entries` exist —
-`ON DELETE CASCADE` would wipe the body (fixed during V1 development).
+`ON DELETE CASCADE` would wipe the body.
 
-## Build pipeline
+### Migration
+
+Opening a V1 database for write migrates in place:
+
+1. `ALTER TABLE entries ADD COLUMN file_id / parent_file_id` (default 0)
+2. Create `refresh_checkpoint` if missing
+3. Set `index_schema_version = 2`
+
+Old indexes remain queryable; incremental refresh needs a new full `index` so
+FRNs and a checkpoint are populated.
+
+## Full build pipeline
 
 ```text
 ScanEngine (live, read-only)
         ↓
-DirectoryTree snapshot + classification / safety / reclaim analysis
+DirectoryTree + classification / safety / reclaim
         ↓
-IndexStore::createStaging → index.db.building
+IndexStore staging → INSERT entries (with file_id when available)
         ↓
-INSERT entries + writeRootMeta(status=ready)
+writeRefreshCheckpointAfterFullBuild (best-effort USN cursor)
         ↓
-finalize statements, close DB
-        ↓
-publishIndexDatabase: live → .bak, staging → live, delete .bak
+publishIndexDatabase (atomic)
 ```
 
-On cancel or failure before publish:
+Checkpoint `status` after full build:
 
-- Staging file is discarded
-- Previous published `index.db` is left intact
+| status | Meaning |
+|--------|---------|
+| `ready` | Journal open + query succeeded; `usn_journal_id` / `next_usn` stored |
+| `access_denied` | Volume open / USN IOCTL denied (common without admin/backup privilege) |
+| `journal_not_active` | NTFS volume has no active journal (we never create one) |
+| `unsupported_filesystem` | Not NTFS |
+| `unavailable` | Other / unknown |
 
-## Query pipeline
+Full build **never fails** solely because the journal is unavailable.
+
+## Incremental refresh pipeline
 
 ```text
-query <root> [filters]
+index refresh <root>
         ↓
-locateIndex → openRead(index.db)
+probeIncremental: index exists? checkpoint ready? live USN ok?
         ↓
-if missing → error index_not_found (exit 6)
+read USN records since next_usn (FSCTL_READ_USN_JOURNAL only)
         ↓
-parameterized SQL filters + ORDER BY size DESC, path ASC + LIMIT
+coalesce by FRN → delete / upsert under root filter
         ↓
-JSON/human results with source: persistent_index and age_ms
+recompute dirty directory aggregates + ancestors
+        ↓
+advance checkpoint + commit (same SQLite transaction)
 ```
 
-There is **no silent live-scan fallback**. Agents must run `index` first.
+- **Atomic**: checkpoint advances only if the delta transaction commits.
+- **Cancel / fail**: previous index + previous checkpoint remain valid.
+- **Subdirectory roots**: USN is volume-wide; records outside the indexed root are
+  ignored (`pathIsUnderRoot`). Moves out of root delete the old entry.
+- **Missing parent under root**: `full_rebuild_required` (`missing_parent`) rather
+  than inventing orphans.
+- **No auto-refresh**: `query` never calls refresh.
+
+### Capability reasons (`incremental_refresh.state`)
+
+| State | Typical reason |
+|-------|----------------|
+| `supported` | Checkpoint ready; journal matches |
+| `access_denied` | Cannot open volume for USN (needs elevation or SeBackupPrivilege) |
+| `journal_not_active` | No journal on volume |
+| `journal_changed` | UsnJournalID mismatch |
+| `history_lost` | Cursor below LowestValidUsn / entries deleted |
+| `volume_changed` | Volume serial mismatch |
+| `unsupported_filesystem` | Not NTFS |
+| `unavailable` / `needs_full_rebuild` | No ready checkpoint or other discontinuity |
+
+Agents should treat any non-supported state as **run `index` (full rebuild)**.
 
 ## CLI surface
 
 | Command | Purpose |
 |---------|---------|
-| `index <path>` | Full rebuild for one root |
-| `index status <path>` | Existence, age, counts |
-| `index list` | Enumerate published indexes under AppData |
-| `query <path> …` | Filtered read-only query against the index |
+| `index <path>` | Full rebuild + best-effort checkpoint |
+| `index refresh <path>` | USN incremental apply when possible |
+| `index status <path>` | Index age/counts + `incremental_refresh` block |
+| `index list` | List published indexes under AppData |
+| `query <path> …` | Read-only SQL against published DB |
 
-Shared filters (with live `find`/`top` where applicable):
-
-- `--files` / `--dirs`
-- `--min-size SIZE` (binary 1024 units)
-- `--ext EXT`
-- `--older-than DAYS` (write-based)
-- `--category` / classification string
-- `--strength` (candidate strength)
-- `--limit N`
-- `--json`
-
-## Capabilities
+Capabilities advertise:
 
 ```json
-{
-  "persistent_index": true,
-  "indexed_query": true,
-  "incremental_index": false,
-  "filesystem_mutation": false,
-  "index_schema_version": 1
-}
+"incremental_index": true,
+"filesystem_mutation": false,
+"index_schema_version": 2
 ```
+
+## Safety
+
+- **Analyzed filesystem**: never deleted/moved/rewritten by index or refresh.
+- **USN**: only `FSCTL_QUERY_USN_JOURNAL` and `FSCTL_READ_USN_JOURNAL`.
+  Never create/delete/extend/configure journal.
+- **Volume handle**: `GENERIC_READ` / read attributes only; optional
+  `SeBackupPrivilege` enable if already present on the token.
+- **Index files**: AppData only.
+
+## Platform modules
+
+| Module | Role |
+|--------|------|
+| `VolumeHandle` | Volume identity + read-only open |
+| `FileIdentity` | FRN via `GetFileInformationByHandle`; path via `OpenFileById` |
+| `UsnJournal` | Capability model + read-only journal reader |
+| `IndexRefresh` | Probe, coalesce, apply, checkpoint |
 
 ## Exit codes (index-related)
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
-| 2 | Usage / bad args |
-| 3 | Inaccessible root (for `index` when path missing) |
-| 4 | Scan/index build failed |
+| 0 | Success (`index`, `query`, successful refresh / already current) |
+| 2 | Usage |
+| 3 | Path inaccessible |
+| 4 | Index build / refresh failed |
 | 5 | Cancelled |
-| 6 | `index_not_found` (query/status against missing DB) |
+| 6 | Index not found (`query` / refresh) |
 
-## Implementation map
-
-| Component | Path |
-|-----------|------|
-| SQLite amalgamation 3.53.4 | `third_party/sqlite/` |
-| RAII DB/Stmt/Txn | `src/core/index/Sqlite.*` |
-| Paths / publish | `src/core/index/IndexPaths.*` |
-| Schema / open / meta | `src/core/index/IndexStore.*` |
-| Build from scan | `src/core/index/IndexBuilder.*` |
-| Query / status | `src/core/index/IndexQuery.*` |
-| CLI wiring | `src/cli/Args.*`, `Commands.*`, `main.cpp` |
-| Tests | `tests/test_index.cpp` |
-
-## Safety reminders
-
-- Index DBs are **metadata caches**, not backups of user data.
-- Publishing rewrites only SpaceLens AppData files.
-- Classification and reclaim fields in the index are **advisory** for review;
-  they never become delete permission.
-- Protected locations remain non-reclaim candidates in analysis; the index stores
-  those fields for filtering, not for automated cleanup.
+`index refresh` returning `full_rebuild_required` is a soft, expected outcome
+when the journal is unavailable — exit non-zero with structured reason, index
+still queryable.

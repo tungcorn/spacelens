@@ -1,8 +1,8 @@
 # Performance Notes
 
-Measured on the Persistent Index V1 milestone. Numbers are wall-clock from the
-Release CLI process, warm OS cache, single run unless noted. Treat them as a
-local baseline, not a competitive claim.
+Measured for Persistent Index V1 and Incremental Index V2. Numbers are wall-clock
+from the Release CLI process, warm OS cache, single run unless noted. Treat them
+as a local baseline, not a competitive claim.
 
 ## Methodology
 
@@ -11,10 +11,9 @@ local baseline, not a competitive claim.
 | Build | Release, Ninja, `CMAKE_BUILD_TYPE=Release` |
 | Toolchain | MSVC 19.50 (VS 2026), Windows SDK 10.0.26100 |
 | Qt | 6.8.3 (GUI built; benchmarks use CLI only) |
-| Commit series | Persistent Index V1 on `main` after GUI milestone `99edcf0` |
-| Warm-up | One prior Debug build/index of the same tree; OS file cache warm |
+| Warm-up | Prior build/index of similar trees; OS file cache warm |
 | Repetitions | Single timed wall-clock capture (Stopwatch around process) |
-| Scope | Project tree only — no system drive, no mutation |
+| Scope | Project-local trees only — no system drive, no mutation of source trees beyond synthetic fixtures |
 | Units | Binary sizes (1024); times in milliseconds wall-clock |
 
 CLI binary:
@@ -23,18 +22,12 @@ CLI binary:
 build-release/cli/spacelens.exe
 ```
 
-Commands:
-
 ```powershell
 . .\scripts\dev-env.ps1
-# live scan
 .\build-release\cli\spacelens.exe scan <root> --json
-# index build (includes live scan + SQLite publish)
 .\build-release\cli\spacelens.exe index <root> --json
-# indexed queries (no live scan)
+.\build-release\cli\spacelens.exe index refresh <root> --json
 .\build-release\cli\spacelens.exe query <root> --files --limit 20 --json
-.\build-release\cli\spacelens.exe query <root> --dirs --limit 20 --json
-.\build-release\cli\spacelens.exe query <root> --files --ext cpp --limit 20 --json
 ```
 
 ## Hardware and OS
@@ -46,8 +39,9 @@ Commands:
 | RAM | ~13.8 GiB |
 | OS | Microsoft Windows 11 Home Single Language 10.0.26200 |
 | Storage | Local NTFS (project on `D:`) |
+| Elevation | **Unelevated** interactive user (no SeBackupPrivilege effective) |
 
-## Dataset
+## Dataset A — project tree (V1 baseline, 2026-08-12)
 
 | Field | Value |
 |-------|--------|
@@ -55,52 +49,65 @@ Commands:
 | Files (indexed) | 530 |
 | Directories (indexed) | 258 |
 | Logical bytes | 138 499 453 (~132 MiB) |
-| Index DB size | 364 544 bytes (~356 KiB) |
-| Index path | `%LOCALAPPDATA%\SpaceLens\indexes\<rootKey>\index.db` |
-| Notes | Includes `build/`, `build-release/`, `third_party/sqlite/sqlite3.c` |
-
-## Measured results (2026-08-12)
+| Index DB size | ~356 KiB |
 
 | Operation | Wall-clock | Notes |
 |-----------|------------|--------|
-| Live `scan` (Release) | **148 ms** | Process-level timer; JSON discarded |
-| `index` full rebuild | **142 ms** process / **84 ms** reported `elapsed_ms` | Scan + classify + SQLite staging + publish |
+| Live `scan` (Release) | **148 ms** | Process-level timer |
+| `index` full rebuild | **142 ms** process / **84 ms** `elapsed_ms` | Scan + SQLite publish |
 | `query --files --limit 20` | **27 ms** | `source: persistent_index` |
-| `query --dirs --limit 20` | **26 ms** | Directory recursive sizes |
-| `query --files --ext cpp --limit 20` | **25 ms** | 53 matched `.cpp` files |
-| `query --files --min-size 1MB --limit 5` | ~25–30 ms | 25 matched ≥ 1 MiB |
-| `query --files --min-size 10MB` | ~26 ms | 0 matches on this tree (largest file ~9.9 MiB) |
+| `query --dirs --limit 20` | **26 ms** | |
+| `query --files --ext cpp --limit 20` | **25 ms** | 53 matches |
 
-### Interpretation
+## Dataset B — synthetic 2000 files (V2, 2026-08-12)
 
-- On a ~530-file developer tree, full index build is on the same order as a single
-  live scan (scan dominates; SQLite write is small).
-- Subsequent filtered queries complete in tens of milliseconds without touching
-  the analyzed tree.
-- DB footprint is small relative to scanned logical bytes (~356 KiB DB vs ~132 MiB
-  logical content for this dataset).
-- Larger roots (user profiles, drive roots) will shift the ratio: expect scan and
-  insert cost to grow roughly with entry count; query latency should remain low
-  while indexes and `LIMIT` are used.
+| Field | Value |
+|-------|--------|
+| Root | `D:\Hoc\MyProjects\spacelens\_bench_refresh_v2` |
+| Files | 2000 |
+| Directories | 51 |
+| Logical bytes | 101 000 |
 
-## Metrics still useful for later milestones
+| Operation | Wall-clock | Notes |
+|-----------|------------|--------|
+| `index` full rebuild | **473 ms** process / **404 ms** `elapsed_ms` | Schema v2 + FRN capture + checkpoint attempt |
+| `index refresh` (unelevated) | **43 ms** process / **0 ms** engine | Immediate `full_rebuild_required`, reason `access_denied` |
+| `index status` | tens of ms | Reports `incremental_refresh.state: access_denied` |
 
-- Cold-cache full-drive scans
-- Peak working set during index build
-- Cancellation response during large rebuilds
-- Incremental / USN refresh cost (not implemented in V1)
-- Live `find` vs indexed `query` parity timing on multi-million entry trees
+### Incremental speedup (when USN is available)
 
-## Correctness checks tied to performance runs
+On this development machine, opening `\\.\D:` for USN requires administrator or
+backup privilege. Without it, **no USN delta path runs**, so there is **no valid
+incremental-vs-full speedup ratio** to publish for 1 / 100 / ~1000 file changes.
 
-- `capabilities --json` reports `persistent_index: true`, `indexed_query: true`,
-  `incremental_index: false`, `filesystem_mutation: false`
-- Missing index query returns exit code **6**
-- Cancelled rebuild leaves previous `index.db` intact
-- Unit suite: **65+** tests green (Debug and Release)
+When elevated (or with SeBackupPrivilege), expected behavior:
 
-## Safety note
+1. Full `index` stores `checkpoint.status=ready` with non-zero `usn_journal_id` / `next_usn`
+2. Small mutations under the root
+3. `index refresh` applies coalesced USN records and advances the checkpoint
+4. Wall-clock for refresh should be much smaller than a full rebuild on large trees
 
-All benchmarks are **read-only** against the analyzed root. Index files are
-written only under `%LOCALAPPDATA%\SpaceLens\`. No source files are deleted or
-moved by `index` or `query`.
+Re-measure under elevation before claiming production incremental gains:
+
+```powershell
+# elevated shell
+.\build-release\cli\spacelens.exe index <root> --json
+# mutate N files under <root>
+.\build-release\cli\spacelens.exe index refresh <root> --json
+.\build-release\cli\spacelens.exe index <root> --json   # full rebuild comparator
+```
+
+## Interpretation
+
+- Full index cost is dominated by live scan + per-file metadata; SQLite publish is small.
+- Indexed `query` stays in the tens of milliseconds without touching the analyzed tree.
+- Incremental refresh correctly **fails closed** when the volume journal cannot be
+  opened: previous index remains queryable; agents are told to full-rebuild.
+- Do not compare unelevated `index refresh` (~40 ms no-op reject) to full rebuild
+  as a “speedup” — that path did not apply deltas.
+
+## Regression guardrails
+
+- Debug + Release: **74** unit tests, including refresh seams that soft-skip parity
+  when USN is unavailable in the environment.
+- `filesystem_mutation: false` and no journal-mutation FSCTLs in `UsnJournal.cpp`.

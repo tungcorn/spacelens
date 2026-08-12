@@ -18,15 +18,15 @@ spacelens_core  →  spacelens (CLI, read-only)
   cancellation, progress, and reparse-point policy)
 - Storage intelligence: deterministic classification, location safety policy,
   cleanup-review values, and read-only reclaim analysis
-- **Persistent Index V1:** SQLite full-root index under AppData; CLI
-  `index` / `index status` / `index list` / `query` (no live fallback,
-  no incremental USN/MFT yet)
+- **Persistent Index V1+V2:** SQLite full-root index under AppData; CLI
+  `index` / `index refresh` / `index status` / `index list` / `query`
+  (no live query fallback; USN incremental when volume access allows)
 - CLI: `scan`, `top`, `find`, `index*`, `query`, `capabilities`, `help`,
   `version` with versioned JSON and `filesystem_mutation: false`
 - GUI: async scan, navigation, filters, details, Explorer/copy, Cleanup Review
   (planning only — no delete/move)
-- Not yet: incremental index, duplicates, MFT fast path, MCP, product AI,
-  automatic deletion, or automatic movement
+- Not yet: auto-refresh on query, journal creation, duplicates, MFT initial
+  scan, MCP, product AI, automatic deletion, or automatic movement
 
 ## Features
 
@@ -38,6 +38,8 @@ spacelens_core  →  spacelens (CLI, read-only)
 - Read-only reclaim analysis for human review prioritization
 - Cleanup Review planning data with no delete or move operation
 - Persistent SQLite index for fast repeated filtered queries
+- Optional USN-based incremental refresh (`index refresh`) — read-only journal
+  access; full rebuild required on discontinuity or access denied
 - Read-only CLI with human and machine-readable (`--json`) output for
   humans, scripts, and AI agents
 - Optional Qt desktop UI with live progress, cancel, Explorer, and clipboard
@@ -75,6 +77,7 @@ cmake --build build-cli --target spacelens
 .\build-cli\cli\spacelens.exe scan C:\Users --json
 .\build-cli\cli\spacelens.exe top C:\Users --dirs --limit 20 --json
 .\build-cli\cli\spacelens.exe index C:\Users --json
+.\build-cli\cli\spacelens.exe index refresh C:\Users --json
 .\build-cli\cli\spacelens.exe query C:\Users --files --min-size 100MB --limit 20 --json
 ```
 

@@ -44,11 +44,17 @@ There are no hidden aliases for destructive operations.
 There is no generic shell-execution feature.
 LLM output must never be turned into a filesystem command automatically.
 
-Persistent index build and query write **only** SpaceLens metadata under
+Persistent index build, refresh, and query write **only** SpaceLens metadata under
 `%LOCALAPPDATA%\SpaceLens\`. They never delete, move, or rewrite files under
 the analyzed root. `query` is read-only against the index database; a missing
 index fails closed (exit 6) instead of falling back to a silent live path that
 could be mistaken for authority over live data.
+
+USN incremental refresh uses only `FSCTL_QUERY_USN_JOURNAL` and
+`FSCTL_READ_USN_JOURNAL`. SpaceLens never creates, deletes, extends, or
+reconfigures the change journal. Volume handles are opened read-only. When the
+journal cannot be opened (typical without elevation), refresh fails closed with
+`access_denied` / `full_rebuild_required` rather than inventing deltas.
 
 Agents can discover this contract:
 

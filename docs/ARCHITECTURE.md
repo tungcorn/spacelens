@@ -46,21 +46,28 @@ than claiming a shipped feature.
   query surfaces, filters, versioned JSON output, and explicit read-only
   capability reporting.
 
-The CLI wires `scan`, `top`, `find`, `capabilities`, `index`, `index status`,
-`index list`, `query`, `help`, and `version`. Analysis filters and versioned
-JSON (`schema_version: 1`) are implemented. See [`docs/CLI.md`](CLI.md) and
-[`docs/INDEX.md`](INDEX.md).
+The CLI wires `scan`, `top`, `find`, `capabilities`, `index`, `index refresh`,
+`index status`, `index list`, `query`, `help`, and `version`. Analysis filters and
+versioned JSON (`schema_version: 1`) are implemented. See [`docs/CLI.md`](CLI.md)
+and [`docs/INDEX.md`](INDEX.md).
 
-**Persistent Index V1** stores a full SQLite snapshot under
+**Persistent Index** stores a full SQLite snapshot under
 `%LOCALAPPDATA%\SpaceLens\indexes\<rootKey>\index.db` for fast repeated
-read-only queries. Rebuilds use a staging file and atomic publish so a failed
-or cancelled rebuild never destroys the previous good index. Queries report
-`source: persistent_index` and fail with exit code 6 when no index exists —
-there is no silent live-scan fallback.
+read-only queries (`index_schema_version: 2`). Rebuilds use a staging file and
+atomic publish so a failed or cancelled rebuild never destroys the previous good
+index. Queries report `source: persistent_index` and fail with exit code 6 when
+no index exists — there is no silent live-scan fallback.
 
-Deferred work includes AI inside the product, incremental/USN/MFT index updates,
-watch mode, duplicate detection, treemap, MCP, and any automatic deletion or
-movement. A future mutation service, if approved, must be a separately
+**Incremental Index V2** adds a read-only USN Change Journal path:
+`VolumeHandle` / `FileIdentity` / `UsnJournal` / `IndexRefresh`. Full builds
+capture a checkpoint when the volume can be opened; `index refresh` applies
+coalesced FRN deltas under the indexed root and advances the checkpoint only on
+commit. Journal create/resize/delete is never used. Access denied or journal
+discontinuity → `full_rebuild_required` without guessing.
+
+Deferred work includes AI inside the product, auto-refresh on query, MFT-based
+initial scan, watch mode, duplicate detection, treemap, MCP, and any automatic
+deletion or movement. A future mutation service, if approved, must be a separately
 permissioned surface rather than an ordinary CLI verb.
 
 ## Layered architecture
@@ -77,9 +84,9 @@ platform/windows (IFileEnumerator, FindHandle, Explorer helpers)
 
 | Layer | Responsibility | Forbidden |
 |-------|----------------|-----------|
-| **core** | Scan algorithms, owned data model, live queries, classification, location policy, activity summaries, read-only reclaim analysis, cleanup-review values, size formatting, **persistent index** (SQLite schema, builder, query) | Qt types, interactive prompts, stdout policy, filesystem mutation of analyzed roots |
-| **platform** | Win32 enumeration, file metadata, path/Explorer integration | Qt, CLI argument parsing, shell-command construction |
-| **cli** | argv parsing, capability declaration, human/JSON rendering, filters, exit codes, Ctrl+C → `stop_token`, index/query commands | GUI widgets, delete/move/execute commands |
+| **core** | Scan algorithms, owned data model, live queries, classification, location policy, activity summaries, read-only reclaim analysis, cleanup-review values, size formatting, **persistent index** (SQLite schema, builder, query, USN refresh) | Qt types, interactive prompts, stdout policy, filesystem mutation of analyzed roots |
+| **platform** | Win32 enumeration, volume/USN read-only helpers, file identity (FRN), path/Explorer integration | Qt, CLI argument parsing, shell-command construction, journal mutation |
+| **cli** | argv parsing, capability declaration, human/JSON rendering, filters, exit codes, Ctrl+C → `stop_token`, index/refresh/query commands | GUI widgets, delete/move/execute commands |
 | **gui/app** | Qt windows, models/views, review planning, threads↔signals bridge | Scan algorithms, direct ownership of Win32 enumeration |
 
 Index storage is AppData-only metadata. Core may create/replace files under

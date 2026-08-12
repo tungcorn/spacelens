@@ -5,10 +5,10 @@ and AI agents. It performs read-only scanning and storage analysis. It does not
 delete, move, rename, purge, wipe, execute shell commands, or grant filesystem
 mutation authority.
 
-The executable wires `scan`, `top`, `find`, `index`, `index status`,
-`index list`, `query`, `capabilities`, `help`, and `version`. Use
+The executable wires `scan`, `top`, `find`, `index`, `index refresh`,
+`index status`, `index list`, `query`, `capabilities`, `help`, and `version`. Use
 `capabilities --json` to discover flags for a particular build (including
-`persistent_index` and `indexed_query`).
+`persistent_index`, `indexed_query`, and `incremental_index`).
 
 ## Build
 
@@ -51,20 +51,20 @@ Representative JSON (fields may grow; treat unknown keys as forward-compatible):
 {
   "schema_version": 1,
   "version": "0.1.0",
-  "commands": ["scan", "top", "find", "index", "index status", "index list", "query", "capabilities", "help", "version"],
+  "commands": ["scan", "top", "find", "index", "index status", "index list", "index refresh", "query", "capabilities", "help", "version"],
   "features": {
     "json": true,
     "cancellation": true,
     "persistent_index": true,
     "indexed_query": true,
-    "incremental_index": false,
+    "incremental_index": true,
     "filesystem_mutation": false,
     "classification": true,
     "filters": true
   },
   "read_only": true,
   "filesystem_mutation": false,
-  "index_schema_version": 1
+  "index_schema_version": 2
 }
 ```
 
@@ -130,9 +130,21 @@ spacelens index status <path> [--json]
 spacelens index list [--json]
 ```
 
-`status` reports existence, age, counts, and readiness. `list` enumerates
-published indexes under AppData. Neither command scans the analyzed root for
-content mutation; both are read-only with respect to user data.
+`status` reports existence, age, counts, readiness, and an
+`incremental_refresh` block (supported/state/reason/checkpoint). `list`
+enumerates published indexes under AppData. Neither command mutates user data.
+
+### `index refresh`
+
+```text
+spacelens index refresh <path> [--json]
+```
+
+Applies a **read-only USN** incremental update when a ready checkpoint exists and
+the volume journal can be opened. Never creates or configures the journal. On
+`access_denied`, `journal_not_active`, journal discontinuity, or missing parent,
+returns `full_rebuild_required` and leaves the previous index intact. Does **not**
+run automatically from `query`.
 
 ### `query`
 

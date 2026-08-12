@@ -72,6 +72,20 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Lifetime:** Starting a scan spawns one worker. Cancel or destruction calls `request_stop()` then `join()`. Progress/completion are delivered with `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` so slots run on the GUI thread after the worker posts them.
 - **Bug prevented:** Scanning on the GUI thread (frozen UI), use-after-free if the window closes mid-scan, and cross-thread Qt widget access. Progress is throttled inside `ScanEngine` so the event queue is not flooded.
 
+## Volume handle + USN journal (read-only)
+
+- **Why used:** Incremental Index V2 needs volume identity and NTFS USN records without mutating the journal or the analyzed tree.
+- **Ownership:** `VolumeHandle` is move-only RAII over a Win32 `HANDLE` closed with `CloseHandle`. `UsnJournalReader` owns one volume handle for the duration of probe/refresh.
+- **Lifetime:** Open for a single probe or refresh operation; never cache a volume handle across process-lifetime background watchers in V2.
+- **Bug prevented:** Accidental write access to volumes, journal create/delete FSCTLs, and treating weak open failures as “non-NTFS”. On NTFS, USN IOCTL failures map to `access_denied` when rights are insufficient.
+- **Privilege note:** Opening `\\.\X:` usually requires admin or `SeBackupPrivilege`. The open path best-effort enables backup/restore privileges already present on the token; it does not elevate.
+
+## File identity (FRN) and OpenFileById
+
+- **Why used:** USN records identify objects by file reference number, not path. Refresh resolves paths via `OpenFileById` + `GetFinalPathNameByHandle` and filters with `pathIsUnderRoot`.
+- **Ownership:** Identity values are plain structs; no long-lived file handles from identity queries.
+- **Bug prevented:** Applying volume-wide USN noise outside the indexed subdirectory root; orphan inserts when a parent directory is missing under the root (force full rebuild instead).
+
 ## Cleanup candidate ownership
 
 - **Why used:** Cleanup Review is a planning queue, not a filesystem-operation owner.
