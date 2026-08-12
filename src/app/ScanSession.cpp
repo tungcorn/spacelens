@@ -41,12 +41,21 @@ bool ScanSession::start(const QString& rootPath, ScanOptions options)
         if (m_running) {
             return false;
         }
+    }
+
+    // Join any previous worker BEFORE marking the session running again.
+    // Otherwise a late queued onWorkerFinished() from the old worker could
+    // clear m_running for the new scan.
+    joinWorker();
+
+    {
+        std::lock_guard lock(m_mutex);
+        if (m_running) {
+            return false;
+        }
         m_running = true;
         m_result.reset();
     }
-
-    // Ensure any previous worker is joined before reuse.
-    joinWorker();
 
     const std::wstring root = toWide(rootPath);
 
