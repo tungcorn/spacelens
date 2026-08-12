@@ -10,6 +10,10 @@ namespace spacelens::cli {
 [[nodiscard]] ExitCode runScan(const ParsedArgs& args, std::stop_token stop);
 [[nodiscard]] ExitCode runTop(const ParsedArgs& args, std::stop_token stop);
 [[nodiscard]] ExitCode runFind(const ParsedArgs& args, std::stop_token stop);
+[[nodiscard]] ExitCode runIndex(const ParsedArgs& args, std::stop_token stop);
+[[nodiscard]] ExitCode runIndexStatus(const ParsedArgs& args);
+[[nodiscard]] ExitCode runIndexList(const ParsedArgs& args);
+[[nodiscard]] ExitCode runQuery(const ParsedArgs& args);
 [[nodiscard]] ExitCode runCapabilities(const ParsedArgs& args);
 
 }  // namespace spacelens::cli

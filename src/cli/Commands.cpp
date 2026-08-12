@@ -6,6 +6,10 @@
 #include "core/Query.hpp"
 #include "core/ScanEngine.hpp"
 #include "core/SizeFormatter.hpp"
+#include "core/index/IndexBuilder.hpp"
+#include "core/index/IndexPaths.hpp"
+#include "core/index/IndexQuery.hpp"
+#include "core/index/IndexStore.hpp"
 #include "platform/windows/WindowsFileEnumerator.hpp"
 
 #ifndef NOMINMAX
@@ -542,32 +546,359 @@ ExitCode runFind(const ParsedArgs& args, std::stop_token stop)
     return mapState(result);
 }
 
+ExitCode runIndex(const ParsedArgs& args, std::stop_token stop)
+{
+    if (!pathExists(args.path) || !pathIsDirectory(args.path)) {
+        std::cerr << "error: path is not an accessible directory\n";
+        if (args.json) {
+            writeErrorJson("index", args.path, "inaccessible_root");
+        }
+        return ExitCode::InaccessibleRoot;
+    }
+
+    const auto built = spacelens::buildIndexForRoot(args.path, stop);
+    if (args.json) {
+        const bool ok = built.state == IndexBuildState::Completed;
+        std::cout << "{"
+                  << "\"schema_version\":" << kSchemaVersion << ","
+                  << "\"ok\":" << jsonBool(ok) << ","
+                  << "\"command\":\"index\","
+                  << "\"root\":" << jsonString(built.location.rootPath) << ","
+                  << "\"index_schema_version\":" << kIndexSchemaVersion << ","
+                  << "\"state\":"
+                  << jsonString(built.state == IndexBuildState::Completed
+                                    ? "completed"
+                                    : built.state == IndexBuildState::Cancelled
+                                          ? "cancelled"
+                                          : "failed")
+                  << ","
+                  << "\"source\":\"persistent_index\","
+                  << "\"index\":{"
+                  << "\"path\":" << jsonString(built.location.dbPath) << ","
+                  << "\"indexed_at\":" << jsonString(built.root.indexedAtIso)
+                  << ","
+                  << "\"file_count\":" << jsonUInt(built.root.fileCount) << ","
+                  << "\"directory_count\":" << jsonUInt(built.root.dirCount)
+                  << ","
+                  << "\"logical_bytes\":" << jsonUInt(built.root.logicalBytes)
+                  << "},"
+                  << "\"elapsed_ms\":"
+                  << jsonUInt(static_cast<std::uint64_t>(
+                         built.elapsedSeconds * 1000.0 + 0.5));
+        if (!built.error.empty()) {
+            std::cout << ",\"error\":" << jsonString(built.error);
+        }
+        std::cout << "}\n";
+    } else {
+        if (built.state == IndexBuildState::Completed) {
+            std::cout << "Index ready\n"
+                      << "Root:   " << narrow(built.location.rootPath) << "\n"
+                      << "DB:     " << narrow(built.location.dbPath) << "\n"
+                      << "Files:  " << built.root.fileCount << "\n"
+                      << "Dirs:   " << built.root.dirCount << "\n"
+                      << "Bytes:  "
+                      << SizeFormatter::format(built.root.logicalBytes) << "\n"
+                      << "At:     " << built.root.indexedAtIso << "\n";
+        } else {
+            std::cerr << "index " << (built.state == IndexBuildState::Cancelled
+                                          ? "cancelled"
+                                          : "failed");
+            if (!built.error.empty()) {
+                std::cerr << ": " << built.error;
+            }
+            std::cerr << "\n";
+        }
+    }
+
+    if (built.state == IndexBuildState::Completed) {
+        return ExitCode::Success;
+    }
+    if (built.state == IndexBuildState::Cancelled) {
+        return ExitCode::Cancelled;
+    }
+    return ExitCode::ScanFailed;
+}
+
+ExitCode runIndexStatus(const ParsedArgs& args)
+{
+    const auto status = spacelens::indexStatus(args.path);
+    if (args.json) {
+        std::cout << "{"
+                  << "\"schema_version\":" << kSchemaVersion << ","
+                  << "\"ok\":" << jsonBool(status.ok) << ","
+                  << "\"command\":\"index_status\","
+                  << "\"root\":" << jsonString(status.location.rootPath) << ","
+                  << "\"source\":\"persistent_index\","
+                  << "\"index_schema_version\":" << kIndexSchemaVersion << ","
+                  << "\"index\":{"
+                  << "\"path\":" << jsonString(status.location.dbPath) << ","
+                  << "\"exists\":"
+                  << jsonBool(indexDatabaseExists(status.location)) << ","
+                  << "\"indexed_at\":" << jsonString(status.root.indexedAtIso)
+                  << ","
+                  << "\"age_ms\":" << jsonUInt(status.age_ms) << ","
+                  << "\"file_count\":" << jsonUInt(status.root.fileCount) << ","
+                  << "\"directory_count\":" << jsonUInt(status.root.dirCount)
+                  << ","
+                  << "\"logical_bytes\":" << jsonUInt(status.root.logicalBytes)
+                  << ","
+                  << "\"status\":"
+                  << jsonString(toString(status.root.status)) << "}";
+        if (!status.error.empty()) {
+            std::cout << ",\"error\":" << jsonString(status.error);
+        }
+        std::cout << "}\n";
+    } else {
+        if (!status.ok) {
+            std::cerr << "index status: " << status.error << "\n";
+        } else {
+            std::cout << "Root:      " << narrow(status.location.rootPath) << "\n"
+                      << "DB:        " << narrow(status.location.dbPath) << "\n"
+                      << "Indexed:   " << status.root.indexedAtIso << "\n"
+                      << "Age:       " << status.age_ms << " ms\n"
+                      << "Files:     " << status.root.fileCount << "\n"
+                      << "Dirs:      " << status.root.dirCount << "\n"
+                      << "Bytes:     "
+                      << SizeFormatter::format(status.root.logicalBytes)
+                      << "\n";
+        }
+    }
+    if (!status.ok && status.error == "index_not_found") {
+        return ExitCode::IndexNotFound;
+    }
+    return status.ok ? ExitCode::Success : ExitCode::ScanFailed;
+}
+
+ExitCode runIndexList(const ParsedArgs& args)
+{
+    const auto listed = spacelens::listIndexedRoots();
+    if (args.json) {
+        std::cout << "{"
+                  << "\"schema_version\":" << kSchemaVersion << ","
+                  << "\"ok\":true,"
+                  << "\"command\":\"index_list\","
+                  << "\"source\":\"persistent_index\","
+                  << "\"indexes\":[";
+        bool first = true;
+        for (const auto& item : listed) {
+            IndexLocation loc;
+            loc.rootKey = item.rootKey;
+            loc.dbPath = item.dbPath;
+            loc.indexDir = item.dbPath;  // unused for open by path
+            // Open by db path via locate is awkward; open file directly.
+            try {
+                // Reconstruct location from key only for openRead needs full loc.
+                IndexLocation openLoc;
+                openLoc.rootKey = item.rootKey;
+                openLoc.dbPath = item.dbPath;
+                openLoc.indexDir = item.dbPath.substr(
+                    0, item.dbPath.find_last_of(L"\\/"));
+                auto store = IndexStore::openRead(openLoc);
+                auto meta = store.readRootMeta();
+                if (!first) {
+                    std::cout << ",";
+                }
+                first = false;
+                std::cout << "{"
+                          << "\"root\":"
+                          << jsonString(meta ? meta->rootPath : L"") << ","
+                          << "\"path\":" << jsonString(item.dbPath) << ","
+                          << "\"root_key\":" << jsonString(item.rootKey);
+                if (meta) {
+                    std::cout << ",\"indexed_at\":"
+                              << jsonString(meta->indexedAtIso)
+                              << ",\"logical_bytes\":"
+                              << jsonUInt(meta->logicalBytes);
+                }
+                std::cout << "}";
+            } catch (...) {
+                if (!first) {
+                    std::cout << ",";
+                }
+                first = false;
+                std::cout << "{\"path\":" << jsonString(item.dbPath)
+                          << ",\"root_key\":" << jsonString(item.rootKey)
+                          << ",\"error\":\"open_failed\"}";
+            }
+        }
+        std::cout << "]}\n";
+    } else {
+        if (listed.empty()) {
+            std::cout << "No indexes found under "
+                      << narrow(spaceLensIndexesRoot()) << "\n";
+        }
+        for (const auto& item : listed) {
+            std::cout << narrow(item.rootKey) << "  " << narrow(item.dbPath)
+                      << "\n";
+        }
+    }
+    return ExitCode::Success;
+}
+
+ExitCode runQuery(const ParsedArgs& args)
+{
+    IndexQuerySpec spec;
+    spec.includeFiles = args.topMode == TopMode::Files;
+    spec.includeDirectories = args.topMode == TopMode::Dirs;
+    spec.minSize = args.minSize;
+    if (!args.extension.empty()) {
+        // extension already lowercase wide; convert to UTF-8 ascii
+        std::string ext;
+        for (wchar_t ch : args.extension) {
+            if (ch < 128) {
+                ext.push_back(static_cast<char>(ch));
+            }
+        }
+        spec.extension = ext;
+    }
+    spec.olderThanDays = args.olderThanDays;
+    if (!args.classification.empty()) {
+        // Canonicalize via parseStorageCategory when possible.
+        std::string raw;
+        for (wchar_t ch : args.classification) {
+            if (ch < 128) {
+                raw.push_back(static_cast<char>(ch));
+            }
+        }
+        const auto cat = parseStorageCategory(raw);
+        spec.classification = toString(cat);
+        // If user passed exact Unknown intentionally, keep Unknown.
+        if (cat == StorageCategory::Unknown &&
+            narrowClassification(args.classification) != "unknown" &&
+            !raw.empty()) {
+            // Keep original casing from toString of parse fallback — already Unknown.
+            // Prefer exact string if it matches a known toString.
+            spec.classification = toString(cat);
+        }
+    }
+    if (!args.strength.empty()) {
+        std::string s;
+        for (wchar_t ch : args.strength) {
+            if (ch < 128) {
+                s.push_back(static_cast<char>(ch));
+            }
+        }
+        // Normalize common aliases
+        if (s == "strong" || s == "Strong") {
+            spec.candidateStrength = "Strong";
+        } else if (s == "moderate" || s == "Moderate") {
+            spec.candidateStrength = "Moderate";
+        } else if (s == "reviewonly" || s == "ReviewOnly" || s == "review") {
+            spec.candidateStrength = "ReviewOnly";
+        } else if (s == "none" || s == "None") {
+            spec.candidateStrength = "None";
+        } else {
+            spec.candidateStrength = s;
+        }
+    }
+    spec.limit = args.limit;
+
+    const auto result = queryIndex(args.path, spec);
+
+    if (args.json) {
+        std::cout << "{"
+                  << "\"schema_version\":" << kSchemaVersion << ","
+                  << "\"ok\":" << jsonBool(result.ok) << ","
+                  << "\"command\":\"query\","
+                  << "\"source\":\"persistent_index\","
+                  << "\"root\":" << jsonString(result.location.rootPath) << ","
+                  << "\"index\":{"
+                  << "\"path\":" << jsonString(result.location.dbPath) << ","
+                  << "\"indexed_at\":" << jsonString(result.root.indexedAtIso)
+                  << ","
+                  << "\"age_ms\":" << jsonUInt(result.age_ms) << ","
+                  << "\"index_schema_version\":" << kIndexSchemaVersion << "},"
+                  << "\"matched_items\":" << jsonUInt(result.matched_items)
+                  << ","
+                  << "\"returned_items\":" << jsonUInt(result.returned_items)
+                  << ","
+                  << "\"matched_logical_bytes\":"
+                  << jsonUInt(result.matched_logical_bytes) << ","
+                  << "\"results\":[";
+        for (std::size_t i = 0; i < result.hits.size(); ++i) {
+            if (i > 0) {
+                std::cout << ",";
+            }
+            const auto& h = result.hits[i];
+            std::cout << "{\"path\":" << jsonString(h.path)
+                      << ",\"kind\":"
+                      << jsonString(h.kind == IndexEntryKind::Directory
+                                        ? "directory"
+                                        : "file")
+                      << ",\"size_bytes\":" << jsonUInt(h.size_bytes)
+                      << ",\"classification\":" << jsonString(h.classification)
+                      << ",\"confidence\":" << jsonString(h.confidence)
+                      << ",\"location_safety\":"
+                      << jsonString(h.location_safety)
+                      << ",\"reclaimability\":" << jsonString(h.reclaimability)
+                      << ",\"candidate_strength\":"
+                      << jsonString(h.candidate_strength) << "}";
+        }
+        std::cout << "]";
+        if (!result.error.empty()) {
+            std::cout << ",\"error\":" << jsonString(result.error);
+        }
+        std::cout << "}\n";
+    } else {
+        if (!result.ok) {
+            std::cerr << "query failed: " << result.error << "\n";
+        } else {
+            std::cout << "SIZE           PATH\n";
+            for (const auto& h : result.hits) {
+                const std::string size = SizeFormatter::format(h.size_bytes);
+                std::cout << size;
+                if (size.size() < 14) {
+                    std::cout << std::string(14 - size.size(), ' ');
+                } else {
+                    std::cout << ' ';
+                }
+                std::cout << narrow(h.path) << "\n";
+            }
+            std::cerr << "source=persistent_index matched="
+                      << result.matched_items
+                      << " returned=" << result.returned_items
+                      << " age_ms=" << result.age_ms << "\n";
+        }
+    }
+
+    if (!result.ok && result.error == "index_not_found") {
+        return ExitCode::IndexNotFound;
+    }
+    return result.ok ? ExitCode::Success : ExitCode::ScanFailed;
+}
+
 ExitCode runCapabilities(const ParsedArgs& args)
 {
     if (args.json) {
         std::cout << "{"
                   << "\"schema_version\":" << kSchemaVersion << ","
                   << "\"version\":" << jsonString(SPACELENS_VERSION_STRING) << ","
-                  << "\"commands\":[\"scan\",\"top\",\"find\",\"capabilities\","
-                     "\"help\",\"version\"],"
+                  << "\"commands\":[\"scan\",\"top\",\"find\",\"index\","
+                     "\"index status\",\"index list\",\"query\","
+                     "\"capabilities\",\"help\",\"version\"],"
                   << "\"features\":{"
                   << "\"json\":true,"
                   << "\"cancellation\":true,"
-                  << "\"persistent_index\":false,"
+                  << "\"persistent_index\":true,"
+                  << "\"indexed_query\":true,"
+                  << "\"incremental_index\":false,"
                   << "\"filesystem_mutation\":false,"
                   << "\"classification\":true,"
                   << "\"filters\":true"
                   << "},"
                   << "\"read_only\":true,"
-                  << "\"filesystem_mutation\":false"
+                  << "\"filesystem_mutation\":false,"
+                  << "\"index_schema_version\":" << kIndexSchemaVersion
                   << "}\n";
     } else {
         std::cout << "spacelens " << SPACELENS_VERSION_STRING << "\n"
-                  << "commands: scan top find capabilities help version\n"
+                  << "commands: scan top find index query capabilities help version\n"
                   << "read_only: true\n"
                   << "filesystem_mutation: false\n"
-                  << "features: json, cancellation, classification, filters\n"
-                  << "not available: persistent_index, filesystem_mutation\n";
+                  << "features: json, cancellation, classification, filters, "
+                     "persistent_index, indexed_query\n"
+                  << "not available: incremental_index, filesystem_mutation\n"
+                  << "index_schema_version: " << kIndexSchemaVersion << "\n";
     }
     return ExitCode::Success;
 }

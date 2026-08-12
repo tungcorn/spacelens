@@ -18,15 +18,23 @@ enum class Command {
     Top,
     Find,
     Capabilities,
+    Index,
+    IndexStatus,
+    IndexList,
+    Query,
 };
 
 /// Commands intentionally exposed by the read-only CLI. Keep this list explicit
 /// so destructive verbs cannot be registered accidentally.
-inline constexpr std::array<Command, 6> kRegisteredCommands{
+inline constexpr std::array<Command, 10> kRegisteredCommands{
     Command::Scan,
     Command::Top,
     Command::Find,
     Command::Capabilities,
+    Command::Index,
+    Command::IndexStatus,
+    Command::IndexList,
+    Command::Query,
     Command::Help,
     Command::Version,
 };
@@ -44,10 +52,11 @@ struct ParsedArgs {
     TopMode topMode = TopMode::None;
     std::size_t limit = 20;
     std::optional<ByteSize> minSize;
-    std::wstring extension;     // normalized without a leading dot
+    std::wstring extension;  // normalized without a leading dot
     std::optional<std::uint64_t> olderThanDays;
     std::wstring classification;
-    std::string error;  // non-empty => usage error
+    std::wstring strength;  // CandidateStrength name for query
+    std::string error;      // non-empty => usage error
 };
 
 /// Parse wide argv (Windows wmain). argv[0] is program name.

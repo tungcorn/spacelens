@@ -61,6 +61,15 @@ int wmain(int argc, wchar_t** argv)
     if (args.command == spacelens::cli::Command::Capabilities) {
         return spacelens::cli::toInt(spacelens::cli::runCapabilities(args));
     }
+    if (args.command == spacelens::cli::Command::IndexStatus) {
+        return spacelens::cli::toInt(spacelens::cli::runIndexStatus(args));
+    }
+    if (args.command == spacelens::cli::Command::IndexList) {
+        return spacelens::cli::toInt(spacelens::cli::runIndexList(args));
+    }
+    if (args.command == spacelens::cli::Command::Query) {
+        return spacelens::cli::toInt(spacelens::cli::runQuery(args));
+    }
 
     std::stop_source stopSource;
     g_stopSource = &stopSource;
@@ -77,6 +86,9 @@ int wmain(int argc, wchar_t** argv)
             break;
         case spacelens::cli::Command::Find:
             code = spacelens::cli::runFind(args, stopSource.get_token());
+            break;
+        case spacelens::cli::Command::Index:
+            code = spacelens::cli::runIndex(args, stopSource.get_token());
             break;
         default:
             code = spacelens::cli::ExitCode::InternalError;

@@ -9,6 +9,7 @@ enum class ExitCode : int {
     InaccessibleRoot = 3,
     ScanFailed = 4,
     Cancelled = 5,
+    IndexNotFound = 6,
 };
 
 inline int toInt(ExitCode code) noexcept

@@ -58,6 +58,11 @@ std::wstring normalizeExtension(std::wstring value)
     return value;
 }
 
+bool isFilterCommand(Command c)
+{
+    return c == Command::Top || c == Command::Find || c == Command::Query;
+}
+
 }  // namespace
 
 std::string helpText()
@@ -69,24 +74,35 @@ std::string helpText()
         "  spacelens scan <path> [--json]\n"
         "  spacelens top  <path> (--files|--dirs) [filters] [--limit N] [--json]\n"
         "  spacelens find <path> [filters] [--limit N] [--json]\n"
+        "  spacelens index <path> [--json]\n"
+        "  spacelens index status <path> [--json]\n"
+        "  spacelens index list [--json]\n"
+        "  spacelens query <path> (--files|--dirs) [filters] [--limit N] [--json]\n"
         "  spacelens capabilities [--json]\n"
         "  spacelens help\n"
         "  spacelens version\n"
         "\n"
-        "Filters (top/find):\n"
+        "Filters (top/find/query):\n"
         "  --min-size S     Minimum logical size (binary units, e.g. 10MB)\n"
         "  --ext EXT        File extension, with or without a leading dot\n"
         "  --older-than D   Last-write age in whole days\n"
         "  --classification C  Classification name\n"
+        "  --strength S     Reclaim candidate strength (query; e.g. Strong)\n"
         "\n"
         "Options:\n"
         "  --json          Machine-readable JSON on stdout\n"
-        "  --files         Top largest files (with top)\n"
-        "  --dirs          Top largest directories (with top)\n"
+        "  --files         Files mode (top/query)\n"
+        "  --dirs          Directories mode (top/query)\n"
         "  --limit N       Number of results (default 20)\n"
         "  -h, --help      Show this help\n"
         "\n"
-        "Exit codes: 0 success, 2 usage, 3 inaccessible root, 4 scan failed, 5 cancelled\n"
+        "Index notes:\n"
+        "  index builds a snapshot under %LOCALAPPDATA%\\SpaceLens\\indexes\n"
+        "  query uses the persistent index only (no live rescan fallback)\n"
+        "  Source filesystem remains read-only; SpaceLens writes only its own index\n"
+        "\n"
+        "Exit codes: 0 success, 2 usage, 3 inaccessible root, 4 scan/index failed,\n"
+        "            5 cancelled, 6 index not found\n"
         "stdout = results; stderr = diagnostics/errors\n";
 }
 
@@ -118,29 +134,44 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         out.command = Command::Find;
     } else if (cmd == L"capabilities") {
         out.command = Command::Capabilities;
+    } else if (cmd == L"query") {
+        out.command = Command::Query;
+    } else if (cmd == L"index") {
+        // index | index status <path> | index list
+        if (argc >= 3 && std::wstring_view(argv[2]) == L"status") {
+            out.command = Command::IndexStatus;
+        } else if (argc >= 3 && std::wstring_view(argv[2]) == L"list") {
+            out.command = Command::IndexList;
+        } else {
+            out.command = Command::Index;
+        }
     } else {
         out.error = "Unknown command. Run 'spacelens help'.";
         return out;
     }
 
-    // Remaining tokens after command.
-    for (int i = 2; i < argc; ++i) {
+    const int start =
+        (out.command == Command::IndexStatus || out.command == Command::IndexList)
+            ? 3
+            : 2;
+
+    for (int i = start; i < argc; ++i) {
         const std::wstring_view arg = argv[i];
         if (arg == L"--json") {
             out.json = true;
             continue;
         }
         if (arg == L"--files") {
-            if (out.command != Command::Top) {
-                out.error = "--files is only valid with 'top'.";
+            if (out.command != Command::Top && out.command != Command::Query) {
+                out.error = "--files is only valid with 'top' or 'query'.";
                 return out;
             }
             out.topMode = TopMode::Files;
             continue;
         }
         if (arg == L"--dirs") {
-            if (out.command != Command::Top) {
-                out.error = "--dirs is only valid with 'top'.";
+            if (out.command != Command::Top && out.command != Command::Query) {
+                out.error = "--dirs is only valid with 'top' or 'query'.";
                 return out;
             }
             out.topMode = TopMode::Dirs;
@@ -160,8 +191,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             continue;
         }
         if (arg == L"--min-size") {
-            if (out.command != Command::Top && out.command != Command::Find) {
-                out.error = "--min-size is only valid with 'top' or 'find'.";
+            if (!isFilterCommand(out.command)) {
+                out.error = "--min-size is only valid with top/find/query.";
                 return out;
             }
             if (i + 1 >= argc) {
@@ -177,8 +208,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             continue;
         }
         if (arg == L"--ext") {
-            if (out.command != Command::Top && out.command != Command::Find) {
-                out.error = "--ext is only valid with 'top' or 'find'.";
+            if (!isFilterCommand(out.command)) {
+                out.error = "--ext is only valid with top/find/query.";
                 return out;
             }
             if (i + 1 >= argc || argv[i + 1][0] == L'\0') {
@@ -193,8 +224,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             continue;
         }
         if (arg == L"--older-than") {
-            if (out.command != Command::Top && out.command != Command::Find) {
-                out.error = "--older-than is only valid with 'top' or 'find'.";
+            if (!isFilterCommand(out.command)) {
+                out.error = "--older-than is only valid with top/find/query.";
                 return out;
             }
             if (i + 1 >= argc) {
@@ -210,46 +241,61 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             continue;
         }
         if (arg == L"--classification") {
-            if (out.command != Command::Top && out.command != Command::Find) {
-                out.error =
-                    "--classification is only valid with 'top' or 'find'.";
+            if (!isFilterCommand(out.command)) {
+                out.error = "--classification is only valid with top/find/query.";
                 return out;
             }
             if (i + 1 >= argc || argv[i + 1][0] == L'\0') {
                 out.error = "--classification requires a value.";
                 return out;
             }
-            out.classification.assign(argv[++i]);
+            out.classification = argv[++i];
+            continue;
+        }
+        if (arg == L"--strength") {
+            if (out.command != Command::Query) {
+                out.error = "--strength is only valid with 'query'.";
+                return out;
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == L'\0') {
+                out.error = "--strength requires a value.";
+                return out;
+            }
+            out.strength = argv[++i];
             continue;
         }
         if (arg == L"-h" || arg == L"--help") {
             out.command = Command::Help;
-            out.error.clear();
             return out;
         }
-        if (!arg.empty() && arg[0] == L'-') {
+        if (!arg.empty() && arg.front() == L'-') {
             out.error = "Unknown option.";
             return out;
         }
-        // Positional path (first non-option).
-        if (out.path.empty()) {
-            out.path.assign(arg);
-        } else {
+        if (out.command == Command::IndexList) {
+            out.error = "'index list' does not take a path.";
+            return out;
+        }
+        if (!out.path.empty()) {
             out.error = "Unexpected extra argument.";
             return out;
         }
+        out.path.assign(arg.begin(), arg.end());
     }
 
     if (out.command == Command::Scan || out.command == Command::Top ||
-        out.command == Command::Find) {
+        out.command == Command::Find || out.command == Command::Index ||
+        out.command == Command::IndexStatus || out.command == Command::Query) {
         if (out.path.empty()) {
             out.error = "Missing path argument.";
             return out;
         }
     }
-    if (out.command == Command::Top && out.topMode == TopMode::None) {
-        out.error = "'top' requires --files or --dirs.";
-        return out;
+    if (out.command == Command::Top || out.command == Command::Query) {
+        if (out.topMode == TopMode::None) {
+            out.error = "Specify --files or --dirs.";
+            return out;
+        }
     }
 
     return out;
