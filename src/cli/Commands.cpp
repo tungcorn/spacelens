@@ -772,7 +772,19 @@ ExitCode runIndexRefresh(const ParsedArgs& args, std::stop_token stop)
                   << "\"usn_journal_id\":"
                   << jsonUInt(result.checkpoint.usnJournalId) << ","
                   << "\"last_refresh_method\":"
-                  << jsonString(result.checkpoint.lastRefreshMethod) << "}";
+                  << jsonString(result.checkpoint.lastRefreshMethod) << "},"
+                  << "\"diagnostics\":{"
+                  << "\"start_usn\":" << jsonUInt(result.diagStartUsn) << ","
+                  << "\"journal_next_usn\":"
+                  << jsonUInt(result.diagJournalNextUsn) << ","
+                  << "\"journal_lowest_usn\":"
+                  << jsonUInt(result.diagJournalLowestUsn) << ","
+                  << "\"continuation_usn\":"
+                  << jsonUInt(result.diagContinuationUsn) << ","
+                  << "\"committed_next_usn\":"
+                  << jsonUInt(result.diagCommittedNextUsn) << ","
+                  << "\"coalesced_frns\":" << jsonUInt(result.diagCoalescedFrns)
+                  << "}";
         if (!result.error.empty()) {
             std::cout << ",\"error\":" << jsonString(result.error);
         }

@@ -62,13 +62,23 @@ public:
     /// FSCTL_QUERY_USN_JOURNAL
     [[nodiscard]] UsnCapability query(UsnJournalState& out) const;
 
-    /// Read records with USN >= startUsn (exclusive of already-applied boundary:
-    /// callers typically pass the previously stored next_usn as the start).
-    /// onRecord returns false to stop early.
-    /// HistoryLost if startUsn is below LowestValidUsn / entry deleted.
+    /// Read records starting at `startUsn` (callers pass the previously stored
+    /// next_usn — the first USN not yet consumed).
+    ///
+    /// On Supported, `outNextUsn` is the exclusive continuation cursor to
+    /// persist: either the driver's READ continuation USN or the journal tip
+    /// when fully caught up. Never invents `record.usn + 1` (USNs are not
+    /// dense integers; misaligned cursors yield ERROR_INVALID_PARAMETER).
+    ///
+    /// onRecord returns false to stop early (still returns Supported; outNextUsn
+    /// reflects progress through the last fully processed buffer).
+    /// HistoryLost if startUsn is below LowestValidUsn / entry deleted / invalid.
+    /// Empty tail (startUsn == NextUsn) is Supported with outNextUsn == startUsn —
+    /// not a discontinuity.
     [[nodiscard]] UsnCapability readSince(
         std::uint64_t startUsn,
         const std::function<bool(const UsnChangeRecord&)>& onRecord,
+        std::uint64_t& outNextUsn,
         std::stop_token stop = {}) const;
 
 private:

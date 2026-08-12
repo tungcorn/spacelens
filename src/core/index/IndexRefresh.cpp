@@ -900,7 +900,14 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
         }
 
         std::unordered_map<std::uint64_t, CoalescedChange> changes;
-        std::uint64_t maxUsnSeen = r.checkpoint.nextUsn;
+        // Exclusive cursor: first USN not yet consumed. Must be a driver-issued
+        // continuation or journal NextUsn — never record.usn+1 (USNs are sparse
+        // journal offsets; misaligned StartUsn → ERROR_INVALID_PARAMETER).
+        std::uint64_t nextCursor = r.checkpoint.nextUsn;
+        r.diagStartUsn = r.checkpoint.nextUsn;
+        r.diagJournalNextUsn = journal.nextUsn;
+        r.diagJournalLowestUsn = journal.lowestValidUsn;
+
         const UsnCapability readCap = reader.readSince(
             r.checkpoint.nextUsn,
             [&](const UsnChangeRecord& rec) -> bool {
@@ -908,15 +915,13 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
                     return false;
                 }
                 ++r.journalRecordsSeen;
-                if (rec.usn + 1 > maxUsnSeen) {
-                    // Next cursor is the first USN not yet consumed. Records
-                    // include their USN; advance past the highest seen.
-                    maxUsnSeen = rec.usn + 1;
-                }
                 coalesce(changes, rec);
                 return true;
             },
-            stop);
+            nextCursor, stop);
+
+        r.diagContinuationUsn = nextCursor;
+        r.diagCoalescedFrns = changes.size();
 
         if (stop.stop_requested()) {
             r.outcome = IndexRefreshOutcome::Cancelled;
@@ -939,18 +944,18 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
             return r;
         }
 
-        // Re-query tip so we can advance to NextUsn when no records or partial.
+        // Re-query tip. Clamp continuation to [checkpoint, tip]. Never invent a
+        // cursor past the live tip, behind the prior checkpoint, or via
+        // record.usn+1. Driver READ continuation already advances past
+        // ReasonMask-filtered records, so empty matching sets still catch up.
         if (reader.query(journal) == UsnCapability::Supported) {
-            if (maxUsnSeen < journal.nextUsn && changes.empty()) {
-                maxUsnSeen = journal.nextUsn;
-            } else if (maxUsnSeen < r.checkpoint.nextUsn) {
-                maxUsnSeen = r.checkpoint.nextUsn;
+            r.diagJournalNextUsn = journal.nextUsn;
+            r.diagJournalLowestUsn = journal.lowestValidUsn;
+            if (nextCursor < r.checkpoint.nextUsn) {
+                nextCursor = r.checkpoint.nextUsn;
             }
-            // Prefer journal tip when we consumed everything in range.
-            if (changes.empty()) {
-                maxUsnSeen = journal.nextUsn;
-            } else if (maxUsnSeen > journal.nextUsn) {
-                maxUsnSeen = journal.nextUsn;
+            if (nextCursor > journal.nextUsn) {
+                nextCursor = journal.nextUsn;
             }
         }
 
@@ -1176,13 +1181,14 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
 
         // Advance checkpoint ONLY after successful delta apply.
         RefreshCheckpoint newCp = r.checkpoint;
-        newCp.nextUsn = maxUsnSeen;
+        newCp.nextUsn = nextCursor;
         newCp.lastRefreshAtTicks = now;
         newCp.lastRefreshMethod = "usn";
         newCp.status = "ready";
         newCp.lowestValidUsnAtCapture = journal.lowestValidUsn;
         upsertCheckpoint(store.db(), newCp);
         r.checkpoint = newCp;
+        r.diagCommittedNextUsn = nextCursor;
 
         txn.commit();
         r.outcome = IndexRefreshOutcome::Refreshed;

@@ -70,6 +70,15 @@ struct IndexRefreshResult {
     std::uint64_t rowsChanged = 0;
     double elapsedSeconds = 0.0;
     std::string error;
+
+    /// Diagnostics (always filled on refresh attempts that open the journal).
+    /// Safe for agents/tests; not a substitute for outcome/reason.
+    std::uint64_t diagStartUsn = 0;          // checkpoint next_usn requested
+    std::uint64_t diagJournalNextUsn = 0;    // live journal NextUsn at read start
+    std::uint64_t diagJournalLowestUsn = 0;  // live LowestValidUsn
+    std::uint64_t diagContinuationUsn = 0;   // driver continuation after read
+    std::uint64_t diagCommittedNextUsn = 0;  // checkpoint next_usn after commit (0 if not)
+    std::uint64_t diagCoalescedFrns = 0;
 };
 
 /// Probe whether incremental refresh is possible for a published index.

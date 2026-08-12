@@ -130,8 +130,11 @@ UsnCapability UsnJournalReader::query(UsnJournalState& outState) const
 UsnCapability UsnJournalReader::readSince(
     std::uint64_t startUsn,
     const std::function<bool(const UsnChangeRecord&)>& onRecord,
+    std::uint64_t& outNextUsn,
     std::stop_token stop) const
 {
+    outNextUsn = startUsn;
+
     if (!m_handle.valid() || !onRecord) {
         return UsnCapability::Error;
     }
@@ -152,7 +155,9 @@ UsnCapability UsnJournalReader::readSince(
         return UsnCapability::HistoryLost;
     }
     if (startUsn == state.nextUsn) {
-        return UsnCapability::Supported;  // nothing to read
+        // Empty tail: already at tip. Not a discontinuity.
+        outNextUsn = state.nextUsn;
+        return UsnCapability::Supported;
     }
 
     // READ_USN_JOURNAL_DATA_V0: StartUsn is the first USN to return.
@@ -167,6 +172,10 @@ UsnCapability UsnJournalReader::readSince(
     // 64 KiB buffer is typical; records are variable-length.
     std::vector<std::uint8_t> buffer(64 * 1024);
 
+    // Re-query tip periodically so we can stop when caught up to a moving journal.
+    // Initial tip is a lower bound; concurrent writers may advance it.
+    std::uint64_t tipUsn = state.nextUsn;
+
     for (;;) {
         if (stop.stop_requested()) {
             return UsnCapability::Supported;
@@ -179,6 +188,23 @@ UsnCapability UsnJournalReader::readSince(
                                nullptr)) {
             const DWORD err = ::GetLastError();
             if (err == ERROR_HANDLE_EOF) {
+                // No more records currently available. Cursor stays at StartUsn
+                // (or last continuation). Prefer live tip if we are at/after it.
+                UsnJournalState live{};
+                if (query(live) == UsnCapability::Supported) {
+                    tipUsn = live.nextUsn;
+                    if (outNextUsn < tipUsn &&
+                        static_cast<std::uint64_t>(readData.StartUsn) >= tipUsn) {
+                        outNextUsn = tipUsn;
+                    } else if (static_cast<std::uint64_t>(readData.StartUsn) >=
+                               tipUsn) {
+                        outNextUsn = tipUsn;
+                    } else {
+                        // EOF with StartUsn still below tip is unusual; keep the
+                        // driver-provided StartUsn as the safe continuation.
+                        outNextUsn = static_cast<std::uint64_t>(readData.StartUsn);
+                    }
+                }
                 return UsnCapability::Supported;
             }
             if (err == ERROR_JOURNAL_ENTRY_DELETED) {
@@ -188,7 +214,9 @@ UsnCapability UsnJournalReader::readSince(
                 return UsnCapability::JournalNotActive;
             }
             if (err == ERROR_INVALID_PARAMETER) {
-                // Often: StartUsn outside valid range or JournalID mismatch.
+                // Often: StartUsn outside valid range / not a record boundary /
+                // JournalID mismatch. Callers must only persist driver-issued
+                // continuation USNs or journal NextUsn.
                 return UsnCapability::HistoryLost;
             }
             if (err == ERROR_ACCESS_DENIED) {
@@ -198,16 +226,25 @@ UsnCapability UsnJournalReader::readSince(
         }
 
         if (bytes < sizeof(USN)) {
+            // Empty successful read — treat as caught up.
+            UsnJournalState live{};
+            if (query(live) == UsnCapability::Supported) {
+                outNextUsn = live.nextUsn;
+            }
             return UsnCapability::Supported;
         }
 
-        // First 8 bytes: next USN to continue from.
+        // First 8 bytes: next USN to continue from (driver-authoritative).
         const USN nextStart = *reinterpret_cast<const USN*>(buffer.data());
+        const std::uint64_t continuation =
+            static_cast<std::uint64_t>(nextStart);
         DWORD offset = sizeof(USN);
         bool any = false;
+        bool stopEarly = false;
 
         while (offset + sizeof(UsnRecordHeader) <= bytes) {
             if (stop.stop_requested()) {
+                outNextUsn = continuation;
                 return UsnCapability::Supported;
             }
 
@@ -268,40 +305,58 @@ UsnCapability UsnJournalReader::readSince(
                     rec.fileName.assign(nameChars, nameLen);
                 }
             } else {
-                // Skip unknown versions safely.
+                // Skip unknown versions safely; continuation USN still advances.
                 offset += common->RecordLength;
                 continue;
             }
 
             any = true;
             if (!onRecord(rec)) {
-                return UsnCapability::Supported;
+                stopEarly = true;
+                break;
             }
 
             offset += common->RecordLength;
         }
 
-        if (nextStart <= readData.StartUsn && !any) {
-            // No progress.
-            return UsnCapability::Supported;
-        }
-        if (static_cast<std::uint64_t>(nextStart) >= state.nextUsn && !any) {
+        // Always adopt the driver continuation after a successful buffer parse.
+        // This is the only safe value to feed back as StartUsn / checkpoint.
+        outNextUsn = continuation;
+
+        if (stopEarly) {
             return UsnCapability::Supported;
         }
 
-        readData.StartUsn = nextStart;
-        if (static_cast<std::uint64_t>(nextStart) >= state.nextUsn) {
-            // Caught up to journal tip at query time.
-            if (!any) {
-                return UsnCapability::Supported;
+        // Refresh tip — concurrent activity may have moved it.
+        {
+            UsnJournalState live{};
+            if (query(live) == UsnCapability::Supported) {
+                tipUsn = live.nextUsn;
             }
-            // One more loop may still return EOF.
         }
 
-        // If this buffer was short / empty of records beyond the USN header.
-        if (!any) {
+        // No progress from the driver and no records → stop (empty / stuck).
+        if (continuation <= static_cast<std::uint64_t>(readData.StartUsn) &&
+            !any) {
+            if (outNextUsn < tipUsn) {
+                // Avoid spinning; if we cannot advance past StartUsn, surface as
+                // caught-up only when already at tip.
+                outNextUsn = static_cast<std::uint64_t>(readData.StartUsn);
+            }
             return UsnCapability::Supported;
         }
+
+        // Caught up to journal tip.
+        if (continuation >= tipUsn) {
+            outNextUsn = tipUsn;
+            return UsnCapability::Supported;
+        }
+
+        // More journal remains. Continue even if this buffer had zero matching
+        // records (ReasonMask / unknown versions) — previously we returned early
+        // on !any and left the cursor mid-range incorrectly on next cycle when
+        // combined with usn+1 math.
+        readData.StartUsn = nextStart;
     }
 }
 
