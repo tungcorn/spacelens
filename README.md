@@ -24,8 +24,8 @@ spacelens_core  →  spacelens (CLI, read-only)
 - CLI: `scan`, `top`, `find`, `index*`, `query`, `capabilities`, `help`,
   `version` with versioned JSON and `filesystem_mutation: false`
 - GUI: Live Scan + **Indexed** storage discovery (presets, search, filters,
-  breadcrumb navigation, inspector, Explorer/copy, Cleanup Review planning only —
-  no delete/move)
+  breadcrumb navigation, storage overview, interactive squarified treemap,
+  inspector, Explorer/copy, Cleanup Review planning only — no delete/move)
 - Not yet: auto-refresh on query, journal creation, duplicates, MFT initial
   scan, MCP, product AI, automatic deletion, or automatic movement
 
@@ -45,10 +45,12 @@ spacelens_core  →  spacelens (CLI, read-only)
   humans, scripts, and AI agents
 - Optional Qt desktop UI with live progress, cancel, Explorer, and clipboard
   actions
-- **Index Browser V2:** discover largest / old-and-large / developer / reclaim
-  candidates from a published index without rescanning; search name/path/ext;
-  drill into folders via breadcrumbs; add snapshot-provenance items to Cleanup
-  Review
+- **Index Browser V2 + Storage Overview / Treemap V1:** discover largest /
+  old-and-large / developer / reclaim candidates from a published index without
+  rescanning; search name/path/ext; storage overview with non-overlapping
+  logical-size metrics; interactive squarified treemap of immediate children
+  (with “Other” aggregation); drill into folders via treemap or breadcrumbs;
+  add snapshot-provenance items to Cleanup Review
 - Directory reparse points not followed by default; access errors are non-fatal
   and counted
 
@@ -104,18 +106,21 @@ NTFS is case-insensitive and those names would collide):
 
 1. **Index Folder…** (or CLI `index <root>`) to publish a snapshot under AppData.
 2. Open the **Indexed** tab and select a root — header shows age, freshness,
-   file/folder counts, and logical size.
-3. Pick a discovery mode: **Largest**, **Old & Large**, **Developer Storage**,
-   or **Reclaim Candidates** (or **Custom** filters).
-4. Optionally search (`Ctrl+F`), tighten min size / activity / classification,
-   then inspect a row.
-5. **Open** / **Show in Explorer** / **Copy Path**, or **Add to Cleanup Review**
-   (planning only). Double-click a folder to browse inside the index.
-6. **Refresh Index** uses USN when available; otherwise the UI reports
+   file/folder counts, and **indexed logical size**.
+3. Read the **storage overview** and **treemap** for the current location
+   (immediate children by logical size; double-click a folder to drill down).
+4. Pick a discovery mode: **Largest**, **Old & Large**, **Developer Storage**,
+   or **Reclaim Candidates** (or **Custom** filters) for the result table.
+5. Optionally search (`Ctrl+F`), tighten min size / activity / classification,
+   then inspect a row or treemap cell.
+6. **Open** / **Show in Explorer** / **Copy Path**, or **Add to Cleanup Review**
+   (planning only).
+7. **Refresh Index** uses USN when available; otherwise the UI reports
    incremental unavailable and **Rebuild** remains explicit.
 
-All Indexed queries hit the persistent SQLite snapshot — they do not rescan the
-analyzed tree. See [`docs/INDEX.md`](docs/INDEX.md).
+All Indexed queries and the treemap hit the persistent SQLite snapshot — they
+do not rescan the analyzed tree. Sizes are **logical** (not physical size-on-disk).
+See [`docs/INDEX.md`](docs/INDEX.md).
 
 Tests:
 

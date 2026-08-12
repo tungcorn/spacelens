@@ -74,8 +74,26 @@ create/resize/delete is never used. Access denied or journal discontinuity
 refresh/rebuild stay on `IndexSession`. Open/Reveal validate live paths and
 treat missing entries as stale snapshot, not index rewrites.
 
+**Storage Overview + Treemap V1** adds hierarchical visual discovery for the
+current indexed location:
+
+```text
+queryHierarchyChildren (core, parent_id children)
+        ↓
+StorageOverview (non-overlapping logical totals + child counts)
+        ↓
+prepareTreemapWeights + layoutSquarified (core, Qt-free)
+        ↓
+TreemapWidget (QPainter; cached layout; selection sync)
+```
+
+Child directory weights use recursive logical size; direct files use file size.
+The “Other” bucket folds a long tail of tiny siblings for readability only.
+Discovery presets continue to drive the result table independently of treemap
+areas. Core remains free of Qt; paintEvent never runs SQL or filesystem scans.
+
 Deferred work includes AI inside the product, auto-refresh on query, MFT-based
-initial scan, watch mode, duplicate detection, treemap, MCP, and any automatic
+initial scan, watch mode, duplicate detection, MCP, and any automatic
 deletion or movement. A future mutation service, if approved, must be a separately
 permissioned surface rather than an ordinary CLI verb.
 
@@ -418,7 +436,6 @@ the same safety distinctions and read-only agent boundary.
 
 ## Deferred
 
-AI product features, SQLite snapshots, MFT scanning, duplicates, persistent
-indexing, watch mode, deletion UX, and mutation services remain deferred. Keep
-interfaces replaceable; do not hard-wire GUI types or filesystem authority into
-core analysis.
+AI product features, MFT scanning, duplicates, watch mode, deletion UX, and
+mutation services remain deferred. Keep interfaces replaceable; do not hard-wire
+GUI types or filesystem authority into core analysis.

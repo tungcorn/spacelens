@@ -110,6 +110,23 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
   count), treating snapshot paths as live truth without existence checks, and
   blocking the GUI thread on large COUNT/SUM queries.
 
+## Squarified treemap layout (core)
+
+- **Why used:** Visual “where did storage go?” for the current indexed location
+  without embedding charting frameworks or SQL in `paintEvent`.
+- **Ownership:** `TreemapLayout` is pure geometry over weight items. `IndexOverview`
+  builds hierarchy children + overview metrics. `TreemapWidget` owns only display
+  state and painted rectangles; it never opens SQLite or enumerates the filesystem.
+- **Lifetime:** Layout is recomputed when items or widget size change; paint iterates
+  cached rectangles. Hierarchy + discovery queries share the browser page’s
+  generation-cancelled `jthread`.
+- **Semantics:** Weights are logical bytes. Immediate children only; drill-down
+  navigates. “Other” is a visualization aggregate (not a path / review candidate).
+  Overview intelligence metrics are **counts**, never overlapping recursive size sums.
+- **Bug prevented:** Misleading “reclaimable GB” totals, non-deterministic layout
+  from unordered maps, UI freezes from layout-in-paint or DB-in-paint, and
+  treating Other as a deletable item.
+
 ## Cleanup candidate ownership
 
 - **Why used:** Cleanup Review is a planning queue, not a filesystem-operation owner.

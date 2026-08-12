@@ -68,11 +68,13 @@ with:
 "filesystem_mutation": false
 ```
 
-### GUI Index Browser (V2)
+### GUI Index Browser (V2) + Treemap V1
 
-The Indexed tab is discovery and planning only:
+The Indexed tab is discovery, visualization, and planning only:
 
 - No Delete / Move / Rename controls.
+- Treemap interaction is navigation/inspection only (hover, select, drill-down).
+- The “Other” treemap bucket is a visualization aggregate — never a cleanup target.
 - Cleanup Review remains an in-memory planning queue (`source=persistent_index`
   preserves snapshot age and classification metadata).
 - Open / Reveal / default-app launch are human-initiated shell actions on paths

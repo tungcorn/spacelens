@@ -25,7 +25,7 @@ analyzed user data.
 - Auto-refresh on `query` (refresh is always explicit)
 - Creating or configuring the USN journal
 - Writing into the analyzed root
-- Treemap / storage overview charts, MCP, product AI, deletion/movement
+- MCP, product AI, deletion/movement
 - MFT-based initial scan (future)
 - Fuzzy/semantic search, watch mode, new USN optimizations
 
@@ -180,14 +180,17 @@ mode, search/filter/sort, inspect, then Open / Reveal / Copy / Add to Cleanup Re
 | `IndexCatalog` (core) | List/summarize roots, freshness, discovery presets → `IndexQuerySpec` |
 | `IndexQuery` (core) | Typed filters, text search, sort, browse path; all SQL stays here |
 | `IndexSession` (app) | Async full rebuild / USN refresh (ScanSession pattern) |
-| `IndexBrowserPage` (ui) | Roots, header, presets, filters, table model, breadcrumb, inspector, review |
+| `IndexBrowserPage` (ui) | Roots, header, overview, treemap, presets, filters, table, breadcrumb, inspector, review |
+| `TreemapLayout` (core) | Squarified layout + “Other” aggregation (Qt-free, unit-tested) |
+| `IndexOverview` (core) | Hierarchy children + non-overlapping overview metrics |
+| `TreemapWidget` (ui) | Native QPainter treemap; no SQL in paintEvent |
 
 ### Practical workflow
 
 ```text
 choose indexed root
     ↓
-see storage overview (counts, logical size, snapshot age, freshness)
+see storage overview + squarified treemap (immediate children, logical size)
     ↓
 choose discovery mode (Largest / Old & Large / Developer / Reclaim / Custom)
     ↓
@@ -197,8 +200,22 @@ inspect interesting item (classification, rule id, reclaim strength)
     ↓
 Open / Reveal / Copy  ·  Add to Cleanup Review
     ↓
-(optional) drill into a folder via breadcrumb — still index-only, no live rescan
+drill into a folder via treemap double-click or breadcrumb — still index-only
 ```
+
+### Storage overview and treemap (V1)
+
+| Concept | Behavior |
+|---------|----------|
+| Scope | Immediate children of the **current browsed location** (root or folder) |
+| Weight | Logical bytes: file `size_bytes`, directory `recursive_size` |
+| Partition | Direct-file sizes + child-directory recursive sizes partition the location total without double-counting nested paths |
+| Overview intelligence | **Counts** among direct children (developer / reclaim / old&large) — never a sum of recursive directory sizes labeled “reclaimable bytes” |
+| Layout | Squarified treemap in core (`layoutSquarified`); Qt paints prepared rectangles only |
+| “Other” | Visualization aggregate for the long tail of tiny children; not a filesystem path, not a cleanup candidate, not a DB row |
+| Filters | Discovery presets filter the **table**; treemap stays physical hierarchy of the location |
+| Navigation | Double-click directory rectangle → `browsePath` / breadcrumb; no live rescan |
+| Terminology | **Indexed logical size** — not physical size-on-disk |
 
 ### Discovery presets (`IndexDiscoveryPreset`)
 
@@ -240,7 +257,7 @@ overrides still win when the user changes them.
   not spam UAC; it states incremental unavailable and offers Rebuild.
 - Open / Reveal check live path existence; missing paths show a stale-snapshot
   message. Multi-select supports Copy Paths and Add to Review only (no bulk Open).
-- No treemap, delete, move, MCP, or product AI in this milestone.
+- Treemap is navigation/inspection only. No delete, move, MCP, or product AI.
 
 Freshness labels (display):
 
