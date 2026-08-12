@@ -136,6 +136,51 @@ SPACELENS_TEST(Refresh_add_modify_delete_parity)
     }
 }
 
+// Nested creates: parent recursive_size must recompute deepest-first.
+// Pre-fix: recomputeAncestors walked root→leaf so files were present but
+// root logical_bytes lagged (counts matched, sizes did not).
+SPACELENS_TEST(Refresh_nested_creates_directory_aggregates_or_skip)
+{
+    const std::wstring root = makeTempTree("nested_agg");
+    const fs::path rootPath(root);
+    fs::create_directories(rootPath / "bulk" / "d000");
+
+    auto built = buildIndexForRoot(root, {});
+    SPACELENS_REQUIRE(built.state == IndexBuildState::Completed);
+
+    ByteSize expectedAdded = 0;
+    for (int i = 0; i < 40; ++i) {
+        const std::string body(static_cast<std::size_t>(i + 1), 'x');
+        expectedAdded += static_cast<ByteSize>(body.size());
+        writeFile(rootPath / "bulk" / "d000" / ("f" + std::to_string(i) + ".txt"),
+                  body);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+
+    auto refreshed = refreshIndex(root, {});
+    if (refreshed.outcome == IndexRefreshOutcome::FullRebuildRequired) {
+        return;
+    }
+    SPACELENS_REQUIRE(refreshed.outcome == IndexRefreshOutcome::Refreshed ||
+                      refreshed.outcome == IndexRefreshOutcome::AlreadyCurrent);
+    SPACELENS_REQUIRE(refreshed.added >= 40);
+
+    auto stInc = indexStatus(root);
+    SPACELENS_REQUIRE(stInc.ok);
+    const ByteSize incBytes = stInc.root.logicalBytes;
+    const auto incFiles = stInc.root.fileCount;
+
+    auto full = buildIndexForRoot(root, {});
+    SPACELENS_REQUIRE(full.state == IndexBuildState::Completed);
+    auto stFull = indexStatus(root);
+    SPACELENS_REQUIRE(stFull.ok);
+
+    SPACELENS_REQUIRE_EQ(incFiles, stFull.root.fileCount);
+    SPACELENS_REQUIRE_EQ(incBytes, stFull.root.logicalBytes);
+    // Sanity: aggregates must include the nested payload (not stay at baseline).
+    SPACELENS_REQUIRE(incBytes >= expectedAdded);
+}
+
 SPACELENS_TEST(Refresh_rename_file)
 {
     const std::wstring root = makeTempTree("rename");

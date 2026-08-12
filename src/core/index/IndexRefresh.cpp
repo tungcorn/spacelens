@@ -524,10 +524,72 @@ void recomputeDirectory(SqliteDb& db, std::int64_t dirId, FileTimeTicks now)
     upd.stepDone();
 }
 
+/// Ensure a directory path under the indexed root exists as an entry, creating
+/// ancestor dirs from live disk when they appear in the same USN window as
+/// their children (unordered FRN map would otherwise hit missing_parent).
+/// Returns entry id, or nullopt if the path cannot be materialized safely.
+std::optional<std::int64_t> ensureDirUnderRoot(
+    SqliteDb& db, const std::wstring& dirPath, const std::wstring& root,
+    FileTimeTicks now, IndexRefreshResult& stats,
+    std::unordered_set<std::int64_t>& dirtyDirs, int depth = 0)
+{
+    if (depth > 64 || dirPath.empty()) {
+        return std::nullopt;
+    }
+    if (auto existing = findEntryIdByPath(db, dirPath)) {
+        return existing;
+    }
+
+    const std::wstring normDir = normalizePathForPolicy(dirPath);
+    const std::wstring normRoot = normalizePathForPolicy(root);
+    if (normDir == normRoot) {
+        SqliteStmt rs(
+            db,
+            "SELECT id FROM entries WHERE root_id=1 AND parent_id IS NULL LIMIT 1;");
+        if (rs.step()) {
+            return rs.columnInt64(0);
+        }
+        return findEntryIdByPath(db, root);
+    }
+    if (!pathIsUnderRoot(dirPath, root)) {
+        return std::nullopt;
+    }
+
+    const std::wstring parentPath = parentPathOf(dirPath);
+    auto parentId =
+        ensureDirUnderRoot(db, parentPath, root, now, stats, dirtyDirs, depth + 1);
+    if (!parentId || *parentId <= 0) {
+        return std::nullopt;
+    }
+
+    auto identity = queryFileIdentity(dirPath);
+    if (!identity || !identity->isDirectory) {
+        return std::nullopt;
+    }
+    if (auto byFrn = findEntryIdByFileId(db, identity->fileId)) {
+        return byFrn;
+    }
+
+    const UpsertTouch touch =
+        upsertEntryFromDisk(db, dirPath, *identity, *parentId, now, stats);
+    if (touch.entryId <= 0) {
+        return std::nullopt;
+    }
+    dirtyDirs.insert(*parentId);
+    dirtyDirs.insert(touch.entryId);
+    return touch.entryId;
+}
+
 void recomputeAncestors(SqliteDb& db, std::int64_t startId, FileTimeTicks now,
                         IndexRefreshResult& stats)
 {
-    // Walk parent chain; recompute bottom-up by collecting chain then reverse.
+    // Collect start → root. start is typically a dirty directory; if a file id
+    // is passed, the walk skips non-dirs when recomputing.
+    //
+    // Order matters: child recursive_size must be final before the parent sums
+    // it. Chain is deepest-first (start, …, root) — iterate forward, never
+    // reverse. Reverse order left parents at pre-delta sizes while leaves were
+    // correct (multi-batch parity: file counts match, logical_bytes lag).
     std::vector<std::int64_t> chain;
     std::int64_t cur = startId;
     while (cur > 0) {
@@ -545,28 +607,19 @@ void recomputeAncestors(SqliteDb& db, std::int64_t startId, FileTimeTicks now,
             continue;
         }
         if (parent <= 0) {
+            // Root is already in chain; stop.
             break;
         }
         cur = parent;
     }
 
-    // Recompute from deepest to root (chain is child→…→root-ish).
-    // Actually we collected start→root; reverse so children first.
-    // If start was a file, first element may be file — skip non-dirs.
-    for (auto it = chain.begin(); it != chain.end(); ++it) {
+    for (const std::int64_t id : chain) {
         SqliteStmt s(db, "SELECT kind FROM entries WHERE id = ?1;");
-        s.bindInt64(1, *it);
-        if (s.step() && s.columnInt64(0) == 1) {
-            // Will recompute in reverse order below.
-        }
-    }
-    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        SqliteStmt s(db, "SELECT kind FROM entries WHERE id = ?1;");
-        s.bindInt64(1, *it);
+        s.bindInt64(1, id);
         if (!s.step() || s.columnInt64(0) != 1) {
             continue;
         }
-        recomputeDirectory(db, *it, now);
+        recomputeDirectory(db, id, now);
         ++stats.dirsRecomputed;
     }
 }
@@ -1065,10 +1118,16 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
                 } else if (auto byPath =
                                findEntryIdByPath(store.db(), parentPath)) {
                     parentEntryId = *byPath;
+                } else if (auto ensured = ensureDirUnderRoot(
+                               store.db(), parentPath, root, now, r,
+                               dirtyDirs)) {
+                    // Same USN window often creates parent dir + children with
+                    // unordered FRN apply order. Materialize live parents under
+                    // root instead of fail-closed missing_parent.
+                    parentEntryId = *ensured;
                 } else {
-                    // Parent missing: try ensure parent via identity walk — if
-                    // parent is under root but not indexed, force full rebuild
-                    // for safety rather than creating an orphan.
+                    // Parent still unresolved: under-root gap → full rebuild;
+                    // otherwise treat as root child when parent is the root.
                     if (pathIsUnderRoot(parentPath, root) &&
                         normalizePathForPolicy(parentPath) !=
                             normalizePathForPolicy(root)) {
@@ -1079,10 +1138,8 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
                             IncrementalRefreshState::NeedsFullRebuild;
                         return r;
                     }
-                    // Parent is root.
                     auto rootId = findEntryIdByPath(store.db(), root);
                     if (!rootId) {
-                        // Root row uses the normalized root path.
                         SqliteStmt rs(
                             store.db(),
                             "SELECT id FROM entries WHERE root_id=1 AND "
