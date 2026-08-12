@@ -129,6 +129,11 @@ advance checkpoint.next_usn = continuation (same SQLite transaction)
   C and a process-restart refresh from the persisted checkpoint. Verify with
   `scripts/verify-usn-refresh.ps1` (gates overall `outcome` on multi-batch +
   restart, not only single-mutation parity).
+- **Aggregates**: dirty directories recompute **deepest-first** (child `recursive_size`
+  before parent). Reverse order left file counts correct but `logical_bytes` lag.
+- **Same-window parents**: if a child appears before its new parent in the FRN
+  map, parents under the root are materialized from live disk (`ensureDirUnderRoot`)
+  rather than immediately `missing_parent`.
 
 ### Capability reasons (`incremental_refresh.state`)
 

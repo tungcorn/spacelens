@@ -74,44 +74,65 @@ build-release/cli/spacelens.exe
 | `index refresh` (unelevated) | **43 ms** process / **0 ms** engine | Immediate `full_rebuild_required`, reason `access_denied` |
 | `index status` | tens of ms | Reports `incremental_refresh.state: access_denied` |
 
-### Incremental speedup — elevated happy path
+### Incremental Index V2.1 — elevated multi-batch evidence (2026-08-12)
 
-Unelevated interactive sessions still see `access_denied` for volume USN open
-(no effective SeBackupPrivilege). That path is **ENVIRONMENT_BLOCKED**, not a
-performance result.
+Unelevated sessions still see `access_denied` for volume USN open. That path is
+**ENVIRONMENT_BLOCKED**, not a performance result.
 
-**Elevated** verification via `scripts/verify-usn-refresh.ps1` on temp fixtures
-only (no analyzed-tree mutation, no journal create/configure). Overall `outcome`
-is **pass** only when:
+**Elevated** verification via `scripts/verify-usn-refresh.ps1` on `%TEMP%`
+fixtures only (no analyzed-tree mutation, no journal create/configure).
 
-1. Single-mutation parity (create/modify/delete/rename + subdir boundary) holds
-2. Multi-batch refresh (1 → 100 → 1000) on the **same** index returns
-   `refreshed` / `already_current` (not `full_rebuild_required`) and parity holds
-3. Process-restart refresh from the persisted checkpoint succeeds with parity
-4. Large-tree sequential 1/100/1000 bench refreshes also succeed (if reached)
+| Field | Value |
+|-------|--------|
+| Evidence | `usn-verify-elevated.json` (local; gitignored pattern `usn-verify-*.json`) |
+| Outcome | **PASS** |
+| Elevation | Administrator |
+| Volume open | ok (`\\.\C:`) |
+| Filesystem | `C:` NTFS Healthy |
+| CPU | AMD Ryzen 5 7530U (6C/12T) |
+| RAM | ~14 GiB |
+| OS | Windows 11 Home 10.0.26200 x64 |
+| CLI | Release `build-release/cli/spacelens.exe` |
+| Methodology | Single full script run (~21 s wall); process Stopwatch + CLI `elapsed_ms` |
+| Cursor | Driver READ continuation; batch N+1 `start_usn` == batch N `committed_next_usn` |
 
-Bench timings never override a correctness fail. Pre-fix (2026-08-12): 1-change
-refresh passed but 100/1000 returned `full_rebuild_required` /
-`journal_records_seen=0` because the checkpoint stored `record.usn+1` (invalid
-StartUsn). Fixed by persisting the driver READ continuation USN.
+#### Correctness matrix (parity = incremental query snapshot vs fresh full rebuild)
+
+| Scenario | Method | Parity | Refresh (process / engine) | Full rebuild (process) | Notes |
+|----------|--------|--------|----------------------------|------------------------|-------|
+| create/modify/delete/rename | `refreshed` | **PASS** | 31 ms / 13 ms | 83 ms | 33 journal records; counts/bytes match |
+| subdir root-boundary in/out | `refreshed` | **PASS** | 29 ms / 12 ms | 82 ms | Outside paths excluded |
+| multi-batch 1 change | `refreshed` | (see batch parity) | 31 ms | — | `added=1`; cont advances |
+| multi-batch 100 changes | `refreshed` | (see batch parity) | 62 ms | — | `start` = prior `committed` |
+| multi-batch 1000 changes | `refreshed` | **PASS** (after 1+100+1000) | 340 ms | — | same index; files=1307 dirs=108 bytes=26006 match full |
+| process restart | `refreshed` ×2 | **PASS** | 13 ms then 11 ms engine | — | post.`start_usn` == pre.`committed_next_usn` |
+
+No scenario counted a `full_rebuild_required` as incremental success.
+
+#### Large-tree sequential bench (5000-file fixture, same index, all `outcome: refreshed`)
+
+| Operation | Process | Engine | Records seen | Rows changed |
+|-----------|---------|--------|--------------|--------------|
+| Full rebuild | **595 ms** | **538 ms** | — | — |
+| Incremental 1 change | **59 ms** | **34 ms** | 21 | 1 |
+| Incremental 100 changes | **108 ms** | **86 ms** | 333 | 100 |
+| Incremental 1000 changes | **345 ms** | **328 ms** | 3126 | 1000 |
+| Query after refresh (`--files --limit 20`) | **26 ms** | — | — | — |
+
+Approximate speedup vs full rebuild on this run (process wall-clock): ~10× (1 change),
+~5.5× (100), ~1.7× (1000). Larger batches approach full-rebuild cost as expected;
+do not treat as a universal claim beyond this machine/fixture.
 
 ```powershell
-# Prefer an already-elevated shell (avoid repeated UAC popups from the harness)
+# Already-elevated PowerShell (avoid -SelfElevate UAC spam from the harness)
 . .\scripts\dev-env.ps1
-cmake --build build-release --config Release --target spacelens
-.\scripts\verify-usn-refresh.ps1 -CliPath .\build-release\cli\spacelens.exe
+.\scripts\verify-usn-refresh.ps1 -CliPath .\build-release\cli\spacelens.exe -LargeFileCount 5000 -ReportPath .\usn-verify-elevated.json
 ```
 
-Historical 1-change evidence (pre multi-batch gate, still useful as order-of-magnitude):
+Fixes closed during this gate (beyond the continuation-cursor fix):
 
-| Operation | Wall-clock | Notes |
-|-----------|------------|--------|
-| Full rebuild (5000 files) | **438 ms** process / **379 ms** engine | Synthetic tree under `%TEMP%` |
-| Incremental 1 change | **53 ms** process / **29 ms** engine | ~8–13× vs full on that run |
-| Query after refresh | **26 ms** | `limit 20` |
-
-Re-run the verify script elevated after the cursor fix to refresh multi-batch
-numbers; do not claim 100/1000 speedup until that report shows `outcome: pass`.
+1. Directory aggregate recompute order was root→leaf (parents kept pre-delta sizes).
+2. Same-window new parent directory + children could hit `missing_parent` because FRN apply order is unordered — parents are now ensured from live disk under the root.
 
 ## Interpretation
 
@@ -121,7 +142,8 @@ numbers; do not claim 100/1000 speedup until that report shows `outcome: pass`.
   opened: previous index remains queryable; agents are told to full-rebuild.
 - Do not compare unelevated `index refresh` (~40 ms no-op reject) to full rebuild
   as a “speedup” — that path did not apply deltas.
-- Multi-batch reliability is a **correctness** gate before any batch speedup claim.
+- Elevated multi-batch + restart parity is the V2.1 reliability bar; small-delta
+  refreshes are substantially cheaper than full rebuild on large trees.
 
 ## Regression guardrails
 
