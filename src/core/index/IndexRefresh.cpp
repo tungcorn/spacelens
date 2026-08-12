@@ -268,10 +268,49 @@ std::vector<std::wstring> listChildNames(SqliteDb& db, std::int64_t parentId)
     return names;
 }
 
-void upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
-                         const FileIdentity& id, std::int64_t parentEntryId,
-                         FileTimeTicks now, IndexRefreshResult& stats)
+/// When a directory is renamed/moved, USN typically emits only the directory
+/// record — not every child. Rewrite descendant path prefixes so the index
+/// stays path-consistent without requiring a full rebuild.
+void rewriteDescendantPaths(SqliteDb& db, const std::wstring& oldPath,
+                            const std::wstring& newPath)
 {
+    if (oldPath.empty() || newPath.empty() || oldPath == newPath) {
+        return;
+    }
+    SqliteStmt sel(
+        db,
+        "SELECT id, path FROM entries WHERE root_id = 1 AND path LIKE ?1;");
+    sel.bindText16(1, oldPath + L"\\%");
+    std::vector<std::pair<std::int64_t, std::wstring>> rows;
+    while (sel.step()) {
+        rows.emplace_back(sel.columnInt64(0), sel.columnText16(1));
+    }
+    for (const auto& [id, p] : rows) {
+        if (p.size() < oldPath.size()) {
+            continue;
+        }
+        const std::wstring rewritten = newPath + p.substr(oldPath.size());
+        SqliteStmt upd(db, "UPDATE entries SET path = ?1 WHERE id = ?2;");
+        upd.bindText16(1, rewritten);
+        upd.bindInt64(2, id);
+        upd.stepDone();
+    }
+}
+
+struct UpsertTouch {
+    std::int64_t entryId = 0;
+    std::int64_t oldParentId = 0;
+    bool pathChanged = false;
+};
+
+/// Upsert one live path. Returns old parent id so callers can dirty both sides
+/// of a rename/move for aggregate recompute.
+UpsertTouch upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
+                                const FileIdentity& id,
+                                std::int64_t parentEntryId, FileTimeTicks now,
+                                IndexRefreshResult& stats)
+{
+    UpsertTouch touch;
     const std::wstring name = leafName(path);
     const bool isDir = id.isDirectory;
     const ByteSize size = isDir ? 0 : id.sizeBytes;
@@ -282,12 +321,31 @@ void upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
         existing = findEntryIdByPath(db, path);
     }
 
+    std::wstring oldPath;
+    std::int64_t oldParentId = 0;
+    if (existing) {
+        SqliteStmt prev(
+            db, "SELECT path, parent_id FROM entries WHERE id = ?1;");
+        prev.bindInt64(1, *existing);
+        if (prev.step()) {
+            oldPath = prev.columnText16(0);
+            oldParentId = prev.columnInt64(1);
+            touch.oldParentId = oldParentId;
+        }
+    }
+
     std::vector<std::wstring> children;
     if (isDir && existing) {
         children = listChildNames(db, *existing);
     }
 
     if (existing) {
+        touch.entryId = *existing;
+        touch.pathChanged = (!oldPath.empty() && oldPath != path);
+        // Directory rename/move: rewrite children paths before updating parent.
+        if (isDir && touch.pathChanged) {
+            rewriteDescendantPaths(db, oldPath, path);
+        }
         SqliteStmt upd(
             db,
             "UPDATE entries SET parent_id=?1, kind=?2, name=?3, path=?4, "
@@ -374,7 +432,9 @@ void upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
         ins.stepDone();
         ++stats.added;
         ++stats.rowsChanged;
+        touch.entryId = newId;
     }
+    return touch;
 }
 
 /// Recompute recursive_size and write activity for a directory from children.
@@ -1063,18 +1123,19 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
                     dirtyDirs.insert(*rootId);
                 }
             } else {
-                upsertEntryFromDisk(store.db(), path, *identity, parentEntryId,
-                                    now, r);
-                if (isNew && r.added > 0) {
-                    // upsertEntryFromDisk already counted added/modified
-                }
+                const UpsertTouch touch = upsertEntryFromDisk(
+                    store.db(), path, *identity, parentEntryId, now, r);
+                (void)isNew;
+                // New parent (and old parent on rename/move) need aggregate recompute.
                 if (parentEntryId > 0) {
                     dirtyDirs.insert(parentEntryId);
                 }
-                if (auto idNow = findEntryIdByFileId(store.db(), identity->fileId)) {
-                    if (identity->isDirectory) {
-                        dirtyDirs.insert(*idNow);
-                    }
+                if (touch.oldParentId > 0 &&
+                    touch.oldParentId != parentEntryId) {
+                    dirtyDirs.insert(touch.oldParentId);
+                }
+                if (touch.entryId > 0 && identity->isDirectory) {
+                    dirtyDirs.insert(touch.entryId);
                 }
             }
         }

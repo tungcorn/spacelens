@@ -13,6 +13,7 @@ set(SPACELENS_TEST_SOURCES
     test_reclaim.cpp
     test_index.cpp
     test_index_refresh.cpp
+    test_usn_parity.cpp
     TestRunner.hpp
     FakeFileEnumerator.hpp
 )

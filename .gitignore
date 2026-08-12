@@ -26,6 +26,10 @@ qrc_*.cpp
 aqtinstall.log
 *.log
 
+# Local USN verification scratch (elevated runs / temp wrappers)
+/usn-verify-*.json
+/scripts/_elevated_usn_wrap.ps1
+
 # OS
 Thumbs.db
 Desktop.ini

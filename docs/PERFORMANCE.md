@@ -74,27 +74,37 @@ build-release/cli/spacelens.exe
 | `index refresh` (unelevated) | **43 ms** process / **0 ms** engine | Immediate `full_rebuild_required`, reason `access_denied` |
 | `index status` | tens of ms | Reports `incremental_refresh.state: access_denied` |
 
-### Incremental speedup (when USN is available)
+### Incremental speedup — elevated happy path (2026-08-12)
 
-On this development machine, opening `\\.\D:` for USN requires administrator or
-backup privilege. Without it, **no USN delta path runs**, so there is **no valid
-incremental-vs-full speedup ratio** to publish for 1 / 100 / ~1000 file changes.
+Unelevated interactive sessions still see `access_denied` for volume USN open
+(no effective SeBackupPrivilege). That path is **ENVIRONMENT_BLOCKED**, not a
+performance result.
 
-When elevated (or with SeBackupPrivilege), expected behavior:
+**Elevated** verification via `scripts/verify-usn-refresh.ps1` on temp fixtures
+only (no analyzed-tree mutation, no journal create/configure):
 
-1. Full `index` stores `checkpoint.status=ready` with non-zero `usn_journal_id` / `next_usn`
-2. Small mutations under the root
-3. `index refresh` applies coalesced USN records and advances the checkpoint
-4. Wall-clock for refresh should be much smaller than a full rebuild on large trees
+| Field | Value |
+|-------|--------|
+| Evidence | `usn-verify-elevated.json` (local run artifact; not required in tree) |
+| Outcome | **PASS** (create/modify/delete/rename + subdir boundary parity) |
+| Volume open | ok |
+| Checkpoint | `ready` after full index |
+| Drive | `C:` NTFS |
 
-Re-measure under elevation before claiming production incremental gains:
+| Operation | Wall-clock | Notes |
+|-----------|------------|--------|
+| Full rebuild (5000 files) | **438 ms** process / **379 ms** engine | Synthetic tree under `%TEMP%` |
+| Incremental 1 change | **53 ms** process / **29 ms** engine | `outcome: refreshed`, 9 journal records, 1 row changed |
+| Query after refresh | **26 ms** | `limit 20` |
+| Incremental 100 / 1000 batch | n/a | Script observed `full_rebuild_required` with 0 journal records after the 1-change refresh — **not** claimed as a speedup; investigate later |
+
+Parity: incrementally refreshed index matched independent full rebuild on paths,
+sizes, counts, and classification/reclaim fields for the mutation scenarios.
 
 ```powershell
-# elevated shell
-.\build-release\cli\spacelens.exe index <root> --json
-# mutate N files under <root>
-.\build-release\cli\spacelens.exe index refresh <root> --json
-.\build-release\cli\spacelens.exe index <root> --json   # full rebuild comparator
+# Prefer an already-elevated shell (avoid repeated UAC popups from the harness)
+. .\scripts\dev-env.ps1
+.\scripts\verify-usn-refresh.ps1 -CliPath .\build-release\cli\spacelens.exe
 ```
 
 ## Interpretation
@@ -105,9 +115,12 @@ Re-measure under elevation before claiming production incremental gains:
   opened: previous index remains queryable; agents are told to full-rebuild.
 - Do not compare unelevated `index refresh` (~40 ms no-op reject) to full rebuild
   as a “speedup” — that path did not apply deltas.
+- When elevated and the checkpoint is ready, a **1-change** refresh on a 5000-file
+  tree was ~8–13× faster than full rebuild in this run (process/engine). Larger
+  batch timings were not validated in the same pass.
 
 ## Regression guardrails
 
-- Debug + Release: **74** unit tests, including refresh seams that soft-skip parity
-  when USN is unavailable in the environment.
+- Debug + Release unit tests include refresh seams, USN parity (soft-skip when
+  USN is unavailable), and IndexCatalog freshness mapping.
 - `filesystem_mutation: false` and no journal-mutation FSCTLs in `UsnJournal.cpp`.
