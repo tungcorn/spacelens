@@ -77,6 +77,7 @@ std::string helpText()
         "  spacelens index <path> [--json]\n"
         "  spacelens index status <path> [--json]\n"
         "  spacelens index list [--json]\n"
+        "  spacelens index refresh <path> [--json]\n"
         "  spacelens query <path> (--files|--dirs) [filters] [--limit N] [--json]\n"
         "  spacelens capabilities [--json]\n"
         "  spacelens help\n"
@@ -98,8 +99,9 @@ std::string helpText()
         "\n"
         "Index notes:\n"
         "  index builds a snapshot under %LOCALAPPDATA%\\SpaceLens\\indexes\n"
+        "  index refresh applies USN deltas when safe; else full_rebuild_required\n"
         "  query uses the persistent index only (no live rescan fallback)\n"
-        "  Source filesystem remains read-only; SpaceLens writes only its own index\n"
+        "  Source filesystem remains read-only; SpaceLens never mutates the USN journal\n"
         "\n"
         "Exit codes: 0 success, 2 usage, 3 inaccessible root, 4 scan/index failed,\n"
         "            5 cancelled, 6 index not found\n"
@@ -137,11 +139,13 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
     } else if (cmd == L"query") {
         out.command = Command::Query;
     } else if (cmd == L"index") {
-        // index | index status <path> | index list
+        // index | index status | index list | index refresh
         if (argc >= 3 && std::wstring_view(argv[2]) == L"status") {
             out.command = Command::IndexStatus;
         } else if (argc >= 3 && std::wstring_view(argv[2]) == L"list") {
             out.command = Command::IndexList;
+        } else if (argc >= 3 && std::wstring_view(argv[2]) == L"refresh") {
+            out.command = Command::IndexRefresh;
         } else {
             out.command = Command::Index;
         }
@@ -151,7 +155,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
     }
 
     const int start =
-        (out.command == Command::IndexStatus || out.command == Command::IndexList)
+        (out.command == Command::IndexStatus || out.command == Command::IndexList ||
+         out.command == Command::IndexRefresh)
             ? 3
             : 2;
 
@@ -285,7 +290,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
 
     if (out.command == Command::Scan || out.command == Command::Top ||
         out.command == Command::Find || out.command == Command::Index ||
-        out.command == Command::IndexStatus || out.command == Command::Query) {
+        out.command == Command::IndexStatus ||
+        out.command == Command::IndexRefresh || out.command == Command::Query) {
         if (out.path.empty()) {
             out.error = "Missing path argument.";
             return out;

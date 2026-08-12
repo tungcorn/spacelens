@@ -21,12 +21,13 @@ enum class Command {
     Index,
     IndexStatus,
     IndexList,
+    IndexRefresh,
     Query,
 };
 
 /// Commands intentionally exposed by the read-only CLI. Keep this list explicit
 /// so destructive verbs cannot be registered accidentally.
-inline constexpr std::array<Command, 10> kRegisteredCommands{
+inline constexpr std::array<Command, 11> kRegisteredCommands{
     Command::Scan,
     Command::Top,
     Command::Find,
@@ -34,6 +35,7 @@ inline constexpr std::array<Command, 10> kRegisteredCommands{
     Command::Index,
     Command::IndexStatus,
     Command::IndexList,
+    Command::IndexRefresh,
     Command::Query,
     Command::Help,
     Command::Version,

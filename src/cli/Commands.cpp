@@ -9,6 +9,7 @@
 #include "core/index/IndexBuilder.hpp"
 #include "core/index/IndexPaths.hpp"
 #include "core/index/IndexQuery.hpp"
+#include "core/index/IndexRefresh.hpp"
 #include "core/index/IndexStore.hpp"
 #include "platform/windows/WindowsFileEnumerator.hpp"
 
@@ -622,6 +623,7 @@ ExitCode runIndex(const ParsedArgs& args, std::stop_token stop)
 ExitCode runIndexStatus(const ParsedArgs& args)
 {
     const auto status = spacelens::indexStatus(args.path);
+    const auto probe = spacelens::probeIncremental(args.path);
     if (args.json) {
         std::cout << "{"
                   << "\"schema_version\":" << kSchemaVersion << ","
@@ -636,14 +638,46 @@ ExitCode runIndexStatus(const ParsedArgs& args)
                   << jsonBool(indexDatabaseExists(status.location)) << ","
                   << "\"indexed_at\":" << jsonString(status.root.indexedAtIso)
                   << ","
+                  << "\"full_indexed_at\":"
+                  << jsonString(status.root.indexedAtIso) << ","
                   << "\"age_ms\":" << jsonUInt(status.age_ms) << ","
+                  << "\"snapshot_age_ms\":" << jsonUInt(status.age_ms) << ","
                   << "\"file_count\":" << jsonUInt(status.root.fileCount) << ","
                   << "\"directory_count\":" << jsonUInt(status.root.dirCount)
                   << ","
                   << "\"logical_bytes\":" << jsonUInt(status.root.logicalBytes)
                   << ","
                   << "\"status\":"
-                  << jsonString(toString(status.root.status)) << "}";
+                  << jsonString(toString(status.root.status)) << "},"
+                  << "\"incremental_refresh\":{"
+                  << "\"supported\":"
+                  << jsonBool(probe.incrementalState ==
+                              IncrementalRefreshState::Supported)
+                  << ","
+                  << "\"state\":"
+                  << jsonString(toString(probe.incrementalState)) << ","
+                  << "\"reason\":" << jsonString(probe.reason) << ","
+                  << "\"fallback\":"
+                  << jsonString(probe.incrementalState ==
+                                        IncrementalRefreshState::Supported
+                                    ? "none"
+                                    : "full_rebuild")
+                  << ","
+                  << "\"refresh_method\":"
+                  << jsonString(probe.checkpoint.lastRefreshMethod) << ","
+                  << "\"last_incremental_refresh\":"
+                  << jsonString(fileTimeTicksToIsoUtc(
+                         probe.checkpoint.lastRefreshAtTicks))
+                  << ","
+                  << "\"checkpoint\":{"
+                  << "\"usn_journal_id\":"
+                  << jsonUInt(probe.checkpoint.usnJournalId) << ","
+                  << "\"next_usn\":" << jsonUInt(probe.checkpoint.nextUsn) << ","
+                  << "\"volume_serial\":"
+                  << jsonUInt(probe.checkpoint.volumeSerial) << ","
+                  << "\"status\":" << jsonString(probe.checkpoint.status)
+                  << "}"
+                  << "}";
         if (!status.error.empty()) {
             std::cout << ",\"error\":" << jsonString(status.error);
         }
@@ -660,6 +694,13 @@ ExitCode runIndexStatus(const ParsedArgs& args)
                       << "Dirs:      " << status.root.dirCount << "\n"
                       << "Bytes:     "
                       << SizeFormatter::format(status.root.logicalBytes)
+                      << "\n"
+                      << "Incremental: " << toString(probe.incrementalState)
+                      << " (" << probe.reason << ")\n"
+                      << "Last method: "
+                      << (probe.checkpoint.lastRefreshMethod.empty()
+                              ? "none"
+                              : probe.checkpoint.lastRefreshMethod)
                       << "\n";
         }
     }
@@ -667,6 +708,126 @@ ExitCode runIndexStatus(const ParsedArgs& args)
         return ExitCode::IndexNotFound;
     }
     return status.ok ? ExitCode::Success : ExitCode::ScanFailed;
+}
+
+ExitCode runIndexRefresh(const ParsedArgs& args, std::stop_token stop)
+{
+    if (!pathExists(args.path) || !pathIsDirectory(args.path)) {
+        // Refresh still needs the root to exist for USN/path resolution.
+        std::cerr << "error: path is not an accessible directory\n";
+        if (args.json) {
+            writeErrorJson("index_refresh", args.path, "inaccessible_root");
+        }
+        return ExitCode::InaccessibleRoot;
+    }
+
+    const auto result = spacelens::refreshIndex(args.path, stop);
+
+    if (args.json) {
+        const bool ok =
+            result.outcome == IndexRefreshOutcome::Refreshed ||
+            result.outcome == IndexRefreshOutcome::AlreadyCurrent;
+        std::cout << "{"
+                  << "\"schema_version\":" << kSchemaVersion << ","
+                  << "\"ok\":" << jsonBool(ok) << ","
+                  << "\"command\":\"index_refresh\","
+                  << "\"root\":" << jsonString(result.location.rootPath) << ","
+                  << "\"source\":\"persistent_index\","
+                  << "\"index_schema_version\":" << kIndexSchemaVersion << ","
+                  << "\"outcome\":" << jsonString(toString(result.outcome))
+                  << ","
+                  << "\"reason\":" << jsonString(result.reason) << ","
+                  << "\"incremental_refresh\":{"
+                  << "\"supported\":"
+                  << jsonBool(result.incrementalState ==
+                              IncrementalRefreshState::Supported)
+                  << ","
+                  << "\"state\":"
+                  << jsonString(toString(result.incrementalState)) << ","
+                  << "\"fallback\":"
+                  << jsonString(
+                         result.outcome ==
+                                 IndexRefreshOutcome::FullRebuildRequired
+                             ? "full_rebuild"
+                             : "none")
+                  << "},"
+                  << "\"journal_records_seen\":"
+                  << jsonUInt(result.journalRecordsSeen) << ","
+                  << "\"records_in_root\":" << jsonUInt(result.recordsInRoot)
+                  << ","
+                  << "\"added\":" << jsonUInt(result.added) << ","
+                  << "\"modified\":" << jsonUInt(result.modified) << ","
+                  << "\"removed\":" << jsonUInt(result.removed) << ","
+                  << "\"renamed\":" << jsonUInt(result.renamed) << ","
+                  << "\"dirs_recomputed\":" << jsonUInt(result.dirsRecomputed)
+                  << ","
+                  << "\"rows_changed\":" << jsonUInt(result.rowsChanged) << ","
+                  << "\"elapsed_ms\":"
+                  << jsonUInt(static_cast<std::uint64_t>(
+                         result.elapsedSeconds * 1000.0 + 0.5))
+                  << ","
+                  << "\"checkpoint\":{"
+                  << "\"next_usn\":" << jsonUInt(result.checkpoint.nextUsn)
+                  << ","
+                  << "\"usn_journal_id\":"
+                  << jsonUInt(result.checkpoint.usnJournalId) << ","
+                  << "\"last_refresh_method\":"
+                  << jsonString(result.checkpoint.lastRefreshMethod) << "}";
+        if (!result.error.empty()) {
+            std::cout << ",\"error\":" << jsonString(result.error);
+        }
+        std::cout << "}\n";
+    } else {
+        std::cout << "Refreshing " << narrow(result.location.rootPath) << "\n\n";
+        if (result.outcome == IndexRefreshOutcome::AlreadyCurrent) {
+            std::cout << "Index already current (no USN changes).\n";
+        } else if (result.outcome == IndexRefreshOutcome::Refreshed) {
+            std::cout << "Journal records seen: " << result.journalRecordsSeen
+                      << "\n"
+                      << "In-root records:      " << result.recordsInRoot << "\n"
+                      << "Added:                " << result.added << "\n"
+                      << "Modified:             " << result.modified << "\n"
+                      << "Removed:              " << result.removed << "\n"
+                      << "Renamed/Moved:        " << result.renamed << "\n"
+                      << "Dirs recomputed:      " << result.dirsRecomputed
+                      << "\n"
+                      << "Elapsed:              "
+                      << static_cast<std::uint64_t>(result.elapsedSeconds *
+                                                        1000.0 +
+                                                    0.5)
+                      << " ms\n\n"
+                      << "Index refreshed.\n";
+        } else if (result.outcome ==
+                   IndexRefreshOutcome::FullRebuildRequired) {
+            std::cout << "Full rebuild required (" << result.reason << ").\n"
+                      << "Run: spacelens index <path>\n";
+        } else if (result.outcome == IndexRefreshOutcome::Cancelled) {
+            std::cerr << "index refresh cancelled\n";
+        } else if (result.outcome == IndexRefreshOutcome::IndexNotFound) {
+            std::cerr << "index not found — run: spacelens index <path>\n";
+        } else {
+            std::cerr << "index refresh failed: "
+                      << (result.error.empty() ? result.reason : result.error)
+                      << "\n";
+        }
+    }
+
+    switch (result.outcome) {
+    case IndexRefreshOutcome::Refreshed:
+    case IndexRefreshOutcome::AlreadyCurrent:
+        return ExitCode::Success;
+    case IndexRefreshOutcome::Cancelled:
+        return ExitCode::Cancelled;
+    case IndexRefreshOutcome::IndexNotFound:
+        return ExitCode::IndexNotFound;
+    case IndexRefreshOutcome::FullRebuildRequired:
+        // Not a hard failure — agent should full rebuild. Exit 0 with outcome
+        // in JSON; use ScanFailed only when failed.
+        return ExitCode::Success;
+    case IndexRefreshOutcome::Failed:
+    default:
+        return ExitCode::ScanFailed;
+    }
 }
 
 ExitCode runIndexList(const ParsedArgs& args)
@@ -874,14 +1035,14 @@ ExitCode runCapabilities(const ParsedArgs& args)
                   << "\"schema_version\":" << kSchemaVersion << ","
                   << "\"version\":" << jsonString(SPACELENS_VERSION_STRING) << ","
                   << "\"commands\":[\"scan\",\"top\",\"find\",\"index\","
-                     "\"index status\",\"index list\",\"query\","
+                     "\"index status\",\"index list\",\"index refresh\",\"query\","
                      "\"capabilities\",\"help\",\"version\"],"
                   << "\"features\":{"
                   << "\"json\":true,"
                   << "\"cancellation\":true,"
                   << "\"persistent_index\":true,"
                   << "\"indexed_query\":true,"
-                  << "\"incremental_index\":false,"
+                  << "\"incremental_index\":true,"
                   << "\"filesystem_mutation\":false,"
                   << "\"classification\":true,"
                   << "\"filters\":true"
@@ -892,11 +1053,12 @@ ExitCode runCapabilities(const ParsedArgs& args)
                   << "}\n";
     } else {
         std::cout << "spacelens " << SPACELENS_VERSION_STRING << "\n"
-                  << "commands: scan top find index query capabilities help version\n"
+                  << "commands: scan top find index index-refresh query "
+                     "capabilities help version\n"
                   << "read_only: true\n"
                   << "filesystem_mutation: false\n"
                   << "features: json, cancellation, classification, filters, "
-                     "persistent_index, indexed_query\n"
+                     "persistent_index, indexed_query, incremental_index\n"
                   << "not available: incremental_index, filesystem_mutation\n"
                   << "index_schema_version: " << kIndexSchemaVersion << "\n";
     }

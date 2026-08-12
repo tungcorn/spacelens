@@ -90,6 +90,10 @@ int wmain(int argc, wchar_t** argv)
         case spacelens::cli::Command::Index:
             code = spacelens::cli::runIndex(args, stopSource.get_token());
             break;
+        case spacelens::cli::Command::IndexRefresh:
+            code =
+                spacelens::cli::runIndexRefresh(args, stopSource.get_token());
+            break;
         default:
             code = spacelens::cli::ExitCode::InternalError;
             break;
