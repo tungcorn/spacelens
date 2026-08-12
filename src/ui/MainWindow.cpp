@@ -1,6 +1,7 @@
 #include "ui/MainWindow.hpp"
 
 #include "ui/CleanupReviewDialog.hpp"
+#include "ui/IndexBrowserPage.hpp"
 
 #include "core/Classification.hpp"
 #include "core/FileTime.hpp"
@@ -26,6 +27,7 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -85,16 +87,36 @@ void MainWindow::buildUi()
 {
     auto* central = new QWidget(this);
     setCentralWidget(central);
-    auto* rootLayout = new QVBoxLayout(central);
+    auto* outer = new QVBoxLayout(central);
+    outer->setContentsMargins(0, 0, 0, 0);
+
+    m_tabs = new QTabWidget(central);
+    m_tabs->addTab(buildLiveScanPage(), QStringLiteral("Live Scan"));
+
+    m_indexPage = new IndexBrowserPage(m_review, m_tabs);
+    m_tabs->addTab(m_indexPage, QStringLiteral("Indexed"));
+    connect(m_indexPage, &IndexBrowserPage::statusMessage, this,
+            &MainWindow::onIndexStatusMessage);
+
+    outer->addWidget(m_tabs, 1);
+
+    m_statusLabel = new QLabel(central);
+    statusBar()->addWidget(m_statusLabel, 1);
+}
+
+QWidget* MainWindow::buildLiveScanPage()
+{
+    auto* page = new QWidget(this);
+    auto* rootLayout = new QVBoxLayout(page);
 
     auto* topRow = new QHBoxLayout();
-    m_pathEdit = new QLineEdit(central);
+    m_pathEdit = new QLineEdit(page);
     m_pathEdit->setReadOnly(true);
     m_pathEdit->setPlaceholderText(QStringLiteral("No folder selected"));
-    m_selectButton = new QPushButton(QStringLiteral("Select Folder…"), central);
-    m_scanButton = new QPushButton(QStringLiteral("Scan"), central);
-    m_cancelButton = new QPushButton(QStringLiteral("Cancel"), central);
-    m_upButton = new QPushButton(QStringLiteral("Up"), central);
+    m_selectButton = new QPushButton(QStringLiteral("Select Folder…"), page);
+    m_scanButton = new QPushButton(QStringLiteral("Scan"), page);
+    m_cancelButton = new QPushButton(QStringLiteral("Cancel"), page);
+    m_upButton = new QPushButton(QStringLiteral("Up"), page);
     topRow->addWidget(m_pathEdit, 1);
     topRow->addWidget(m_selectButton);
     topRow->addWidget(m_scanButton);
@@ -102,30 +124,30 @@ void MainWindow::buildUi()
     topRow->addWidget(m_upButton);
     rootLayout->addLayout(topRow);
 
-    m_breadcrumbBar = new QWidget(central);
+    m_breadcrumbBar = new QWidget(page);
     m_breadcrumbLayout = new QHBoxLayout(m_breadcrumbBar);
     m_breadcrumbLayout->setContentsMargins(0, 0, 0, 0);
     m_breadcrumbLayout->addStretch(1);
     rootLayout->addWidget(m_breadcrumbBar);
 
     auto* filterRow = new QHBoxLayout();
-    filterRow->addWidget(new QLabel(QStringLiteral("Kind:"), central));
-    m_kindFilter = new QComboBox(central);
+    filterRow->addWidget(new QLabel(QStringLiteral("Kind:"), page));
+    m_kindFilter = new QComboBox(page);
     m_kindFilter->addItems({QStringLiteral("All"), QStringLiteral("Folders"),
                             QStringLiteral("Files")});
     filterRow->addWidget(m_kindFilter);
-    filterRow->addWidget(new QLabel(QStringLiteral("Min size:"), central));
-    m_minSizeFilter = new QLineEdit(central);
+    filterRow->addWidget(new QLabel(QStringLiteral("Min size:"), page));
+    m_minSizeFilter = new QLineEdit(page);
     m_minSizeFilter->setPlaceholderText(QStringLiteral("e.g. 10MB"));
     m_minSizeFilter->setMaximumWidth(100);
     filterRow->addWidget(m_minSizeFilter);
-    filterRow->addWidget(new QLabel(QStringLiteral("Ext:"), central));
-    m_extFilter = new QLineEdit(central);
+    filterRow->addWidget(new QLabel(QStringLiteral("Ext:"), page));
+    m_extFilter = new QLineEdit(page);
     m_extFilter->setPlaceholderText(QStringLiteral("gguf"));
     m_extFilter->setMaximumWidth(80);
     filterRow->addWidget(m_extFilter);
-    filterRow->addWidget(new QLabel(QStringLiteral("Class:"), central));
-    m_classFilter = new QComboBox(central);
+    filterRow->addWidget(new QLabel(QStringLiteral("Class:"), page));
+    m_classFilter = new QComboBox(page);
     m_classFilter->addItem(QStringLiteral("Any"), QString());
     m_classFilter->addItem(QStringLiteral("BuildArtifact"),
                            QStringLiteral("BuildArtifact"));
@@ -140,15 +162,15 @@ void MainWindow::buildUi()
     rootLayout->addLayout(filterRow);
 
     auto* statsRow = new QHBoxLayout();
-    m_filesLabel = new QLabel(QStringLiteral("Files: 0"), central);
-    m_foldersLabel = new QLabel(QStringLiteral("Folders: 0"), central);
+    m_filesLabel = new QLabel(QStringLiteral("Files: 0"), page);
+    m_foldersLabel = new QLabel(QStringLiteral("Folders: 0"), page);
     m_processedLabel = new QLabel(
         QStringLiteral("Processed: %1")
             .arg(QString::fromStdString(SizeFormatter::format(0))),
-        central);
-    m_elapsedLabel = new QLabel(QStringLiteral("Elapsed: 0.0 s"), central);
-    m_errorsLabel = new QLabel(QStringLiteral("Errors: 0"), central);
-    m_selectionLabel = new QLabel(QStringLiteral("Selected: 0 items"), central);
+        page);
+    m_elapsedLabel = new QLabel(QStringLiteral("Elapsed: 0.0 s"), page);
+    m_errorsLabel = new QLabel(QStringLiteral("Errors: 0"), page);
+    m_selectionLabel = new QLabel(QStringLiteral("Selected: 0 items"), page);
     statsRow->addWidget(m_filesLabel);
     statsRow->addWidget(m_foldersLabel);
     statsRow->addWidget(m_processedLabel);
@@ -159,16 +181,16 @@ void MainWindow::buildUi()
     rootLayout->addLayout(statsRow);
 
     auto* actionRow = new QHBoxLayout();
-    m_openButton = new QPushButton(QStringLiteral("Open"), central);
-    m_openFolderButton = new QPushButton(QStringLiteral("Open Folder"), central);
-    m_explorerButton = new QPushButton(QStringLiteral("Show in Explorer"), central);
-    m_copyPathButton = new QPushButton(QStringLiteral("Copy Path"), central);
+    m_openButton = new QPushButton(QStringLiteral("Open"), page);
+    m_openFolderButton = new QPushButton(QStringLiteral("Open Folder"), page);
+    m_explorerButton = new QPushButton(QStringLiteral("Show in Explorer"), page);
+    m_copyPathButton = new QPushButton(QStringLiteral("Copy Path"), page);
     m_addReviewButton =
-        new QPushButton(QStringLiteral("Add to Cleanup Review"), central);
+        new QPushButton(QStringLiteral("Add to Cleanup Review"), page);
     m_showReviewButton =
-        new QPushButton(QStringLiteral("Cleanup Review…"), central);
+        new QPushButton(QStringLiteral("Cleanup Review…"), page);
     m_rescanButton =
-        new QPushButton(QStringLiteral("Rescan This Location"), central);
+        new QPushButton(QStringLiteral("Rescan This Location"), page);
     actionRow->addWidget(m_openButton);
     actionRow->addWidget(m_openFolderButton);
     actionRow->addWidget(m_explorerButton);
@@ -179,7 +201,7 @@ void MainWindow::buildUi()
     actionRow->addStretch(1);
     rootLayout->addLayout(actionRow);
 
-    auto* splitter = new QSplitter(Qt::Horizontal, central);
+    auto* splitter = new QSplitter(Qt::Horizontal, page);
 
     m_listing = new QListWidget(splitter);
     m_listing->setAlternatingRowColors(true);
@@ -201,9 +223,6 @@ void MainWindow::buildUi()
     splitter->setStretchFactor(0, 3);
     splitter->setStretchFactor(1, 2);
     rootLayout->addWidget(splitter, 1);
-
-    m_statusLabel = new QLabel(central);
-    statusBar()->addWidget(m_statusLabel, 1);
 
     connect(m_selectButton, &QPushButton::clicked, this, &MainWindow::onSelectFolder);
     connect(m_scanButton, &QPushButton::clicked, this, &MainWindow::onScan);
@@ -236,6 +255,8 @@ void MainWindow::buildUi()
             &MainWindow::onShowReview);
     connect(m_rescanButton, &QPushButton::clicked, this,
             &MainWindow::onRescanLocation);
+
+    return page;
 }
 
 void MainWindow::updateActionState()
@@ -889,7 +910,8 @@ void MainWindow::onAddToReview()
                                                 : ItemKind::File;
         c.sizeAtSelection = row.size;
         c.classification = classifyRow(row);
-        c.reasonAdded = "Added from GUI selection";
+        c.reasonAdded = "Added from GUI live scan selection";
+        c.source = "live_scan";
         if (row.kind == RowKind::File && row.file != InvalidFileIndex) {
             c.lastWriteTime = m_lastResult->tree.file(row.file).lastWriteTime;
             c.attributes = m_lastResult->tree.file(row.file).attributes;
@@ -912,6 +934,11 @@ void MainWindow::onShowReview()
     dialog.exec();
     setStatusMessage(
         QStringLiteral("Cleanup Review: %1 item(s)").arg(m_review.size()));
+}
+
+void MainWindow::onIndexStatusMessage(const QString& message)
+{
+    setStatusMessage(message);
 }
 
 void MainWindow::onRescanLocation()

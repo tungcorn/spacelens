@@ -147,6 +147,37 @@ Capabilities advertise:
 "index_schema_version": 2
 ```
 
+## GUI — Index Browser V1
+
+The GUI hosts an **Indexed** tab alongside **Live Scan**:
+
+| Piece | Role |
+|-------|------|
+| `IndexCatalog` (core) | List/summarize roots, map freshness, build query specs |
+| `IndexSession` (app) | Async full rebuild / USN refresh (ScanSession pattern) |
+| `IndexBrowserPage` (ui) | Roots list, filters, query hits, inspector, review queue |
+
+Rules:
+
+- Qt code calls **core APIs only** (`listIndexSummaries`, `queryIndex`,
+  `probeIncremental` via catalog, `refreshIndex`, `buildIndexForRoot`) — no SQLite
+  in the UI layer.
+- Queries always declare **snapshot** source; inspector shows age / indexed-at.
+- Cleanup Review items from the index carry `source=persistent_index` and age.
+- Refresh / rebuild are **explicit** buttons; cancel is cooperative.
+- No treemap, delete, move, MCP, or product AI in this milestone.
+
+Freshness labels (display):
+
+| Label | Meaning |
+|-------|---------|
+| Fresh snapshot | Index exists; age under soft threshold; USN not advertised |
+| Aged snapshot | Exists; older than soft threshold |
+| Refresh available | USN incremental supported |
+| Incremental unavailable | Snapshot ok; USN blocked (access, journal, FS) |
+| Full rebuild required | Journal/volume discontinuity |
+| Missing / Error | No DB or open failure |
+
 ## Safety
 
 - **Analyzed filesystem**: never deleted/moved/rewritten by index or refresh.

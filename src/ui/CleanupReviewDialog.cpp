@@ -71,8 +71,15 @@ void CleanupReviewDialog::refresh()
             .arg(QString::fromStdString(
                 SizeFormatter::format(m_review.totalLogicalSize()))));
 
+    bool anyStaleSnapshot = false;
     for (const auto& item : m_review.items()) {
-        const QString text = QStringLiteral("[%1] %2  —  %3\n  %4 (%5)")
+        QString sourceTag;
+        if (item.source == "persistent_index") {
+            anyStaleSnapshot = true;
+            sourceTag = QStringLiteral(" · index snapshot age %1 ms")
+                            .arg(item.indexAgeMs);
+        }
+        const QString text = QStringLiteral("[%1] %2  —  %3\n  %4 (%5)%6")
                                  .arg(QString::fromUtf8(toString(item.kind)))
                                  .arg(QString::fromStdWString(item.path))
                                  .arg(QString::fromStdString(
@@ -80,10 +87,18 @@ void CleanupReviewDialog::refresh()
                                  .arg(QString::fromUtf8(
                                      toString(item.classification.category)))
                                  .arg(QString::fromUtf8(
-                                     toString(item.classification.confidence)));
+                                     toString(item.classification.confidence)))
+                                 .arg(sourceTag);
         auto* row = new QListWidgetItem(text, m_list);
         row->setData(Qt::UserRole, QVariant::fromValue(item.id));
         row->setData(Qt::UserRole + 1, QString::fromStdWString(item.path));
+    }
+    if (anyStaleSnapshot) {
+        m_summary->setText(
+            m_summary->text() +
+            QStringLiteral(
+                "\nSome items came from a persistent index snapshot and may be "
+                "stale relative to the live filesystem."));
     }
 }
 

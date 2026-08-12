@@ -29,6 +29,11 @@ struct CleanupCandidate {
     std::uint32_t attributes = 0;
     Classification classification{};
     std::string reasonAdded;
+    /// "live_scan" (default) or "persistent_index" — planning metadata only.
+    std::string source = "live_scan";
+    /// Snapshot age when added from an index (0 if live / unknown).
+    std::uint64_t indexAgeMs = 0;
+    std::string indexIndexedAtIso;
 };
 
 /// In-memory planning queue. Value-type candidates; no filesystem mutation.

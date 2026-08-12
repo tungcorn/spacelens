@@ -177,6 +177,16 @@ std::string CleanupReview::copyReport() const
         if (!item.reasonAdded.empty()) {
             os << "  added: " << item.reasonAdded << "\n";
         }
+        if (!item.source.empty()) {
+            os << "  source: " << item.source << "\n";
+        }
+        if (item.source == "persistent_index") {
+            os << "  index_age_ms: " << item.indexAgeMs << "\n";
+            if (!item.indexIndexedAtIso.empty()) {
+                os << "  indexed_at: " << item.indexIndexedAtIso << "\n";
+            }
+            os << "  warning: snapshot may be stale vs live filesystem\n";
+        }
         os << "\n";
     }
     os << "Note: This report is not authorization to delete or move files.\n";

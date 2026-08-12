@@ -22,8 +22,11 @@ class QTextEdit;
 class QComboBox;
 class QHBoxLayout;
 class QWidget;
+class QTabWidget;
 
 namespace spacelens {
+
+class IndexBrowserPage;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -53,6 +56,7 @@ private slots:
     void onShowReview();
     void onRescanLocation();
     void onContextMenu(const QPoint& pos);
+    void onIndexStatusMessage(const QString& message);
 
 private:
     enum class RowKind { Directory, File };
@@ -67,6 +71,7 @@ private:
     };
 
     void buildUi();
+    [[nodiscard]] QWidget* buildLiveScanPage();
     void updateActionState();
     void setStatusMessage(const QString& message);
     void clearResults();
@@ -88,6 +93,9 @@ private:
     std::optional<ScanResult> m_lastResult;
     DirIndex m_currentDir = InvalidDirIndex;
     CleanupReview m_review;
+
+    QTabWidget* m_tabs = nullptr;
+    IndexBrowserPage* m_indexPage = nullptr;
 
     QLineEdit* m_pathEdit = nullptr;
     QPushButton* m_selectButton = nullptr;

@@ -83,6 +83,8 @@ add_library(spacelens_core STATIC
     src/core/index/IndexQuery.cpp
     src/core/index/IndexRefresh.hpp
     src/core/index/IndexRefresh.cpp
+    src/core/index/IndexCatalog.hpp
+    src/core/index/IndexCatalog.cpp
     src/platform/windows/FindHandle.hpp
     src/platform/windows/VolumeHandle.hpp
     src/platform/windows/VolumeHandle.cpp
@@ -164,8 +166,12 @@ if(SPACELENS_BUILD_GUI)
         src/app/Application.cpp
         src/app/ScanSession.hpp
         src/app/ScanSession.cpp
+        src/app/IndexSession.hpp
+        src/app/IndexSession.cpp
         src/ui/MainWindow.hpp
         src/ui/MainWindow.cpp
+        src/ui/IndexBrowserPage.hpp
+        src/ui/IndexBrowserPage.cpp
         src/ui/CleanupReviewDialog.hpp
         src/ui/CleanupReviewDialog.cpp
     )
