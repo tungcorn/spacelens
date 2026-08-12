@@ -79,6 +79,14 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Lifetime:** Open for a single probe or refresh operation; never cache a volume handle across process-lifetime background watchers in V2.
 - **Bug prevented:** Accidental write access to volumes, journal create/delete FSCTLs, and treating weak open failures as “non-NTFS”. On NTFS, USN IOCTL failures map to `access_denied` when rights are insufficient.
 - **Privilege note:** Opening `\\.\X:` usually requires admin or `SeBackupPrivilege`. The open path best-effort enables backup/restore privileges already present on the token; it does not elevate.
+- **READ continuation cursor:** `FSCTL_READ_USN_JOURNAL` returns the next `StartUsn`
+  in the first 8 bytes of the output buffer. Persist that value (or journal
+  `NextUsn` when caught up) as `refresh_checkpoint.next_usn`. Do **not** store
+  `record.usn + 1` — USNs are sparse record-boundary offsets; a non-boundary
+  `StartUsn` yields `ERROR_INVALID_PARAMETER` mapped to `HistoryLost`.
+- **Empty matching buffer:** continue the read loop while the driver continuation
+  advances and remains below the journal tip. Returning early on `!any` left the
+  cursor mid-range and combined with `usn+1` math broke the next refresh.
 
 ## File identity (FRN) and OpenFileById
 

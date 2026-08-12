@@ -74,38 +74,44 @@ build-release/cli/spacelens.exe
 | `index refresh` (unelevated) | **43 ms** process / **0 ms** engine | Immediate `full_rebuild_required`, reason `access_denied` |
 | `index status` | tens of ms | Reports `incremental_refresh.state: access_denied` |
 
-### Incremental speedup — elevated happy path (2026-08-12)
+### Incremental speedup — elevated happy path
 
 Unelevated interactive sessions still see `access_denied` for volume USN open
 (no effective SeBackupPrivilege). That path is **ENVIRONMENT_BLOCKED**, not a
 performance result.
 
 **Elevated** verification via `scripts/verify-usn-refresh.ps1` on temp fixtures
-only (no analyzed-tree mutation, no journal create/configure):
+only (no analyzed-tree mutation, no journal create/configure). Overall `outcome`
+is **pass** only when:
 
-| Field | Value |
-|-------|--------|
-| Evidence | `usn-verify-elevated.json` (local run artifact; not required in tree) |
-| Outcome | **PASS** (create/modify/delete/rename + subdir boundary parity) |
-| Volume open | ok |
-| Checkpoint | `ready` after full index |
-| Drive | `C:` NTFS |
+1. Single-mutation parity (create/modify/delete/rename + subdir boundary) holds
+2. Multi-batch refresh (1 → 100 → 1000) on the **same** index returns
+   `refreshed` / `already_current` (not `full_rebuild_required`) and parity holds
+3. Process-restart refresh from the persisted checkpoint succeeds with parity
+4. Large-tree sequential 1/100/1000 bench refreshes also succeed (if reached)
 
-| Operation | Wall-clock | Notes |
-|-----------|------------|--------|
-| Full rebuild (5000 files) | **438 ms** process / **379 ms** engine | Synthetic tree under `%TEMP%` |
-| Incremental 1 change | **53 ms** process / **29 ms** engine | `outcome: refreshed`, 9 journal records, 1 row changed |
-| Query after refresh | **26 ms** | `limit 20` |
-| Incremental 100 / 1000 batch | n/a | Script observed `full_rebuild_required` with 0 journal records after the 1-change refresh — **not** claimed as a speedup; investigate later |
-
-Parity: incrementally refreshed index matched independent full rebuild on paths,
-sizes, counts, and classification/reclaim fields for the mutation scenarios.
+Bench timings never override a correctness fail. Pre-fix (2026-08-12): 1-change
+refresh passed but 100/1000 returned `full_rebuild_required` /
+`journal_records_seen=0` because the checkpoint stored `record.usn+1` (invalid
+StartUsn). Fixed by persisting the driver READ continuation USN.
 
 ```powershell
 # Prefer an already-elevated shell (avoid repeated UAC popups from the harness)
 . .\scripts\dev-env.ps1
+cmake --build build-release --config Release --target spacelens
 .\scripts\verify-usn-refresh.ps1 -CliPath .\build-release\cli\spacelens.exe
 ```
+
+Historical 1-change evidence (pre multi-batch gate, still useful as order-of-magnitude):
+
+| Operation | Wall-clock | Notes |
+|-----------|------------|--------|
+| Full rebuild (5000 files) | **438 ms** process / **379 ms** engine | Synthetic tree under `%TEMP%` |
+| Incremental 1 change | **53 ms** process / **29 ms** engine | ~8–13× vs full on that run |
+| Query after refresh | **26 ms** | `limit 20` |
+
+Re-run the verify script elevated after the cursor fix to refresh multi-batch
+numbers; do not claim 100/1000 speedup until that report shows `outcome: pass`.
 
 ## Interpretation
 
@@ -115,12 +121,12 @@ sizes, counts, and classification/reclaim fields for the mutation scenarios.
   opened: previous index remains queryable; agents are told to full-rebuild.
 - Do not compare unelevated `index refresh` (~40 ms no-op reject) to full rebuild
   as a “speedup” — that path did not apply deltas.
-- When elevated and the checkpoint is ready, a **1-change** refresh on a 5000-file
-  tree was ~8–13× faster than full rebuild in this run (process/engine). Larger
-  batch timings were not validated in the same pass.
+- Multi-batch reliability is a **correctness** gate before any batch speedup claim.
 
 ## Regression guardrails
 
-- Debug + Release unit tests include refresh seams, USN parity (soft-skip when
-  USN is unavailable), and IndexCatalog freshness mapping.
+- Debug + Release unit tests include refresh seams, multi-refresh / reopen USN
+  parity (soft-skip when USN is unavailable), and IndexCatalog freshness mapping.
+- `scripts/verify-usn-refresh.ps1` fails overall if multi-batch or restart refresh
+  outcomes are not `refreshed`/`already_current`.
 - `filesystem_mutation: false` and no journal-mutation FSCTLs in `UsnJournal.cpp`.

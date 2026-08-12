@@ -62,8 +62,10 @@ no index exists — there is no silent live-scan fallback.
 `VolumeHandle` / `FileIdentity` / `UsnJournal` / `IndexRefresh`. Full builds
 capture a checkpoint when the volume can be opened; `index refresh` applies
 coalesced FRN deltas under the indexed root and advances the checkpoint only on
-commit. Journal create/resize/delete is never used. Access denied or journal
-discontinuity → `full_rebuild_required` without guessing.
+commit. Checkpoint `next_usn` is the driver READ continuation (or journal tip),
+never `record.usn+1`; empty tails are not discontinuities. Journal
+create/resize/delete is never used. Access denied or journal discontinuity
+→ `full_rebuild_required` without guessing.
 
 Deferred work includes AI inside the product, auto-refresh on query, MFT-based
 initial scan, watch mode, duplicate detection, treemap, MCP, and any automatic

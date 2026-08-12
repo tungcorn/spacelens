@@ -98,21 +98,37 @@ index refresh <root>
 probeIncremental: index exists? checkpoint ready? live USN ok?
         ↓
 read USN records since next_usn (FSCTL_READ_USN_JOURNAL only)
+  → outNextUsn = driver READ continuation USN (never record.usn+1)
         ↓
 coalesce by FRN → delete / upsert under root filter
         ↓
 recompute dirty directory aggregates + ancestors
         ↓
-advance checkpoint + commit (same SQLite transaction)
+advance checkpoint.next_usn = continuation (same SQLite transaction)
 ```
 
 - **Atomic**: checkpoint advances only if the delta transaction commits.
 - **Cancel / fail**: previous index + previous checkpoint remain valid.
+- **Cursor lifecycle**: `next_usn` is the exclusive start for the next
+  `FSCTL_READ_USN_JOURNAL`. It is always a driver-issued continuation USN or the
+  live journal `NextUsn`. USN values are journal **offsets**, not dense integers —
+  inventing `record.usn + 1` produces misaligned `StartUsn` →
+  `ERROR_INVALID_PARAMETER` → `history_lost` / `full_rebuild_required` with
+  `journal_records_seen=0` on the *next* refresh (multi-batch failure mode).
+- **Empty tail**: `startUsn == NextUsn` is `already_current` / Supported — not a
+  discontinuity. Empty ReasonMask-filtered buffers still advance via the driver
+  continuation; the read loop does not stop mid-journal solely because a buffer
+  had zero matching records.
 - **Subdirectory roots**: USN is volume-wide; records outside the indexed root are
-  ignored (`pathIsUnderRoot`). Moves out of root delete the old entry.
+  ignored (`pathIsUnderRoot`). Moves out of root delete the old entry. Directory
+  renames rewrite descendant paths and dirty both old and new parents.
 - **Missing parent under root**: `full_rebuild_required` (`missing_parent`) rather
   than inventing orphans.
 - **No auto-refresh**: `query` never calls refresh.
+- **Multi-batch / restart**: the same published index must accept refresh A → B →
+  C and a process-restart refresh from the persisted checkpoint. Verify with
+  `scripts/verify-usn-refresh.ps1` (gates overall `outcome` on multi-batch +
+  restart, not only single-mutation parity).
 
 ### Capability reasons (`incremental_refresh.state`)
 
