@@ -40,7 +40,6 @@ BOOL WINAPI consoleCtrlHandler(DWORD type)
 
 int wmain(int argc, wchar_t** argv)
 {
-    // Prefer UTF-8 console output when available.
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 
@@ -59,6 +58,9 @@ int wmain(int argc, wchar_t** argv)
         std::cout << "spacelens " << SPACELENS_VERSION_STRING << "\n";
         return spacelens::cli::toInt(spacelens::cli::ExitCode::Success);
     }
+    if (args.command == spacelens::cli::Command::Capabilities) {
+        return spacelens::cli::toInt(spacelens::cli::runCapabilities(args));
+    }
 
     std::stop_source stopSource;
     g_stopSource = &stopSource;
@@ -72,6 +74,9 @@ int wmain(int argc, wchar_t** argv)
             break;
         case spacelens::cli::Command::Top:
             code = spacelens::cli::runTop(args, stopSource.get_token());
+            break;
+        case spacelens::cli::Command::Find:
+            code = spacelens::cli::runFind(args, stopSource.get_token());
             break;
         default:
             code = spacelens::cli::ExitCode::InternalError;

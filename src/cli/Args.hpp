@@ -1,6 +1,10 @@
 #pragma once
 
+#include "core/Types.hpp"
+
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,6 +16,19 @@ enum class Command {
     Version,
     Scan,
     Top,
+    Find,
+    Capabilities,
+};
+
+/// Commands intentionally exposed by the read-only CLI. Keep this list explicit
+/// so destructive verbs cannot be registered accidentally.
+inline constexpr std::array<Command, 6> kRegisteredCommands{
+    Command::Scan,
+    Command::Top,
+    Command::Find,
+    Command::Capabilities,
+    Command::Help,
+    Command::Version,
 };
 
 enum class TopMode {
@@ -26,6 +43,10 @@ struct ParsedArgs {
     bool json = false;
     TopMode topMode = TopMode::None;
     std::size_t limit = 20;
+    std::optional<ByteSize> minSize;
+    std::wstring extension;     // normalized without a leading dot
+    std::optional<std::uint64_t> olderThanDays;
+    std::wstring classification;
     std::string error;  // non-empty => usage error
 };
 
