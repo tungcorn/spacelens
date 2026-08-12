@@ -25,6 +25,23 @@ const char* toString(IndexFreshness f) noexcept
     return "error";
 }
 
+const char* toString(IndexDiscoveryPreset p) noexcept
+{
+    switch (p) {
+    case IndexDiscoveryPreset::Custom:
+        return "custom";
+    case IndexDiscoveryPreset::Largest:
+        return "largest";
+    case IndexDiscoveryPreset::OldAndLarge:
+        return "old_and_large";
+    case IndexDiscoveryPreset::DeveloperStorage:
+        return "developer_storage";
+    case IndexDiscoveryPreset::ReclaimCandidates:
+        return "reclaim_candidates";
+    }
+    return "custom";
+}
+
 IndexFreshness mapIndexFreshness(bool indexExists, std::uint64_t ageMs,
                                  IncrementalRefreshState incState,
                                  IndexRefreshOutcome probeOutcome)
@@ -186,6 +203,113 @@ IndexQuerySpec makeBrowserQuerySpec(bool includeFiles, bool includeDirectories,
     spec.classification = std::move(classification);
     spec.candidateStrength = std::move(candidateStrength);
     spec.limit = limit == 0 ? 20 : limit;
+    spec.sortBy = IndexSortKey::Size;
+    spec.sortDescending = true;
+    return spec;
+}
+
+const std::vector<std::string>& developerStorageClassifications()
+{
+    static const std::vector<std::string> kCats = {
+        "BuildArtifact",     "DependencyDirectory", "PackageCache",
+        "IdeCache",          "DownloadedAiModel",   "LogData",
+    };
+    return kCats;
+}
+
+IndexQuerySpec applyDiscoveryPreset(IndexDiscoveryPreset preset,
+                                    IndexQuerySpec base)
+{
+    IndexQuerySpec spec = std::move(base);
+    if (spec.limit == 0) {
+        spec.limit = 200;
+    }
+
+    switch (preset) {
+    case IndexDiscoveryPreset::Largest:
+        // Bare applyDiscoveryPreset(Largest, {}) defaults to both kinds.
+        spec.includeFiles = true;
+        spec.includeDirectories = true;
+        spec.sortBy = IndexSortKey::Size;
+        spec.sortDescending = true;
+        break;
+
+    case IndexDiscoveryPreset::OldAndLarge:
+        if (!spec.minSize) {
+            spec.minSize = kOldAndLargeMinBytes;
+        }
+        if (!spec.olderThanDays) {
+            spec.olderThanDays = kOldAndLargeOlderThanDays;
+        }
+        spec.includeFiles = true;
+        spec.includeDirectories = true;
+        spec.sortBy = IndexSortKey::Size;
+        spec.sortDescending = true;
+        break;
+
+    case IndexDiscoveryPreset::DeveloperStorage:
+        if (spec.classifications.empty() && spec.classification.empty()) {
+            spec.classifications = developerStorageClassifications();
+        }
+        spec.includeFiles = true;
+        spec.includeDirectories = true;
+        spec.sortBy = IndexSortKey::Size;
+        spec.sortDescending = true;
+        break;
+
+    case IndexDiscoveryPreset::ReclaimCandidates:
+        if (spec.candidateStrengths.empty() && spec.candidateStrength.empty()) {
+            spec.candidateStrengths = {"Strong", "Moderate"};
+        }
+        spec.includeFiles = true;
+        spec.includeDirectories = true;
+        spec.sortBy = IndexSortKey::CandidateStrength;
+        spec.sortDescending = true;
+        break;
+
+    case IndexDiscoveryPreset::Custom:
+    default:
+        if (!spec.includeFiles && !spec.includeDirectories) {
+            spec.includeFiles = true;
+            spec.includeDirectories = false;
+        }
+        break;
+    }
+    return spec;
+}
+
+IndexQuerySpec makeDiscoveryQuery(
+    IndexDiscoveryPreset preset, bool includeFiles, bool includeDirectories,
+    std::optional<ByteSize> minSize, std::optional<std::uint64_t> olderThanDays,
+    std::string extensionLowerNoDot, std::string classification,
+    std::string candidateStrength, std::string searchText,
+    std::wstring browsePath, IndexSortKey sortBy, bool sortDescending,
+    std::size_t limit)
+{
+    IndexQuerySpec base;
+    base.minSize = minSize;
+    base.olderThanDays = olderThanDays;
+    base.extension = std::move(extensionLowerNoDot);
+    base.classification = std::move(classification);
+    base.candidateStrength = std::move(candidateStrength);
+    base.searchText = std::move(searchText);
+    base.browsePath = std::move(browsePath);
+    base.limit = limit == 0 ? 200 : limit;
+    base.sortBy = sortBy;
+    base.sortDescending = sortDescending;
+
+    auto spec = applyDiscoveryPreset(preset, std::move(base));
+
+    // GUI kind selection always wins over preset defaults.
+    spec.includeFiles = includeFiles;
+    spec.includeDirectories = includeDirectories;
+    if (!spec.includeFiles && !spec.includeDirectories) {
+        spec.includeFiles = true;
+    }
+
+    // GUI sort combo always wins (presets set the combo when selected).
+    spec.sortBy = sortBy;
+    spec.sortDescending = sortDescending;
     return spec;
 }
 

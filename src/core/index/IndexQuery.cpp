@@ -10,6 +10,7 @@
 #endif
 #include <Windows.h>
 
+#include <chrono>
 #include <sstream>
 
 namespace spacelens {
@@ -41,6 +42,164 @@ IndexQueryResult fail(const std::wstring& rootPath, const char* error)
     r.location = locateIndex(rootPath);
     r.root.rootPath = r.location.rootPath;
     return r;
+}
+
+/// Escape LIKE wildcards so user search text is literal substring match.
+std::string escapeLike(std::string_view text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (char ch : text) {
+        if (ch == '%' || ch == '_' || ch == '\\') {
+            out.push_back('\\');
+        }
+        out.push_back(ch);
+    }
+    return out;
+}
+
+void appendInList(std::ostringstream& sql, const char* column,
+                  const std::vector<std::string>& values)
+{
+    sql << " AND " << column << " IN (";
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i != 0) {
+            sql << ',';
+        }
+        sql << '?';
+    }
+    sql << ')';
+}
+
+void appendOrderBy(std::ostringstream& sql, IndexSortKey sortBy, bool descending)
+{
+    const char* dir = descending ? "DESC" : "ASC";
+    switch (sortBy) {
+    case IndexSortKey::Name:
+        sql << " ORDER BY name COLLATE NOCASE " << dir << ", path ASC";
+        break;
+    case IndexSortKey::LastWrite:
+        sql << " ORDER BY last_write_ticks " << dir << ", path ASC";
+        break;
+    case IndexSortKey::Classification:
+        sql << " ORDER BY classification COLLATE NOCASE " << dir
+            << ", sz DESC, path ASC";
+        break;
+    case IndexSortKey::CandidateStrength:
+        // Strong first when descending; reverse when ascending.
+        sql << " ORDER BY CASE candidate_strength "
+               "WHEN 'Strong' THEN 0 WHEN 'Moderate' THEN 1 "
+               "WHEN 'ReviewOnly' THEN 2 ELSE 3 END "
+            << (descending ? "ASC" : "DESC") << ", sz DESC, path ASC";
+        break;
+    case IndexSortKey::Size:
+    default:
+        sql << " ORDER BY sz " << dir << ", path ASC";
+        break;
+    }
+}
+
+void appendCommonFilters(std::ostringstream& sql, const IndexQuerySpec& spec)
+{
+    if (spec.includeFiles && !spec.includeDirectories) {
+        sql << " AND kind = 0";
+    } else if (!spec.includeFiles && spec.includeDirectories) {
+        sql << " AND kind = 1";
+    }
+
+    if (spec.minSize) {
+        sql << " AND (CASE WHEN kind = 1 THEN recursive_size ELSE size_bytes "
+               "END) >= ?";
+    }
+    if (!spec.extension.empty()) {
+        sql << " AND kind = 0 AND extension = ?";
+    }
+    if (spec.olderThanDays && *spec.olderThanDays > 0) {
+        // Activity: files use last_write_ticks; dirs store newest descendant
+        // write in last_write_ticks at index build time.
+        sql << " AND last_write_ticks > 0 AND last_write_ticks <= ?";
+    }
+    if (!spec.classifications.empty()) {
+        appendInList(sql, "classification", spec.classifications);
+    } else if (!spec.classification.empty()) {
+        sql << " AND classification = ?";
+    }
+    if (!spec.candidateStrengths.empty()) {
+        appendInList(sql, "candidate_strength", spec.candidateStrengths);
+    } else if (!spec.candidateStrength.empty()) {
+        sql << " AND candidate_strength = ?";
+    }
+    if (!spec.reclaimability.empty()) {
+        sql << " AND reclaimability = ?";
+    }
+    if (!spec.searchText.empty()) {
+        // Case-insensitive substring on name / path / extension (ASCII NOCASE;
+        // non-ASCII letters follow SQLite default Unicode folding limits).
+        sql << " AND (name LIKE ? ESCAPE '\\' COLLATE NOCASE"
+               " OR path LIKE ? ESCAPE '\\' COLLATE NOCASE"
+               " OR extension LIKE ? ESCAPE '\\' COLLATE NOCASE)";
+    }
+    if (!spec.browsePath.empty()) {
+        sql << " AND parent_id = (SELECT id FROM entries WHERE root_id = 1 AND "
+               "path = ? LIMIT 1)";
+    } else if (!spec.pathPrefix.empty()) {
+        sql << " AND (path = ? OR path LIKE ? ESCAPE '\\')";
+    }
+}
+
+void bindFilters(SqliteStmt& stmt, int& idx, const IndexQuerySpec& spec,
+                 FileTimeTicks now)
+{
+    if (spec.minSize) {
+        stmt.bindInt64(idx++, static_cast<std::int64_t>(*spec.minSize));
+    }
+    if (!spec.extension.empty()) {
+        stmt.bindText(idx++, spec.extension);
+    }
+    if (spec.olderThanDays && *spec.olderThanDays > 0) {
+        const FileTimeTicks cutoff =
+            now > daysToTicks(*spec.olderThanDays)
+                ? now - daysToTicks(*spec.olderThanDays)
+                : 0;
+        stmt.bindInt64(idx++, static_cast<std::int64_t>(cutoff));
+    }
+    if (!spec.classifications.empty()) {
+        for (const auto& c : spec.classifications) {
+            stmt.bindText(idx++, c);
+        }
+    } else if (!spec.classification.empty()) {
+        stmt.bindText(idx++, spec.classification);
+    }
+    if (!spec.candidateStrengths.empty()) {
+        for (const auto& s : spec.candidateStrengths) {
+            stmt.bindText(idx++, s);
+        }
+    } else if (!spec.candidateStrength.empty()) {
+        stmt.bindText(idx++, spec.candidateStrength);
+    }
+    if (!spec.reclaimability.empty()) {
+        stmt.bindText(idx++, spec.reclaimability);
+    }
+    if (!spec.searchText.empty()) {
+        const std::string pattern =
+            std::string("%") + escapeLike(spec.searchText) + "%";
+        stmt.bindText(idx++, pattern);
+        stmt.bindText(idx++, pattern);
+        stmt.bindText(idx++, pattern);
+    }
+    if (!spec.browsePath.empty()) {
+        stmt.bindText16(idx++, spec.browsePath);
+    } else if (!spec.pathPrefix.empty()) {
+        stmt.bindText16(idx++, spec.pathPrefix);
+        std::wstring likePat = spec.pathPrefix;
+        while (!likePat.empty() &&
+               (likePat.back() == L'\\' || likePat.back() == L'/')) {
+            likePat.pop_back();
+        }
+        likePat.push_back(L'\\');
+        likePat.push_back(L'%');
+        stmt.bindText16(idx++, likePat);
+    }
 }
 
 }  // namespace
@@ -80,6 +239,7 @@ IndexQueryResult indexStatus(const std::wstring& rootPath)
 IndexQueryResult queryIndex(const std::wstring& rootPath,
                             const IndexQuerySpec& spec)
 {
+    const auto t0 = std::chrono::steady_clock::now();
     IndexQueryResult r;
     r.location = locateIndex(rootPath);
     r.root.rootPath = r.location.rootPath;
@@ -100,101 +260,35 @@ IndexQueryResult queryIndex(const std::wstring& rootPath,
             spec.nowTicks != 0 ? spec.nowTicks : nowFileTime();
         r.age_ms = ageMs(r.root.indexedAtTicks, now);
 
-        std::ostringstream sql;
-        sql << "SELECT path, kind, "
-            << "CASE WHEN kind = 1 THEN recursive_size ELSE size_bytes END AS sz, "
-            << "classification, confidence, location_safety, reclaimability, "
-            << "candidate_strength, last_write_ticks "
-            << "FROM entries WHERE root_id = 1";
-
-        if (spec.includeFiles && !spec.includeDirectories) {
-            sql << " AND kind = 0";
-        } else if (!spec.includeFiles && spec.includeDirectories) {
-            sql << " AND kind = 1";
-        } else if (!spec.includeFiles && !spec.includeDirectories) {
+        if (!spec.includeFiles && !spec.includeDirectories) {
             r.ok = true;
+            r.query_elapsed_ms = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t0)
+                    .count());
             return r;
         }
 
-        if (spec.minSize) {
-            sql << " AND (CASE WHEN kind = 1 THEN recursive_size ELSE size_bytes END) >= ?";
-        }
-        if (!spec.extension.empty()) {
-            sql << " AND kind = 0 AND extension = ?";
-        }
-        if (spec.olderThanDays && *spec.olderThanDays > 0) {
-            // Activity: files use last_write_ticks; dirs use newest_descendant_write
-            // stored in last_write_ticks for dirs during build.
-            sql << " AND last_write_ticks > 0 AND last_write_ticks <= ?";
-        }
-        if (!spec.classification.empty()) {
-            sql << " AND classification = ?";
-        }
-        if (!spec.candidateStrength.empty()) {
-            sql << " AND candidate_strength = ?";
-        }
+        std::ostringstream sql;
+        sql << "SELECT path, name, kind, "
+            << "CASE WHEN kind = 1 THEN recursive_size ELSE size_bytes END AS sz, "
+            << "extension, classification, confidence, rule_id, location_safety, "
+            << "reclaimability, candidate_strength, last_write_ticks "
+            << "FROM entries WHERE root_id = 1";
+        appendCommonFilters(sql, spec);
+        appendOrderBy(sql, spec.sortBy, spec.sortDescending);
+        sql << " LIMIT ?";
 
-        sql << " ORDER BY sz DESC, path ASC LIMIT ?";
-
-        // Count query (same filters, no limit) for matched_items / bytes.
-        std::string countSql = "SELECT COUNT(*), COALESCE(SUM("
-                               "CASE WHEN kind = 1 THEN recursive_size ELSE size_bytes END"
-                               "),0) FROM entries WHERE root_id = 1";
-        {
-            // rebuild filters into countSql by parsing — simpler to duplicate.
-        }
         std::ostringstream count;
         count << "SELECT COUNT(*), COALESCE(SUM(CASE WHEN kind = 1 THEN "
                  "recursive_size ELSE size_bytes END),0) FROM entries WHERE "
                  "root_id = 1";
-        if (spec.includeFiles && !spec.includeDirectories) {
-            count << " AND kind = 0";
-        } else if (!spec.includeFiles && spec.includeDirectories) {
-            count << " AND kind = 1";
-        }
-        if (spec.minSize) {
-            count << " AND (CASE WHEN kind = 1 THEN recursive_size ELSE "
-                     "size_bytes END) >= ?";
-        }
-        if (!spec.extension.empty()) {
-            count << " AND kind = 0 AND extension = ?";
-        }
-        if (spec.olderThanDays && *spec.olderThanDays > 0) {
-            count << " AND last_write_ticks > 0 AND last_write_ticks <= ?";
-        }
-        if (!spec.classification.empty()) {
-            count << " AND classification = ?";
-        }
-        if (!spec.candidateStrength.empty()) {
-            count << " AND candidate_strength = ?";
-        }
-
-        auto bindFilters = [&](SqliteStmt& stmt, int& idx) {
-            if (spec.minSize) {
-                stmt.bindInt64(idx++, static_cast<std::int64_t>(*spec.minSize));
-            }
-            if (!spec.extension.empty()) {
-                stmt.bindText(idx++, spec.extension);
-            }
-            if (spec.olderThanDays && *spec.olderThanDays > 0) {
-                const FileTimeTicks cutoff =
-                    now > daysToTicks(*spec.olderThanDays)
-                        ? now - daysToTicks(*spec.olderThanDays)
-                        : 0;
-                stmt.bindInt64(idx++, static_cast<std::int64_t>(cutoff));
-            }
-            if (!spec.classification.empty()) {
-                stmt.bindText(idx++, spec.classification);
-            }
-            if (!spec.candidateStrength.empty()) {
-                stmt.bindText(idx++, spec.candidateStrength);
-            }
-        };
+        appendCommonFilters(count, spec);
 
         {
             SqliteStmt cstmt(store.db(), count.str());
             int idx = 1;
-            bindFilters(cstmt, idx);
+            bindFilters(cstmt, idx, spec, now);
             if (cstmt.step()) {
                 r.matched_items =
                     static_cast<std::uint64_t>(cstmt.columnInt64(0));
@@ -205,22 +299,25 @@ IndexQueryResult queryIndex(const std::wstring& rootPath,
 
         SqliteStmt stmt(store.db(), sql.str());
         int idx = 1;
-        bindFilters(stmt, idx);
+        bindFilters(stmt, idx, spec, now);
         stmt.bindInt64(idx++, static_cast<std::int64_t>(spec.limit));
 
         while (stmt.step()) {
             IndexHit hit;
             hit.path = stmt.columnText16(0);
-            hit.kind = stmt.columnInt64(1) == 1 ? IndexEntryKind::Directory
+            hit.name = stmt.columnText16(1);
+            hit.kind = stmt.columnInt64(2) == 1 ? IndexEntryKind::Directory
                                                 : IndexEntryKind::File;
-            hit.size_bytes = static_cast<ByteSize>(stmt.columnInt64(2));
-            hit.classification = stmt.columnText(3);
-            hit.confidence = stmt.columnText(4);
-            hit.location_safety = stmt.columnText(5);
-            hit.reclaimability = stmt.columnText(6);
-            hit.candidate_strength = stmt.columnText(7);
+            hit.size_bytes = static_cast<ByteSize>(stmt.columnInt64(3));
+            hit.extension = stmt.columnText(4);
+            hit.classification = stmt.columnText(5);
+            hit.confidence = stmt.columnText(6);
+            hit.rule_id = stmt.columnText(7);
+            hit.location_safety = stmt.columnText(8);
+            hit.reclaimability = stmt.columnText(9);
+            hit.candidate_strength = stmt.columnText(10);
             hit.last_write_ticks =
-                static_cast<std::uint64_t>(stmt.columnInt64(8));
+                static_cast<std::uint64_t>(stmt.columnInt64(11));
             r.hits.push_back(std::move(hit));
         }
         r.returned_items = r.hits.size();
@@ -239,6 +336,11 @@ IndexQueryResult queryIndex(const std::wstring& rootPath,
         r.ok = false;
         r.error = "index_query_failed";
     }
+
+    r.query_elapsed_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0)
+            .count());
     return r;
 }
 

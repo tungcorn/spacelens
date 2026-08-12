@@ -17,24 +17,58 @@ enum class IndexEntryKind {
     Directory = 1
 };
 
+/// Deterministic result ordering for indexed discovery queries.
+enum class IndexSortKey {
+    Size = 0,               // effective size (file size / dir recursive_size)
+    Name,                   // leaf name, case-insensitive
+    LastWrite,              // activity write ticks
+    Classification,         // classification string
+    CandidateStrength       // Strong > Moderate > ReviewOnly > None, then size
+};
+
 struct IndexQuerySpec {
     bool includeFiles = true;
     bool includeDirectories = false;
     std::optional<ByteSize> minSize;
     std::string extension;  // lowercase, no leading dot
     std::optional<std::uint64_t> olderThanDays;
-    std::string classification;       // empty = any
-    std::string candidateStrength;    // empty = any
+    /// Single classification equality filter (empty = any). Ignored when
+    /// `classifications` is non-empty.
+    std::string classification;
+    /// Multi-value classification IN filter (e.g. Developer Storage preset).
+    std::vector<std::string> classifications;
+    /// Single candidate-strength equality (empty = any). Ignored when
+    /// `candidateStrengths` is non-empty.
+    std::string candidateStrength;
+    /// Multi-value strength IN filter (e.g. Reclaim Candidates preset).
+    std::vector<std::string> candidateStrengths;
+    /// Optional reclaimability equality (empty = any).
+    std::string reclaimability;
+    /// Case-insensitive substring match against name, path, and extension.
+    /// Empty disables text search. Matching is deterministic LIKE %needle%.
+    std::string searchText;
+    /// When non-empty, restrict to immediate children of this absolute path
+    /// (indexed browse / breadcrumb navigation). Empty = whole index.
+    std::wstring browsePath;
+    /// When non-empty and browsePath is empty, restrict to the path itself or
+    /// any descendant (path = prefix OR path LIKE prefix\...). Used for
+    /// "under this folder" filters without requiring parent_id.
+    std::wstring pathPrefix;
+    IndexSortKey sortBy = IndexSortKey::Size;
+    bool sortDescending = true;
     std::size_t limit = 20;
     FileTimeTicks nowTicks = 0;  // for age filters
 };
 
 struct IndexHit {
     std::wstring path;
+    std::wstring name;
     IndexEntryKind kind = IndexEntryKind::File;
     ByteSize size_bytes = 0;
+    std::string extension;
     std::string classification;
     std::string confidence;
+    std::string rule_id;
     std::string location_safety;
     std::string reclaimability;
     std::string candidate_strength;
@@ -51,6 +85,8 @@ struct IndexQueryResult {
     std::uint64_t returned_items = 0;
     ByteSize matched_logical_bytes = 0;
     std::uint64_t age_ms = 0;
+    /// Wall-clock query time inside queryIndex (open + SQL), milliseconds.
+    std::uint64_t query_elapsed_ms = 0;
 };
 
 /// Query a published persistent index. Never falls back to a live scan.
