@@ -8,8 +8,9 @@ It helps people find, understand, inspect, and plan cleanup without granting an
 agent permission to destroy data.
 
 ```text
-spacelens_core  →  spacelens (CLI, read-only)
-                →  SpaceLens (Qt desktop analyzer)
+spacelens_core         →  spacelens (CLI, read-only)
+                       →  SpaceLens (Qt desktop analyzer)
+spacelens_maintenance  →  GUI Recycle Bin adapter only
 ```
 
 ## Status
@@ -25,10 +26,11 @@ spacelens_core  →  spacelens (CLI, read-only)
   `help`, `version` with versioned JSON and `filesystem_mutation: false`
 - GUI: Live Scan + **Indexed** storage discovery (presets, search, filters,
   breadcrumb navigation, storage overview, interactive squarified treemap,
-  inspector, Explorer/copy, **Find Duplicates**, durable Cleanup Review V2
-  planning only — no delete/move)
-- Not yet: auto-refresh on query, journal creation, persistent hash cache,
-  MFT initial scan, MCP, product AI, automatic deletion, or automatic movement
+  inspector, Explorer/copy, **Find Duplicates**, durable Cleanup Review V2,
+  and human-authorized Recycle Bin maintenance)
+- Not yet: permanent delete, directory recycle, restore from Recycle Bin,
+  auto-refresh on query, journal creation, persistent hash cache, MFT initial
+  scan, MCP, product AI, automatic deletion, or CLI/agent mutation
 
 ## Features
 
@@ -40,7 +42,9 @@ spacelens_core  →  spacelens (CLI, read-only)
 - Read-only reclaim analysis for human review prioritization
 - Durable Cleanup Review V2: captured evidence, strong object identity,
   metadata-only revalidation, overlap-aware Cleanup Plan, and planning-only
-  JSON — no delete or move operation
+  JSON
+- Human-authorized Maintenance V1: GUI Recycle Bin only, after fresh preflight,
+  confirmation, and a final identity/safety guard. Not permanent deletion.
 - Persistent SQLite index for fast repeated filtered queries
 - Optional USN-based incremental refresh (`index refresh`) — read-only journal
   access; full rebuild required on discontinuity or access denied
@@ -66,6 +70,7 @@ spacelens_core  →  spacelens (CLI, read-only)
 [`docs/SAFETY.md`](docs/SAFETY.md). Index design: [`docs/INDEX.md`](docs/INDEX.md).
 Cleanup Review: [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md).
 Duplicates: [`docs/DUPLICATES.md`](docs/DUPLICATES.md).
+Maintenance: [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md).
 Measured baselines: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ## Build prerequisites

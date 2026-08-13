@@ -19,7 +19,7 @@ Whenever a destructive action can wait for explicit human review, delay it.
 | Consumer | Interface | Mutation |
 |----------|-----------|----------|
 | AI agents / scripts | `spacelens.exe` (CLI) | **None** — observation and query only |
-| Humans | `spacelens-gui.exe` | Inspection + cleanup **review** now; future mutations only behind explicit human authorization |
+| Humans | `spacelens-gui.exe` | Inspection, cleanup review, and **human-authorized Recycle Bin** only |
 
 The agent-facing CLI must remain safe to grant to a coding agent without
 implicitly granting file-deletion or file-movement capability.
@@ -39,6 +39,7 @@ It must **not** register commands such as:
 
 ```text
 delete  remove  rm  move  cleanup execute  purge  wipe  dedupe  keep-one
+recycle  maintenance
 ```
 
 There are no hidden aliases for destructive operations.
@@ -79,7 +80,8 @@ The Indexed tab is discovery, visualization, and planning only:
 - Cleanup Review is a durable planning queue in
   `%LOCALAPPDATA%\SpaceLens\state.db` (`source=persistent_index` preserves
   snapshot age and classification metadata). Index rebuild/refresh does not
-  rewrite review evidence.
+  rewrite review evidence. Recycle Bin maintenance is a separate, confirmed
+  GUI path — see [`docs/MAINTENANCE.md`](MAINTENANCE.md).
 - Open / Reveal / default-app launch are human-initiated shell actions on paths
   the user selected; missing paths surface a stale-snapshot message rather than
   rewriting the index.
@@ -92,22 +94,22 @@ The Indexed tab is discovery, visualization, and planning only:
   Keep One control. Adding a group to Cleanup Review does not authorize
   deletion. See [`docs/DUPLICATES.md`](DUPLICATES.md).
 
-### Future mutation separation
+### Mutation separation
 
-Destructive capability, if ever implemented, must be a **separately permissioned**
-surface — not an ordinary CLI verb on `spacelens.exe`.
-
-Possible future shape:
+Destructive capability must stay a **separately permissioned** surface — not an
+ordinary CLI verb on `spacelens.exe`.
 
 ```text
 spacelens              READ ONLY (agents/scripts)
-spacelens-gui          human inspection + review
-spacelens-maintenance  optional, separately permissioned mutations
-                       (or a GUI-only mutation service)
+spacelens-gui          human inspection + review + Recycle Bin V1
+spacelens_maintenance  GUI-only Windows Recycle Bin adapter
 ```
 
-This milestone implements **safety abstractions and cleanup-planning UX only**.
-No real deletion or movement.
+Maintenance V1 may send eligible reviewed **files** to the Recycle Bin after a
+fresh preflight, explicit human confirmation, and a final identity/safety
+guard. It does not permanently delete, empty the Recycle Bin, recycle
+directories, follow reparse points, or accept CLI/agent/AI invocation. See
+[`docs/MAINTENANCE.md`](MAINTENANCE.md).
 
 ## Separated concepts (never collapse them)
 
@@ -210,23 +212,27 @@ item by scanning a volume for a file ID. Cancellation discards partial
 results. Missing, denied, and failed records stay until the user refreshes
 evidence or removes them.
 
-Future mutation execution (not implemented now) must still revalidate again
-immediately before acting. `Refresh Evidence` only replaces the captured
-baseline; it is not permission to delete.
+Maintenance V1 revalidates again immediately before each Recycle Bin attempt
+(identity, kind, reparse, location, size/write/attributes). `Refresh Evidence`
+only replaces the captured baseline; it is not permission to recycle.
 
-## Future deletion policy (documented only)
+## Recycle Bin vs permanent delete
 
-Default human deletion should prefer **Move to Recycle Bin** over permanent
-delete. Permanent delete, if ever added, must be clearly separate and harder.
+Human-authorized Maintenance V1 prefers **Move to Recycle Bin** and does not
+implement permanent delete. Permanent delete, if ever added, must be clearly
+separate and harder. See [`docs/MAINTENANCE.md`](MAINTENANCE.md).
 
-Moving large data to Recycle Bin does **not** automatically free the same amount
-of space. Future UI should distinguish:
+Moving data to the Recycle Bin does **not** free the same amount of space.
+The UI reports logical sizes only:
 
 ```text
 Selected logical size
-Moved to Recycle Bin
-Actually reclaimed space  (when measurable)
+Eligible logical size
+Recycled logical size
 ```
+
+SpaceLens does not claim “physical space freed” and does not empty the Recycle
+Bin.
 
 ## Future move policy (documented only)
 
@@ -249,24 +255,27 @@ with structured arguments.
 ## Cleanup Review (this milestone)
 
 Cleanup Review is a **durable planning queue**, not a deletion feature.
-Details: [`docs/CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md).
+Details: [`docs/CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md). Recycle Bin execution
+is a separate confirmed GUI path: [`docs/MAINTENANCE.md`](MAINTENANCE.md).
 
 Flow:
 
 ```text
 discovery → add (persist captured evidence) → later reopen
          → explicit live revalidation → review changes/warnings
-         → Cleanup Plan (text/JSON) → (future) explicit human-authorized action
+         → Cleanup Plan (text/JSON)
+         → optional human-authorized Recycle Bin (Maintenance V1)
 ```
 
 Available review actions today: revalidate all, cancel, refresh evidence,
 open, reveal in Explorer, remove from review, clear review, copy plan,
-export JSON. **No Delete. No Move.**
+export JSON, and **Move to Recycle Bin…**. **No permanent Delete. No arbitrary
+Move.**
 
 ```text
 Delete: NOT IMPLEMENTED
 Move: NOT IMPLEMENTED
-Recycle Bin: NOT IMPLEMENTED
+Recycle Bin: GUI only — see docs/MAINTENANCE.md
 ```
 
 ## Reclaim / stale storage candidates

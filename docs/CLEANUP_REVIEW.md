@@ -24,12 +24,16 @@ Live revalidation
 Review changes/warnings
    ↓
 Build Cleanup Plan
+   ↓
+optional human-authorized Recycle Bin (Maintenance V1)
 ```
 
-No Delete, Move, Rename, Recycle Bin, automatic cleanup, or agent filesystem
-action is implemented. `filesystem_mutation` remains `false`. Duplicate
-Detection may add verified paths with `source = "duplicate_detection"`;
-that is still only a planning hand-off.
+Cleanup Review itself is still a planning queue: add, revalidate, refresh
+evidence, copy/export, and remove-from-review do not mutate analyzed files.
+The only mutation path is the separate GUI Recycle Bin workflow documented in
+[`docs/MAINTENANCE.md`](MAINTENANCE.md). CLI `filesystem_mutation` remains
+`false`. Duplicate Detection may add verified paths with
+`source = "duplicate_detection"`; that is still only a planning hand-off.
 
 ## What it stores
 
@@ -55,9 +59,11 @@ Startup **loads** review state. It does **not** revalidate automatically.
 
 | Table | Role |
 |-------|------|
-| `meta` | `review_schema_version`, `review_next_id` |
-| `review_items` | Durable ID, original path, normalized path key, captured object evidence, historical directory aggregate, classification, reclaimability, strength, safety, source/root, index age/timestamp, `addedAt` |
+| `meta` | `review_schema_version`, `review_next_id`, `maintenance_schema_version` |
+| `review_items` | Durable ID, original path, normalized path key, captured object evidence, historical directory aggregate, classification, reclaimability, strength, safety, source/root, index age/timestamp, `addedAt`, optional `lifecycle` |
 | `review_validation` | Current observation, current object/aggregate evidence, primary state, reason flags, diffs, identity/direct/recursive honesty flags, checked time |
+| `maintenance_operations` | Additive Recycle Bin operation receipts (see Maintenance V1) |
+| `maintenance_receipt_items` | Per-file Recycle Bin results |
 
 Unsupported newer or malformed schemas fail closed. A valid database is never
 replaced to “fix” an unknown version.
@@ -235,9 +241,12 @@ Available actions:
 - Remove from Review / Clear Review
 - Copy Plan / Export JSON
 - optional `%USERPROFILE%` redaction
+- **Move to Recycle Bin…** (human-authorized Maintenance V1)
 
-There are no Delete or Move controls. Open and Reveal are human-initiated
-Explorer/default-app actions on a selected path.
+There is no permanent Delete and no arbitrary Move/Rename. Open and Reveal
+are human-initiated Explorer/default-app actions on a selected path. Recycle
+Bin execution is a separate confirmed GUI path — see
+[`docs/MAINTENANCE.md`](MAINTENANCE.md).
 
 ## Transactional mutation
 
@@ -257,11 +266,11 @@ evidence or removes them.
 
 ## Non-goals
 
-- deletion, Recycle Bin, move, rename
-- automatic cleanup or a maintenance executable
-- AI-generated filesystem actions
+- permanent deletion, empty Recycle Bin, restore from Recycle Bin
+- move, rename, or recycle directories
+- automatic, scheduled, CLI, MCP, or AI-triggered cleanup
+- a maintenance executable or agent mutation verb
 - new USN/MFT work for review
-- MCP
 - reading file contents during revalidation
 - following a reparse point to make identity comparison succeed
 - scanning a volume by file ID to relocate missing items
@@ -270,5 +279,5 @@ evidence or removes them.
 ```text
 Delete: NOT IMPLEMENTED
 Move: NOT IMPLEMENTED
-Recycle Bin: NOT IMPLEMENTED
+Recycle Bin: GUI only — see docs/MAINTENANCE.md
 ```

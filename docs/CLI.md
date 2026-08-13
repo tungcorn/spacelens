@@ -2,8 +2,9 @@
 
 The SpaceLens CLI is a first-class, agent-safe interface for humans, scripts,
 and AI agents. It performs read-only scanning and storage analysis. It does not
-delete, move, rename, purge, wipe, execute shell commands, or grant filesystem
-mutation authority.
+delete, move, rename, recycle, purge, wipe, execute shell commands, or grant
+filesystem mutation authority. Human-authorized Recycle Bin maintenance exists
+only in the GUI. See [`docs/MAINTENANCE.md`](MAINTENANCE.md).
 
 The executable wires `scan`, `top`, `find`, `index`, `index refresh`,
 `index status`, `index list`, `query`, `duplicates`, `capabilities`, `help`,

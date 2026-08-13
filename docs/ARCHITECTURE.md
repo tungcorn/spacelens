@@ -11,9 +11,10 @@ it is not a filesystem mutation service.
                 /              \
                /                \
       spacelens (CLI)       SpaceLens (GUI)
-      humans / scripts /    human inspection
-      AI agents             and review planning
-      read-only
+      humans / scripts /    human inspection,
+      AI agents             review, Recycle Bin V1
+      read-only                  |
+                           spacelens_maintenance
 ```
 
 The **CLI is a first-class product interface**. AI coding agents and automation
@@ -43,8 +44,11 @@ than claiming a shipped feature.
 - A durable **Cleanup Review V2** queue for planning and reporting. Captured
   evidence, object identity, and last validation live in
   `%LOCALAPPDATA%\SpaceLens\state.db` (`review_schema_version = 1`), independent
-  of replaceable per-root indexes. It does not delete, move, or otherwise
-  mutate filesystem content. See [`docs/CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md).
+  of replaceable per-root indexes. See [`docs/CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md).
+- **Human-Authorized Maintenance V1**: the GUI may send eligible reviewed files
+  to the Recycle Bin after fresh preflight, explicit confirmation, and a final
+  identity/safety guard. The Shell adapter lives in `spacelens_maintenance` and
+  is not linked into the CLI. See [`docs/MAINTENANCE.md`](MAINTENANCE.md).
 - An agent-safe CLI contract with `capabilities`, `scan`, `top`, and `find`
   query surfaces, filters, versioned JSON output, and explicit read-only
   capability reporting.

@@ -155,6 +155,14 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Lifetime:** One probe at a time, `stop_token` between candidates, queued progress/completion on the GUI thread. Cancellation clears partial updates. Destruction requests stop and joins. Only a completed batch is applied through `replaceValidationBatch`.
 - **Bug prevented:** Callbacks into a destroyed dialog, committing cancelled probes, one thread per candidate, and treating a failed persist as an in-memory success.
 
+## Maintenance Recycle Bin adapter (GUI only)
+
+- **Why used:** Recycle-Bin-only mutation must not leak into the CLI or into core.
+- **Ownership:** `spacelens_maintenance` owns `WindowsRecycleAdapter`. `MainWindow` owns `MaintenanceSession`. The session owns one `std::jthread`; the adapter `CoInitializeEx`s STA around each `IFileOperation`. A heap `RecycleSink` keeps its creating reference until after `Unadvise`.
+- **Lifetime:** Prepare probes on the worker, wait for a GUI confirmation that says “Move to Recycle Bin”, then recycle one file at a time. Receipts persist on the GUI thread. Closing the review dialog aborts a pending confirmation but does not unlink an in-flight recycle.
+- **Evidence:** Success requires `psiNewlyCreated != NULL` plus a gone source path. Missing Recycle Bin evidence after the source disappears is `UnexpectedPermanentRemoval` and stops the remainder.
+- **Bug prevented:** Linking Shell recycle into `spacelens.exe`, treating `DeleteFileW` / `SHFileOperation` as recycle, use-after-free of the progress sink, and claiming physical space freed.
+
 ## Duplicate content hashing (BCrypt, no-follow)
 
 - **Why used:** Verified duplicates need a live full SHA-256 of file contents. The
