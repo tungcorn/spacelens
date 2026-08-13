@@ -1,7 +1,7 @@
 # Written offer of Qt 6.8.3 corresponding source
 
 This is a maintainer-controlled written offer for the Qt libraries
-dynamically shipped with SpaceLens GUI 0.1.0. It is not legal advice.
+dynamically shipped with SpaceLens 0.1.1. It is not legal advice.
 It is not the SpaceLens MIT license. Qt remains under the licenses
 declared by the Qt 6.8.3 kit.
 
@@ -9,9 +9,10 @@ declared by the Qt 6.8.3 kit.
 
 The SpaceLens maintainer offers to give you a copy of the Corresponding
 Source for the Qt 6.8.3 modules and plugins actually distributed with
-`spacelens-gui-v0.1.0-windows-x64.zip`, for as long as SpaceLens continues
+`spacelens-v0.1.1-windows-x64.zip`, for as long as SpaceLens continues
 to distribute those binaries and for at least three years after each
-such distribution.
+such distribution. The same offer remains in force for the historical
+v0.1.0 GUI-only archive `spacelens-gui-v0.1.0-windows-x64.zip`.
 
 The source offered is the official Qt 6.8.3 open-source source archive
 identified in `packaging/qt-source/SOURCE_IDENTITY.txt`:
@@ -54,7 +55,7 @@ so the identity is under SpaceLens maintainer control. Upstream
 availability on download.qt.io is a retrieval convenience, not the offer
 itself.
 
-Do not put the ~1 GB source archive inside the GUI runtime zip.
+Do not put the ~1 GB source archive inside the unified runtime zip.
 
 ## What this is not
 

@@ -24,8 +24,9 @@ https://github.com/tungcorn/spacelens/releases/tag/v0.1.1
   when the Qt review gate passes. SHA256SUMS still lists only attached
   archives.
 - `docs/release-notes/` is the GitHub Release body source. Staged
-  WinGet 1.12.0 manifests describe the unified main package plus
-  optional CLI-only package. Public `winget install` is not advertised
+  WinGet 1.12.0 files currently cover the CLI-only identifier. Unified
+  `tungcorn.SpaceLens` 0.1.1 manifests are added only after the public
+  v0.1.1 Release URLs exist. Public `winget install` is not advertised
   until the community source resolves those identifiers.
 
 ## [0.1.0] — 2026-08-13

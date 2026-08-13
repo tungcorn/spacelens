@@ -144,6 +144,18 @@ if ($MainStage) {
         Test-RequiredFile $guiRoot "licenses\GPL-3.0.txt" | Out-Null
         Test-RequiredFile $guiRoot "licenses\QT_SOURCE_IDENTITY.txt" | Out-Null
         Test-RequiredFile $guiRoot "licenses\QT_SOURCE_OFFER.md" | Out-Null
+        $offer = Join-Path $guiRoot "licenses\QT_SOURCE_OFFER.md"
+        if (Test-Path $offer) {
+            $offerText = Get-Content $offer -Raw
+            $currentZip = "spacelens-v0.1.1-windows-x64.zip"
+            $stageLeaf = Split-Path $guiRoot -Leaf
+            if ($stageLeaf -match '^spacelens-v\d+\.\d+\.\d+-windows-x64$') {
+                $currentZip = "$stageLeaf.zip"
+            }
+            if ($offerText -notmatch [regex]::Escape($currentZip)) {
+                Add-Fail "QT_SOURCE_OFFER.md must name the current unified zip $currentZip"
+            }
+        }
         $identity = Join-Path $guiRoot "licenses\QT_SOURCE_IDENTITY.txt"
         if (Test-Path $identity) {
             $idText = Get-Content $identity -Raw
