@@ -163,6 +163,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout notes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            docs/release-notes
+          sparse-checkout-cone-mode: false
+
       - name: Download archives
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -173,6 +180,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GUI_ELIGIBLE: ${{ needs.package.outputs.gui_eligible }}
+          TAG: ${{ needs.package.outputs.tag }}
         run: |
           set -euo pipefail
           # Independent gates: LICENSE unlocks CLI. Structured Qt review
@@ -188,16 +196,27 @@ jobs:
             exit 1
           fi
           attached=("${cli_zips[0]}")
-          notes="Unsigned prerelease. See docs/RELEASING.md."
+          notes_file="docs/release-notes/${TAG}.md"
+          fallback="dist/RELEASE_NOTES.md"
           if [ "$GUI_ELIGIBLE" = "true" ]; then
             if [ "${#gui_zips[@]}" -ne 1 ]; then
               echo "gui_eligible but found ${#gui_zips[@]} GUI zip(s)" >&2
               exit 1
             fi
             attached+=("${gui_zips[0]}")
-            notes="$notes CLI and GUI archives attached."
+          fi
+          if [ -s "$notes_file" ]; then
+            cp "$notes_file" "$fallback"
+          elif [ "$GUI_ELIGIBLE" = "true" ]; then
+            printf '%s\n' \
+              "Unsigned prerelease of SpaceLens ${TAG}." \
+              "CLI and GUI archives attached. See docs/RELEASING.md." \
+              > "$fallback"
           else
-            notes="$notes CLI archive only. GUI zip remains a workflow artifact until the structured Qt review is PASS with source_availability=READY."
+            printf '%s\n' \
+              "Unsigned prerelease of SpaceLens ${TAG}." \
+              "CLI archive only. GUI zip remains a workflow artifact until the structured Qt review is PASS with source_availability=READY." \
+              > "$fallback"
           fi
           : > dist/SHA256SUMS-release.txt
           for f in "${attached[@]}"; do
@@ -210,12 +229,12 @@ jobs:
             exit 1
           fi
           mv dist/SHA256SUMS-release.txt dist/SHA256SUMS.txt
-          gh release create "${{ needs.package.outputs.tag }}" \
+          gh release create "${TAG}" \
             "${attached[@]}" dist/SHA256SUMS.txt \
             --repo "${{ github.repository }}" \
             --prerelease \
-            --title "SpaceLens ${{ needs.package.outputs.tag }} (prerelease)" \
-            --notes "$notes"
+            --title "SpaceLens ${TAG}" \
+            --notes-file "$fallback"
 
   blocked:
     name: Distribution blocked notice

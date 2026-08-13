@@ -127,13 +127,31 @@ workflow run. The `SHA256SUMS.txt` attached to the GitHub Release lists
 only the uploaded zips. The workflow artifact may still list both.
 
 Releases are prerelease. Do not mark v0.1.0 as latest/production from this
-workflow. Do not push a `v*` tag from an assistant session.
+workflow. Do not move or recreate an already-published `v*` tag.
+
+The publish job uses `docs/release-notes/<tag>.md` as the GitHub Release
+body when that file exists. Otherwise it writes a short unsigned-prerelease
+fallback. Do not hardcode a one-line body in the workflow.
+
+The existing `v0.1.0` Release title is `SpaceLens v0.1.0`. GitHub already
+renders the Pre-release badge; do not add `(prerelease)` to the title.
+
+## WinGet
+
+Staged manifests live in `packaging/winget/`. Public identifiers:
+
+- `tungcorn.SpaceLens` — desktop GUI
+- `tungcorn.SpaceLens.CLI` — read-only CLI
+
+Do not document `winget install --id …` in the README until
+`winget show --id <id> --source winget` resolves. One package per
+`microsoft/winget-pkgs` pull request.
 
 ## Do not do from an assistant session
 
 - Change the maintainer-selected MIT license
-- Push `v0.1.0` or any other release tag
-- Publish a GitHub Release
+- Move, delete, or recreate `v0.1.0` or any other published tag
+- Replace published zip binaries for an existing tag
 - Commit Visual C++ runtime DLLs
 - Generate or commit a certificate, `.pfx`, or private key
 - Weaken `filesystem_mutation: false` so CI is easier

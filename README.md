@@ -13,6 +13,23 @@ spacelens_core         →  spacelens (CLI, read-only)
 spacelens_maintenance  →  GUI Recycle Bin adapter only
 ```
 
+## Downloads
+
+Unsigned Windows x64 prerelease: [SpaceLens v0.1.0](https://github.com/tungcorn/spacelens/releases/tag/v0.1.0)
+
+| Asset | Use |
+| --- | --- |
+| `spacelens-gui-v0.1.0-windows-x64.zip` | Desktop analyzer (includes Qt 6.8.3 runtime) |
+| `spacelens-cli-v0.1.0-windows-x64.zip` | Read-only CLI for terminals, scripts, and AI agents |
+| `SHA256SUMS.txt` | SHA-256 of the attached zip assets |
+
+The official Microsoft Visual C++ Redistributable (x64) is required.
+Binaries are unsigned. Verify the zip hashes before use.
+
+WinGet identifiers are staged in [`packaging/winget/`](packaging/winget/).
+They are not advertised as public install commands until they resolve from
+the official WinGet source.
+
 ## Status
 
 - Core scanner: working (Win32 enumeration, logical-size aggregation, Top-K,

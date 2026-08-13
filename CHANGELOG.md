@@ -3,10 +3,25 @@
 All notable changes to SpaceLens are recorded here. The version source of truth
 is `project(VERSION …)` in the root `CMakeLists.txt`.
 
-This project does not yet have a public release. Entries below describe the
-in-tree 0.1.0 line.
-
 ## [Unreleased]
+
+### Added
+
+- `docs/release-notes/` — versioned GitHub Release notes. The publish job
+  uses `--notes-file` instead of a one-line body.
+- `packaging/winget/` — staged WinGet 1.12.0 manifests for
+  `tungcorn.SpaceLens` and `tungcorn.SpaceLens.CLI`. Public `winget install`
+  is not advertised until the community source resolves those identifiers.
+
+### Changed
+
+- Existing `v0.1.0` GitHub Release title is `SpaceLens v0.1.0` (the
+  Pre-release badge is separate). Published zip binaries are not replaced.
+
+## [0.1.0] — 2026-08-13
+
+First public unsigned prerelease.
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.0
 
 ### Changed
 
