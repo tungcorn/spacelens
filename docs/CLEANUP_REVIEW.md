@@ -27,7 +27,9 @@ Build Cleanup Plan
 ```
 
 No Delete, Move, Rename, Recycle Bin, automatic cleanup, or agent filesystem
-action is implemented. `filesystem_mutation` remains `false`.
+action is implemented. `filesystem_mutation` remains `false`. Duplicate
+Detection may add verified paths with `source = "duplicate_detection"`;
+that is still only a planning hand-off.
 
 ## What it stores
 

@@ -6,9 +6,9 @@ delete, move, rename, purge, wipe, execute shell commands, or grant filesystem
 mutation authority.
 
 The executable wires `scan`, `top`, `find`, `index`, `index refresh`,
-`index status`, `index list`, `query`, `capabilities`, `help`, and `version`. Use
-`capabilities --json` to discover flags for a particular build (including
-`persistent_index`, `indexed_query`, and `incremental_index`).
+`index status`, `index list`, `query`, `duplicates`, `capabilities`, `help`,
+and `version`. Use `capabilities --json` to discover flags for a particular
+build (including `persistent_index`, `indexed_query`, and `incremental_index`).
 
 ## Build
 
@@ -51,7 +51,7 @@ Representative JSON (fields may grow; treat unknown keys as forward-compatible):
 {
   "schema_version": 1,
   "version": "0.1.0",
-  "commands": ["scan", "top", "find", "index", "index status", "index list", "index refresh", "query", "capabilities", "help", "version"],
+  "commands": ["scan", "top", "find", "index", "index status", "index list", "index refresh", "query", "duplicates", "capabilities", "help", "version"],
   "features": {
     "json": true,
     "cancellation": true,
@@ -158,6 +158,24 @@ spacelens query <path> [--files|--dirs] [--min-size SIZE] [--ext EXT]
 
 Missing index → exit code **6** (`index_not_found`). Successful JSON includes
 `"source": "persistent_index"` and `index.age_ms`.
+
+### `duplicates`
+
+Finds exact file-content copies from a published index, then live-verifies them.
+Same-size files are candidates only. Sample fingerprints are not proof.
+
+```text
+spacelens duplicates <indexed-root> [--min-size S] [--json]
+```
+
+Default `--min-size` is `1MB`. Zero-length files, directories, and reparse
+points are ignored. Hard-link aliases of one identity are reported as the same
+file (redundant logical bytes = 0). JSON includes `planning_only`, `read_only`,
+and `filesystem_mutation: false`. Missing index → exit **6**. Cancel → exit
+**5** with completed groups marked partial.
+
+`--delete`, `--dedupe`, and `--keep-one` are unknown options. See
+[`docs/DUPLICATES.md`](DUPLICATES.md).
 
 ### `help` and `version`
 
@@ -280,6 +298,7 @@ parent before acting.
 | 3 | Inaccessible or missing root path |
 | 4 | Scan or query failure |
 | 5 | Cancelled by Ctrl+C / stop request |
+| 6 | Published index not found (`query`, `duplicates`) |
 
 Agents should branch on the exit code before trusting a result as complete. A
 successful empty `results` array means no matches, not an error.

@@ -21,14 +21,14 @@ spacelens_core  →  spacelens (CLI, read-only)
 - **Persistent Index V1+V2:** SQLite full-root index under AppData; CLI
   `index` / `index refresh` / `index status` / `index list` / `query`
   (no live query fallback; USN incremental when volume access allows)
-- CLI: `scan`, `top`, `find`, `index*`, `query`, `capabilities`, `help`,
-  `version` with versioned JSON and `filesystem_mutation: false`
+- CLI: `scan`, `top`, `find`, `index*`, `query`, `duplicates`, `capabilities`,
+  `help`, `version` with versioned JSON and `filesystem_mutation: false`
 - GUI: Live Scan + **Indexed** storage discovery (presets, search, filters,
   breadcrumb navigation, storage overview, interactive squarified treemap,
-  inspector, Explorer/copy, durable Cleanup Review V2 planning only — no
-  delete/move)
-- Not yet: auto-refresh on query, journal creation, duplicates, MFT initial
-  scan, MCP, product AI, automatic deletion, or automatic movement
+  inspector, Explorer/copy, **Find Duplicates**, durable Cleanup Review V2
+  planning only — no delete/move)
+- Not yet: auto-refresh on query, journal creation, persistent hash cache,
+  MFT initial scan, MCP, product AI, automatic deletion, or automatic movement
 
 ## Features
 
@@ -54,12 +54,18 @@ spacelens_core  →  spacelens (CLI, read-only)
   logical-size metrics; interactive squarified treemap of immediate children
   (with “Other” aggregation); drill into folders via treemap or breadcrumbs;
   add snapshot-provenance items to durable Cleanup Review
+- **Duplicate Detection V1:** index-backed same-size candidates, live identity
+  collapse (hard links are aliases, not copies), sample narrowing, full
+  SHA-256 verification, and planning-only add to Cleanup Review. Same size is
+  not a duplicate. Potential redundant logical bytes are not guaranteed free
+  space.
 - Directory reparse points not followed by default; access errors are non-fatal
   and counted
 
 **Safety contract:** the CLI is read-only by design. See
 [`docs/SAFETY.md`](docs/SAFETY.md). Index design: [`docs/INDEX.md`](docs/INDEX.md).
 Cleanup Review: [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md).
+Duplicates: [`docs/DUPLICATES.md`](docs/DUPLICATES.md).
 Measured baselines: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ## Build prerequisites
@@ -90,6 +96,7 @@ cmake --build build-cli --target spacelens
 .\build-cli\cli\spacelens.exe index C:\Users --json
 .\build-cli\cli\spacelens.exe index refresh C:\Users --json
 .\build-cli\cli\spacelens.exe query C:\Users --files --min-size 100MB --limit 20 --json
+.\build-cli\cli\spacelens.exe duplicates C:\Users --min-size 1MB --json
 ```
 
 The CLI is read-only; capability discovery:
@@ -119,7 +126,9 @@ NTFS is case-insensitive and those names would collide):
    then inspect a row or treemap cell.
 6. **Open** / **Show in Explorer** / **Copy Path**, or **Add to Cleanup Review**
    (planning only).
-7. **Refresh Index** uses USN when available; otherwise the UI reports
+7. **Find Duplicates** live-verifies exact file-content copies for the selected
+   root (planning only — no delete, link, or keep-one).
+8. **Refresh Index** uses USN when available; otherwise the UI reports
    incremental unavailable and **Rebuild** remains explicit.
 
 All Indexed queries and the treemap hit the persistent SQLite snapshot — they

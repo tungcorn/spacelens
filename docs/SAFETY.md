@@ -32,12 +32,13 @@ The primary executable:
 build/cli/spacelens.exe
 ```
 
-exposes deterministic **scan / query / classify / report / index** operations only.
+exposes deterministic **scan / query / classify / report / index / duplicates**
+operations only.
 
 It must **not** register commands such as:
 
 ```text
-delete  remove  rm  move  cleanup execute  purge  wipe
+delete  remove  rm  move  cleanup execute  purge  wipe  dedupe  keep-one
 ```
 
 There are no hidden aliases for destructive operations.
@@ -85,6 +86,11 @@ The Indexed tab is discovery, visualization, and planning only:
 - Incremental refresh does not self-elevate in a loop; when USN access is denied,
   the UI states that incremental refresh is unavailable and offers an explicit
   Rebuild.
+- **Find Duplicates** is planning evidence only. Same-size files and sample
+  fingerprints are never shown as verified copies. Hard-link aliases of one
+  identity are not independently reclaimable. There is no Delete / Deduplicate /
+  Keep One control. Adding a group to Cleanup Review does not authorize
+  deletion. See [`docs/DUPLICATES.md`](DUPLICATES.md).
 
 ### Future mutation separation
 

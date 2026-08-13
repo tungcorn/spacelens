@@ -50,9 +50,10 @@ than claiming a shipped feature.
   capability reporting.
 
 The CLI wires `scan`, `top`, `find`, `capabilities`, `index`, `index refresh`,
-`index status`, `index list`, `query`, `help`, and `version`. Analysis filters and
-versioned JSON (`schema_version: 1`) are implemented. See [`docs/CLI.md`](CLI.md)
-and [`docs/INDEX.md`](INDEX.md).
+`index status`, `index list`, `query`, `duplicates`, `help`, and `version`.
+Analysis filters and versioned JSON (`schema_version: 1`) are implemented. See
+[`docs/CLI.md`](CLI.md), [`docs/INDEX.md`](INDEX.md), and
+[`docs/DUPLICATES.md`](DUPLICATES.md).
 
 **Persistent Index** stores a full SQLite snapshot under
 `%LOCALAPPDATA%\SpaceLens\indexes\<rootKey>\index.db` for fast repeated
@@ -116,8 +117,17 @@ loads review rows; it does not probe the filesystem. Core JSON helpers live
 in `src/core/Json.*` so CLI and Cleanup Plan share escaping without core
 depending on CLI.
 
+**Duplicate Detection V1** uses the published index only as a same-size
+accelerator. Live metadata, hard-link identity collapse, optional sample
+fingerprints, and full SHA-256 verification run sequentially in core
+(`Duplicates` / `DuplicateDetection`) with a BCrypt hasher that does not
+follow the final reparse component. GUI work lives in
+`DuplicateDetectionSession` + `DuplicateFilesDialog`. Adding a group to
+Cleanup Review sets `source = "duplicate_detection"` and does not authorize
+deletion. See [`docs/DUPLICATES.md`](DUPLICATES.md).
+
 Deferred work includes AI inside the product, auto-refresh on query, MFT-based
-initial scan, watch mode, duplicate detection, MCP, and any automatic
+initial scan, watch mode, persistent hash cache, MCP, and any automatic
 deletion or movement. A future mutation service, if approved, must be a separately
 permissioned surface rather than an ordinary CLI verb.
 
