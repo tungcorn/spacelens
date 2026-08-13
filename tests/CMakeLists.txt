@@ -9,6 +9,7 @@ set(SPACELENS_TEST_SOURCES
     test_query.cpp
     test_classification.cpp
     test_safety_policy.cpp
+    test_ordinary_locations.cpp
     test_cleanup_review.cpp
     test_cleanup_review_store.cpp
     test_cleanup_plan.cpp

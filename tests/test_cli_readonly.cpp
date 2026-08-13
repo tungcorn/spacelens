@@ -54,7 +54,8 @@ SPACELENS_TEST(CliReadonly_destructive_verbs_rejected)
 {
     for (const wchar_t* verb : {L"delete", L"remove", L"rm", L"move", L"purge",
                                 L"wipe", L"cleanup", L"dedupe", L"keep-one",
-                                L"recycle", L"maintenance"}) {
+                                L"recycle", L"maintenance", L"trust",
+                                L"allow-root", L"ordinary-root", L"safety"}) {
         const auto args = parse({L"spacelens", verb, L"C:\\temp"});
         SPACELENS_REQUIRE(!args.error.empty());
     }

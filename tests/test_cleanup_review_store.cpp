@@ -139,6 +139,12 @@ SPACELENS_TEST(CleanupReviewStore_schema_v1_created)
     SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "meta"));
     SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "maintenance_operations"));
     SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "maintenance_receipt_items"));
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "location_schema_version"),
+                         std::string("1"));
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "location_declaration_generation"),
+                         std::string("0"));
+    SPACELENS_REQUIRE(tablePresent(dir.dbPath(),
+                                   "ordinary_location_declarations"));
 }
 
 SPACELENS_TEST(CleanupReviewStore_unicode_path_round_trip)

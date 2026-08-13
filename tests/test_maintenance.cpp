@@ -1,6 +1,7 @@
 #include "TestRunner.hpp"
 
 #include "core/Maintenance.hpp"
+#include "core/OrdinaryLocation.hpp"
 
 #include <array>
 #include <map>
@@ -109,6 +110,19 @@ public:
         return receipt;
     }
 };
+
+OrdinaryLocationDeclaration activeRoot(std::wstring path, std::uint64_t id = 1)
+{
+    OrdinaryLocationDeclaration row;
+    row.id = id;
+    row.configuredPath = path;
+    row.normalizedPathKey = normalizeOrdinaryLocationPath(path);
+    row.volume.available = true;
+    row.volume.serial = 0xAABBCCDD;
+    row.volume.guid = L"\\\\?\\Volume{test}\\";
+    row.status = OrdinaryLocationStatus::Active;
+    return row;
+}
 
 }  // namespace
 
@@ -385,4 +399,82 @@ SPACELENS_TEST(Maintenance_classification_is_unused)
     const auto item = evaluateMaintenanceEligibility(
         candidate, presentProbe(candidate.objectEvidence), LocationSafety::Ordinary);
     SPACELENS_REQUIRE(item.eligible);
+}
+
+SPACELENS_TEST(Maintenance_unknown_layout_is_blocked_without_declaration)
+{
+    auto candidate = fileCandidate(L"D:\\Projects\\scratch.bin", 21, 64);
+    MapReader reader;
+    reader.probes[candidate.path] = presentProbe(candidate.objectEvidence);
+    const auto item =
+        evaluateMaintenanceEligibility(candidate, reader, OrdinaryLocationPolicy{});
+    SPACELENS_REQUIRE(!item.eligible);
+    SPACELENS_REQUIRE_EQ(item.blockReason, MaintenanceBlockReason::UnknownLocation);
+}
+
+SPACELENS_TEST(Maintenance_user_declared_ordinary_root_can_satisfy_location_gate)
+{
+    auto candidate = fileCandidate(L"D:\\Projects\\scratch.bin", 22, 64);
+    MapReader reader;
+    reader.probes[candidate.path] = presentProbe(candidate.objectEvidence);
+    OrdinaryLocationPolicy policy;
+    policy.generation = 4;
+    policy.declarations.push_back(activeRoot(L"D:\\Projects"));
+    const auto item = evaluateMaintenanceEligibility(candidate, reader, policy);
+    SPACELENS_REQUIRE(item.eligible);
+    SPACELENS_REQUIRE_EQ(item.blockReason, MaintenanceBlockReason::None);
+}
+
+SPACELENS_TEST(Maintenance_inactive_declaration_does_not_satisfy_location_gate)
+{
+    auto candidate = fileCandidate(L"D:\\Projects\\scratch.bin", 23, 64);
+    MapReader reader;
+    reader.probes[candidate.path] = presentProbe(candidate.objectEvidence);
+    auto row = activeRoot(L"D:\\Projects");
+    row.status = OrdinaryLocationStatus::VolumeMismatch;
+    OrdinaryLocationPolicy policy;
+    policy.declarations.push_back(row);
+    const auto item = evaluateMaintenanceEligibility(candidate, reader, policy);
+    SPACELENS_REQUIRE_EQ(item.blockReason, MaintenanceBlockReason::UnknownLocation);
+}
+
+SPACELENS_TEST(Maintenance_protected_still_wins_over_declaration)
+{
+    auto candidate = fileCandidate(L"C:\\Windows\\notepad.exe", 24, 10);
+    MapReader reader;
+    reader.probes[candidate.path] = presentProbe(candidate.objectEvidence);
+    OrdinaryLocationPolicy policy;
+    policy.declarations.push_back(activeRoot(L"C:\\Windows"));
+    const auto item = evaluateMaintenanceEligibility(candidate, reader, policy);
+    SPACELENS_REQUIRE_EQ(item.blockReason, MaintenanceBlockReason::Protected);
+}
+
+SPACELENS_TEST(Maintenance_declaration_removed_between_preflight_and_final_guard)
+{
+    CleanupReview review;
+    auto candidate = fileCandidate(L"D:\\Projects\\scratch.bin", 25, 32);
+    const auto id = review.add(candidate);
+    MapReader reader;
+    reader.probes[candidate.path] = presentProbe(candidate.objectEvidence);
+
+    OrdinaryLocationPolicy preparePolicy;
+    preparePolicy.generation = 2;
+    preparePolicy.declarations.push_back(activeRoot(L"D:\\Projects"));
+    const auto plan =
+        prepareMaintenancePlan(review, {id}, reader, "t", preparePolicy);
+    SPACELENS_REQUIRE_EQ(plan.eligibleCount, 1ULL);
+    SPACELENS_REQUIRE_EQ(plan.locationPolicyGeneration, 2ULL);
+
+    OrdinaryLocationPolicy executePolicy;
+    executePolicy.generation = 3;
+    ScriptedRecycle recycle;
+    const auto receipt =
+        executeMaintenancePlan(plan, reader, recycle, 1, {}, executePolicy);
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.recycled, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.blocked, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().result,
+                         MaintenanceItemResult::BlockedFinalGuard);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().blockReason,
+                         MaintenanceBlockReason::UnknownLocation);
 }
