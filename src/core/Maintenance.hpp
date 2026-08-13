@@ -2,6 +2,7 @@
 
 #include "core/CleanupRevalidation.hpp"
 #include "core/CleanupReview.hpp"
+#include "core/OrdinaryLocation.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -66,6 +67,7 @@ struct MaintenancePlanItem {
 
 struct MaintenancePlan {
     std::string generatedAt;
+    std::uint64_t locationPolicyGeneration = 0;
     std::uint64_t selectedCount = 0;
     std::uint64_t eligibleCount = 0;
     std::uint64_t blockedCount = 0;
@@ -115,7 +117,8 @@ struct MaintenanceReceipt {
 
 [[nodiscard]] MaintenancePlanItem evaluateMaintenanceEligibility(
     const CleanupCandidate& candidate,
-    ICleanupMetadataReader& reader);
+    ICleanupMetadataReader& reader,
+    const OrdinaryLocationPolicy& locationPolicy = {});
 
 /// Fresh live preflight for the selected review rows. Deduplicates executable
 /// work by strong identity (first stable review id wins). Directories never
@@ -124,7 +127,8 @@ struct MaintenanceReceipt {
     const CleanupReview& review,
     const std::vector<std::uint64_t>& selectedIds,
     ICleanupMetadataReader& reader,
-    const std::string& generatedAt = {});
+    const std::string& generatedAt = {},
+    const OrdinaryLocationPolicy& locationPolicy = {});
 
 /// Downgrade eligible items when the Recycle Bin is unavailable for that path.
 /// `canRecycle` is supplied by the GUI adapter so core stays Shell-free.
@@ -152,6 +156,7 @@ struct IRecycleOperation {
     ICleanupMetadataReader& reader,
     IRecycleOperation& recycle,
     FileTimeTicks confirmedAt,
-    const std::function<bool()>& cancelled = {});
+    const std::function<bool()>& cancelled = {},
+    const OrdinaryLocationPolicy& locationPolicy = {});
 
 }  // namespace spacelens

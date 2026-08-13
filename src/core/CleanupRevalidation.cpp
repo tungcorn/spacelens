@@ -1,5 +1,6 @@
 #include "core/CleanupRevalidation.hpp"
 
+#include "core/OrdinaryLocation.hpp"
 #include "core/SafetyPolicy.hpp"
 
 #include <utility>
@@ -69,9 +70,17 @@ CleanupCurrentEvidence currentEvidenceFromProbe(const CleanupMetadataProbe& prob
 CleanupRevalidation revalidateCleanupCandidate(const CleanupCandidate& candidate,
                                                const CleanupMetadataProbe& probe)
 {
+    return revalidateCleanupCandidate(candidate, probe, OrdinaryLocationPolicy{});
+}
+
+CleanupRevalidation revalidateCleanupCandidate(
+    const CleanupCandidate& candidate,
+    const CleanupMetadataProbe& probe,
+    const OrdinaryLocationPolicy& locationPolicy)
+{
     CleanupRevalidation out;
     out.probe = probe;
-    out.safety = classifyLocation(candidate.path);
+    out.safety = effectiveLocationSafety(candidate.path, locationPolicy);
     out.current = currentEvidenceFromProbe(probe, out.safety);
     out.validation = validateCleanupCandidate(candidate, out.current);
     return out;
@@ -81,6 +90,15 @@ CleanupRevalidation revalidateCleanupCandidate(const CleanupCandidate& candidate
                                                ICleanupMetadataReader& reader)
 {
     return revalidateCleanupCandidate(candidate, reader.read(candidate.path));
+}
+
+CleanupRevalidation revalidateCleanupCandidate(
+    const CleanupCandidate& candidate,
+    ICleanupMetadataReader& reader,
+    const OrdinaryLocationPolicy& locationPolicy)
+{
+    return revalidateCleanupCandidate(
+        candidate, reader.read(candidate.path), locationPolicy);
 }
 
 bool applyCleanupRevalidation(CleanupReview& review,
@@ -111,6 +129,34 @@ CleanupRevalidationPassResult probeCleanupReview(
             return out;
         }
         auto result = revalidateCleanupCandidate(item, reader);
+        CleanupValidationReplacement update;
+        update.id = item.id;
+        update.expectedPath = item.path;
+        update.current = std::move(result.current);
+        update.checkedAt = checkedAt;
+        out.updates.push_back(std::move(update));
+        ++out.probedCount;
+    }
+    out.completed = true;
+    return out;
+}
+
+CleanupRevalidationPassResult probeCleanupReview(
+    const CleanupReview& review,
+    ICleanupMetadataReader& reader,
+    const OrdinaryLocationPolicy& locationPolicy,
+    FileTimeTicks checkedAt,
+    const std::function<bool()>& cancelled)
+{
+    CleanupRevalidationPassResult out;
+    out.updates.reserve(review.size());
+    for (const auto& item : review.items()) {
+        if (cancelled && cancelled()) {
+            out.completed = false;
+            out.updates.clear();
+            return out;
+        }
+        auto result = revalidateCleanupCandidate(item, reader, locationPolicy);
         CleanupValidationReplacement update;
         update.id = item.id;
         update.expectedPath = item.path;
@@ -154,6 +200,15 @@ void prepareCleanupCandidateForAdd(CleanupCandidate& candidate,
                                    ICleanupMetadataReader& reader,
                                    FileTimeTicks addedAt)
 {
+    prepareCleanupCandidateForAdd(candidate, reader, OrdinaryLocationPolicy{},
+                                  addedAt);
+}
+
+void prepareCleanupCandidateForAdd(CleanupCandidate& candidate,
+                                   ICleanupMetadataReader& reader,
+                                   const OrdinaryLocationPolicy& locationPolicy,
+                                   FileTimeTicks addedAt)
+{
     if (candidate.kind != ItemKind::File &&
         !candidate.historicalDirectoryAggregate.available) {
         candidate.historicalDirectoryAggregate.available = true;
@@ -164,7 +219,8 @@ void prepareCleanupCandidateForAdd(CleanupCandidate& candidate,
             candidate.lastWriteTime;
     }
     if (candidate.capturedSafety == LocationSafety::Unknown) {
-        candidate.capturedSafety = classifyLocation(candidate.path);
+        candidate.capturedSafety =
+            effectiveLocationSafety(candidate.path, locationPolicy);
     }
     if (candidate.addedAt == 0) {
         candidate.addedAt = addedAt;

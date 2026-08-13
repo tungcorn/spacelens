@@ -69,6 +69,8 @@ add_library(spacelens_core STATIC
     src/core/Classification.cpp
     src/core/SafetyPolicy.hpp
     src/core/SafetyPolicy.cpp
+    src/core/OrdinaryLocation.hpp
+    src/core/OrdinaryLocation.cpp
     src/core/CleanupReview.hpp
     src/core/CleanupReview.cpp
     src/core/CleanupReviewStore.hpp
@@ -106,6 +108,8 @@ add_library(spacelens_core STATIC
     src/platform/windows/FindHandle.hpp
     src/platform/windows/VolumeHandle.hpp
     src/platform/windows/VolumeHandle.cpp
+    src/platform/windows/LocationVolume.hpp
+    src/platform/windows/LocationVolume.cpp
     src/platform/windows/FileIdentity.hpp
     src/platform/windows/FileIdentity.cpp
     src/platform/windows/CleanupMetadataReader.hpp

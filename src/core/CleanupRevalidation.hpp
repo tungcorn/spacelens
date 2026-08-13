@@ -9,6 +9,8 @@
 
 namespace spacelens {
 
+struct OrdinaryLocationPolicy;
+
 enum class CleanupMetadataProbeOutcome {
     Present,
     Missing,
@@ -63,7 +65,17 @@ struct CleanupRevalidationPassResult {
 
 [[nodiscard]] CleanupRevalidation revalidateCleanupCandidate(
     const CleanupCandidate& candidate,
+    const CleanupMetadataProbe& probe,
+    const OrdinaryLocationPolicy& locationPolicy);
+
+[[nodiscard]] CleanupRevalidation revalidateCleanupCandidate(
+    const CleanupCandidate& candidate,
     ICleanupMetadataReader& reader);
+
+[[nodiscard]] CleanupRevalidation revalidateCleanupCandidate(
+    const CleanupCandidate& candidate,
+    ICleanupMetadataReader& reader,
+    const OrdinaryLocationPolicy& locationPolicy);
 
 /// Probe the stored path and replaceValidation(). False if `id` is unknown.
 /// Missing/denied/error never remove the review record.
@@ -82,6 +94,13 @@ struct CleanupRevalidationPassResult {
     FileTimeTicks checkedAt = 0,
     const std::function<bool()>& cancelled = {});
 
+[[nodiscard]] CleanupRevalidationPassResult probeCleanupReview(
+    const CleanupReview& review,
+    ICleanupMetadataReader& reader,
+    const OrdinaryLocationPolicy& locationPolicy,
+    FileTimeTicks checkedAt = 0,
+    const std::function<bool()>& cancelled = {});
+
 /// Best-effort add-time capture of direct object evidence and identity.
 /// Missing/denied/error probes leave identity unavailable and never discard
 /// the planning candidate. Directory recursive aggregates are not invented.
@@ -92,6 +111,11 @@ void attachLiveObjectEvidence(CleanupCandidate& candidate,
 /// missing, then attach live object evidence. Does not discard the candidate.
 void prepareCleanupCandidateForAdd(CleanupCandidate& candidate,
                                    ICleanupMetadataReader& reader,
+                                   FileTimeTicks addedAt = 0);
+
+void prepareCleanupCandidateForAdd(CleanupCandidate& candidate,
+                                   ICleanupMetadataReader& reader,
+                                   const OrdinaryLocationPolicy& locationPolicy,
                                    FileTimeTicks addedAt = 0);
 
 }  // namespace spacelens

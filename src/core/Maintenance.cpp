@@ -298,21 +298,24 @@ MaintenancePlanItem evaluateMaintenanceEligibility(
 
 MaintenancePlanItem evaluateMaintenanceEligibility(
     const CleanupCandidate& candidate,
-    ICleanupMetadataReader& reader)
+    ICleanupMetadataReader& reader,
+    const OrdinaryLocationPolicy& locationPolicy)
 {
     const auto probe = reader.read(candidate.path);
     return evaluateMaintenanceEligibility(
-        candidate, probe, classifyLocation(candidate.path));
+        candidate, probe, effectiveLocationSafety(candidate.path, locationPolicy));
 }
 
 MaintenancePlan prepareMaintenancePlan(
     const CleanupReview& review,
     const std::vector<std::uint64_t>& selectedIds,
     ICleanupMetadataReader& reader,
-    const std::string& generatedAt)
+    const std::string& generatedAt,
+    const OrdinaryLocationPolicy& locationPolicy)
 {
     MaintenancePlan plan;
     plan.generatedAt = generatedAt.empty() ? "1970-01-01T00:00:00Z" : generatedAt;
+    plan.locationPolicyGeneration = locationPolicy.generation;
 
     std::vector<std::uint64_t> ordered = selectedIds;
     std::sort(ordered.begin(), ordered.end());
@@ -332,7 +335,7 @@ MaintenancePlan prepareMaintenancePlan(
             continue;
         }
 
-        auto item = evaluateMaintenanceEligibility(*found, reader);
+        auto item = evaluateMaintenanceEligibility(*found, reader, locationPolicy);
         ++plan.selectedCount;
         addSaturating(plan.selectedLogicalBytes, item.logicalSize,
                       plan.selectedBytesSaturated);
@@ -454,7 +457,8 @@ MaintenanceReceipt executeMaintenancePlan(
     ICleanupMetadataReader& reader,
     IRecycleOperation& recycle,
     FileTimeTicks confirmedAt,
-    const std::function<bool()>& cancelled)
+    const std::function<bool()>& cancelled,
+    const OrdinaryLocationPolicy& locationPolicy)
 {
     MaintenanceReceipt receipt;
     receipt.confirmedAt = confirmedAt;
@@ -493,7 +497,7 @@ MaintenanceReceipt executeMaintenancePlan(
         ++receipt.attempted;
         const auto probe = reader.read(item.path);
         const auto guard = evaluateMaintenanceFinalGuard(
-            item, probe, classifyLocation(item.path));
+            item, probe, effectiveLocationSafety(item.path, locationPolicy));
         if (guard != MaintenanceBlockReason::None) {
             row.result = MaintenanceItemResult::BlockedFinalGuard;
             row.blockReason = guard;
