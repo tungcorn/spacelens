@@ -17,27 +17,26 @@ the public `winget` source.
 
 Do not install both packages at once. Both expose the `spacelens` command.
 
-The `cli/` folder is the staged CLI-only 0.1.0 source of truth (update
-to 0.1.1 after the public Release exists). The `gui/` folder still holds
-the superseded v0.1.0 GUI-only manifests. Do not submit those.
+`main/` is the complete 0.1.1 product (two NestedInstallerFiles). `cli/`
+is the optional CLI-only 0.1.1 package. The `gui/` folder still holds the
+superseded v0.1.0 GUI-only manifests. Do not submit those.
 
-The unified `main/` folder is **not** in the tree yet. Add it only after
-the v0.1.1 GitHub Release URLs and hashes exist. Those manifests must
-list both `spacelens.exe` (`spacelens`) and `spacelens-gui.exe`
-(`spacelens-gui`). Do not invent a v0.1.1 InstallerUrl first. Do not
-point installer URLs at `releases/latest`, Actions artifacts, or
-unpublished files.
+Installer URLs and SHA-256 values must match the public GitHub Release.
+Do not point them at `releases/latest`, Actions artifacts, or local
+`dist/` files.
+
+Published v0.1.1 hashes:
+
+```text
+f42252d8303f45c6f7d7f52ad3d9862f3aa94b88566a969d47d21a276bb81c23  spacelens-cli-v0.1.1-windows-x64.zip
+b4d4cb993bb53e1414c9fc156d9c29a5dca1b8640ac8d3b1229e5ff5a345793d  spacelens-v0.1.1-windows-x64.zip
+```
 
 ## Validate locally
 
 ```powershell
 winget settings --enable LocalManifestFiles
 winget validate --manifest packaging\winget\cli
-```
-
-After `packaging\winget\main` exists:
-
-```powershell
 winget validate --manifest packaging\winget\main
 ```
 
@@ -45,10 +44,11 @@ winget validate --manifest packaging\winget\main
 
 ```powershell
 winget install --manifest packaging\winget\cli
+winget install --manifest packaging\winget\main
 ```
 
-The complete package aliases (once `main/` exists) are `spacelens` and
-`spacelens-gui`. The CLI-only alias is `spacelens`.
+The complete package aliases are `spacelens` and `spacelens-gui`.
+The CLI-only alias is `spacelens`.
 WinGet portable packages do **not** create a Start Menu or desktop shortcut.
 
 Local-manifest installs are **user** scope. Uninstall by name works:
