@@ -3,7 +3,7 @@
 ```
 review_status: PASS
 spacelens_version: 0.1.0
-reviewed_commit: pending-local
+reviewed_commit: 5aebdb01948bd37abdf1a634463cb728baf7f0d9
 qt_version: 6.8.3
 architecture: x86_64
 linkage: shared
