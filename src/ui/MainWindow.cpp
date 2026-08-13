@@ -6,14 +6,17 @@
 #include "core/Classification.hpp"
 #include "core/CleanupRevalidation.hpp"
 #include "core/FileTime.hpp"
+#include "core/OrdinaryLocation.hpp"
 #include "core/ReclaimAnalysis.hpp"
 #include "core/SafetyPolicy.hpp"
 #include "core/SizeFormatter.hpp"
+#include "ui/OrdinaryLocationsDialog.hpp"
 #include "core/SizeParse.hpp"
 #include "platform/windows/CleanupMetadataReader.hpp"
 #include "platform/windows/ExplorerIntegration.hpp"
 
 #include <QAbstractItemView>
+#include <QAction>
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
@@ -25,6 +28,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSplitter>
@@ -58,6 +62,36 @@ std::wstring toWide(const QString& s)
 QString formatElapsed(double seconds)
 {
     return QStringLiteral("%1 s").arg(seconds, 0, 'f', 1);
+}
+
+QString formatLocationSafety(const LocationSafetyAssessment& assessment)
+{
+    QString text = QStringLiteral("Location safety\n%1\n")
+                       .arg(QString::fromUtf8(toString(assessment.safety)));
+    switch (assessment.source) {
+    case LocationSafetySource::BuiltInProtected:
+        text += QStringLiteral("Source\nBuilt-in protected rule\n");
+        break;
+    case LocationSafetySource::BuiltInSensitive:
+        text += QStringLiteral("Source\nBuilt-in sensitive rule\n");
+        break;
+    case LocationSafetySource::BuiltInOrdinary:
+        text += QStringLiteral("Source\nBuilt-in ordinary location\n");
+        break;
+    case LocationSafetySource::UserDeclaredOrdinary:
+        text += QStringLiteral("Source\nUser-declared ordinary location\n");
+        if (!assessment.declarationPath.empty()) {
+            text += QStringLiteral("Root\n%1\n")
+                        .arg(QString::fromStdWString(assessment.declarationPath));
+        }
+        text += QStringLiteral(
+            "This does not mark files as safe to remove.\n");
+        break;
+    case LocationSafetySource::Unknown:
+        text += QStringLiteral("Source\nUnknown\n");
+        break;
+    }
+    return text;
 }
 
 }  // namespace
@@ -103,6 +137,12 @@ void MainWindow::buildUi()
     setCentralWidget(central);
     auto* outer = new QVBoxLayout(central);
     outer->setContentsMargins(0, 0, 0, 0);
+
+    auto* safetyMenu = menuBar()->addMenu(QStringLiteral("Safety"));
+    auto* ordinaryAction = safetyMenu->addAction(
+        QStringLiteral("User-declared ordinary locations…"));
+    connect(ordinaryAction, &QAction::triggered, this,
+            &MainWindow::onOrdinaryLocations);
 
     m_tabs = new QTabWidget(central);
     m_tabs->addTab(buildLiveScanPage(), QStringLiteral("Live Scan"));
@@ -722,7 +762,9 @@ void MainWindow::updateDetails()
             cur.size = m_lastResult->tree.dir(m_currentDir).recursiveSize;
             // fall through using cur
             const auto cls = classifyRow(cur);
-            const auto safety = classifyLocation(toWide(cur.path));
+            const auto assessment = m_reviewController.ordinaryLocationPolicy().classify(
+                toWide(cur.path));
+            const auto safety = assessment.safety;
             const auto& node = m_lastResult->tree.dir(m_currentDir);
             QString text;
             text += QStringLiteral("Name\n%1\n\n").arg(cur.name);
@@ -740,8 +782,8 @@ void MainWindow::updateDetails()
                         .arg(QString::fromUtf8(toString(cls.category)),
                              QString::fromUtf8(toString(cls.confidence)),
                              QString::fromStdString(cls.reason));
-            text += QStringLiteral("Location safety\n%1\n\n")
-                        .arg(QString::fromUtf8(toString(safety)));
+            text += formatLocationSafety(assessment);
+            text += QStringLiteral("\n");
             if (safety == LocationSafety::Protected) {
                 text += QStringLiteral(
                     "Protected system location\n"
@@ -753,7 +795,9 @@ void MainWindow::updateDetails()
     }
     const RowRef& row = *rowOpt;
     const auto cls = classifyRow(row);
-    const auto safety = classifyLocation(toWide(row.path));
+    const auto assessment =
+        m_reviewController.ordinaryLocationPolicy().classify(toWide(row.path));
+    const auto safety = assessment.safety;
     QString text;
     text += QStringLiteral("Name\n%1\n\n").arg(row.name);
     text += QStringLiteral("Full path\n%1\n\n").arg(row.path);
@@ -798,8 +842,8 @@ void MainWindow::updateDetails()
                      QString::fromUtf8(toString(cls.confidence)),
                      QString::fromStdString(cls.ruleId),
                      QString::fromStdString(cls.reason));
-    text += QStringLiteral("Location safety\n%1\n\n")
-                .arg(QString::fromUtf8(toString(safety)));
+    text += formatLocationSafety(assessment);
+    text += QStringLiteral("\n");
     if (safety == LocationSafety::Protected) {
         text += QStringLiteral(
             "Protected system location\n"
@@ -946,13 +990,14 @@ void MainWindow::onAddToReview()
             c.lastWriteTime =
                 m_lastResult->tree.dir(row.dir).newestDescendantWrite;
         }
-        c.capturedSafety = classifyLocation(c.path);
+        const auto policy = m_reviewController.ordinaryLocationPolicy();
+        c.capturedSafety = effectiveLocationSafety(c.path, policy);
         const auto analysis =
             analyzeItem(c.path, c.kind, c.sizeAtSelection, c.lastWriteTime,
                         c.classification, c.capturedSafety, addedAt);
         c.capturedReclaimability = analysis.reclaimability;
         c.capturedCandidateStrength = analysis.strength;
-        prepareCleanupCandidateForAdd(c, reader, addedAt);
+        prepareCleanupCandidateForAdd(c, reader, policy, addedAt);
 
         const auto status = m_reviewController.add(std::move(c));
         if (!status.ok) {
@@ -986,6 +1031,13 @@ void MainWindow::onShowReview()
     dialog.exec();
     setStatusMessage(QStringLiteral("Cleanup Review: %1 item(s)")
                          .arg(m_reviewController.review().size()));
+}
+
+void MainWindow::onOrdinaryLocations()
+{
+    OrdinaryLocationsDialog dialog(m_reviewController, this);
+    dialog.exec();
+    updateDetails();
 }
 
 void MainWindow::onIndexStatusMessage(const QString& message)

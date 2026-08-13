@@ -226,6 +226,8 @@ if(SPACELENS_BUILD_GUI)
         src/ui/CleanupReviewDialog.cpp
         src/ui/DuplicateFilesDialog.hpp
         src/ui/DuplicateFilesDialog.cpp
+        src/ui/OrdinaryLocationsDialog.hpp
+        src/ui/OrdinaryLocationsDialog.cpp
     )
 
     target_link_libraries(SpaceLens

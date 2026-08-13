@@ -59,6 +59,7 @@ private slots:
     void onRescanLocation();
     void onContextMenu(const QPoint& pos);
     void onIndexStatusMessage(const QString& message);
+    void onOrdinaryLocations();
 
 private:
     enum class RowKind { Directory, File };

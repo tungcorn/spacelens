@@ -3,6 +3,7 @@
 #include "core/Classification.hpp"
 #include "core/CleanupRevalidation.hpp"
 #include "core/CleanupReview.hpp"
+#include "core/OrdinaryLocation.hpp"
 #include "core/FileTime.hpp"
 #include "core/SizeFormatter.hpp"
 #include "core/SizeParse.hpp"
@@ -2016,11 +2017,12 @@ void IndexBrowserPage::onAddToReview()
         c.sourceRoot = root ? root->rootPath : std::wstring{};
         c.indexAgeMs = m_hitModel->indexAgeMs();
         c.indexIndexedAtIso = m_hitModel->indexedAtIso();
-        c.capturedSafety = classifyLocation(c.path);
+        const auto policy = m_review.ordinaryLocationPolicy();
+        c.capturedSafety = effectiveLocationSafety(c.path, policy);
         c.capturedReclaimability = parseReclaimabilityLabel(hit.reclaimability);
         c.capturedCandidateStrength =
             parseCandidateStrengthLabel(hit.candidate_strength);
-        prepareCleanupCandidateForAdd(c, reader, addedAt);
+        prepareCleanupCandidateForAdd(c, reader, policy, addedAt);
 
         const auto status = m_review.add(std::move(c));
         if (!status.ok) {

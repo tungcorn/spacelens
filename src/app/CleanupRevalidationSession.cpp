@@ -1,5 +1,6 @@
 #include "app/CleanupRevalidationSession.hpp"
 
+#include "core/OrdinaryLocation.hpp"
 #include "platform/windows/CleanupMetadataReader.hpp"
 
 #include <QMetaObject>
@@ -70,6 +71,7 @@ bool CleanupRevalidationSession::start()
     joinWorker();
 
     std::vector<CleanupCandidate> snapshot = m_controller.review().items();
+    OrdinaryLocationPolicy locationPolicy = m_controller.ordinaryLocationPolicy();
     {
         std::lock_guard lock(m_mutex);
         if (m_running) {
@@ -81,7 +83,8 @@ bool CleanupRevalidationSession::start()
     }
     m_controller.setReviewMutationsBlocked(true);
 
-    m_worker = std::jthread([this, snapshot = std::move(snapshot)](
+    m_worker = std::jthread([this, snapshot = std::move(snapshot),
+                             locationPolicy = std::move(locationPolicy)](
                                 std::stop_token stop) {
         WindowsCleanupMetadataReader reader;
         const FileTimeTicks checkedAt = nowFileTimeTicks();
@@ -104,7 +107,7 @@ bool CleanupRevalidationSession::start()
                 return;
             }
 
-            auto one = revalidateCleanupCandidate(item, reader);
+            auto one = revalidateCleanupCandidate(item, reader, locationPolicy);
             CleanupValidationReplacement update;
             update.id = item.id;
             update.expectedPath = item.path;

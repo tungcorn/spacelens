@@ -1,6 +1,7 @@
 #include "app/MaintenanceSession.hpp"
 
 #include "platform/windows/CleanupMetadataReader.hpp"
+#include "platform/windows/LocationVolume.hpp"
 #include "platform/windows/RecycleAdapter.hpp"
 
 #include <QMetaObject>
@@ -131,6 +132,10 @@ bool MaintenanceSession::startPrepare(std::vector<std::uint64_t> selectedIds)
     joinWorker();
 
     CleanupReview snapshot = m_controller.review();
+    WindowsCleanupMetadataReader probe;
+    WindowsVolumeIdentityReader volumes;
+    OrdinaryLocationPolicy locationPolicy =
+        m_controller.refreshOrdinaryLocations(probe, volumes);
     const FileTimeTicks requestedAt = nowFileTimeTicks();
     {
         std::lock_guard lock(m_mutex);
@@ -149,12 +154,13 @@ bool MaintenanceSession::startPrepare(std::vector<std::uint64_t> selectedIds)
     m_controller.setReviewMutationsBlocked(true);
 
     m_worker = std::jthread([this, snapshot = std::move(snapshot),
-                             selectedIds = std::move(selectedIds)](
+                             selectedIds = std::move(selectedIds),
+                             locationPolicy = std::move(locationPolicy)](
                                 std::stop_token stop) {
         WindowsCleanupMetadataReader reader;
         WindowsRecycleAdapter adapter;
         auto plan = prepareMaintenancePlan(snapshot, selectedIds, reader,
-                                           "maintenance-v1");
+                                           "maintenance-v1", locationPolicy);
         applyRecycleAvailability(
             plan, [&](const MaintenancePlanItem& item, std::string* detail) {
                 return adapter.volumeCanRecycle(item.path, item.logicalSize,
@@ -208,14 +214,21 @@ bool MaintenanceSession::startExecute(FileTimeTicks confirmedAt)
         m_total = plan.eligibleCount;
     }
 
+    WindowsCleanupMetadataReader executeProbe;
+    WindowsVolumeIdentityReader executeVolumes;
+    OrdinaryLocationPolicy executePolicy =
+        m_controller.refreshOrdinaryLocations(executeProbe, executeVolumes);
+
     m_worker = std::jthread([this, plan = std::move(plan), confirmedAt,
-                             requestedAt](std::stop_token stop) {
+                             requestedAt,
+                             executePolicy = std::move(executePolicy)](
+                                std::stop_token stop) {
         WindowsCleanupMetadataReader reader;
         WindowsRecycleAdapter adapter;
         ProgressRecycle recycle(adapter, *this, plan.eligibleCount);
         auto receipt = executeMaintenancePlan(
             plan, reader, recycle, confirmedAt,
-            [&]() { return stop.stop_requested(); });
+            [&]() { return stop.stop_requested(); }, executePolicy);
         receipt.requestedAt = requestedAt;
         receipt.completedAt = nowFileTimeTicks();
         QMetaObject::invokeMethod(
