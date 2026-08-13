@@ -75,6 +75,8 @@ add_library(spacelens_core STATIC
     src/core/CleanupReviewStore.cpp
     src/core/CleanupPlan.hpp
     src/core/CleanupPlan.cpp
+    src/core/CleanupRevalidation.hpp
+    src/core/CleanupRevalidation.cpp
     src/core/ReclaimAnalysis.hpp
     src/core/ReclaimAnalysis.cpp
     src/core/index/Sqlite.hpp
@@ -100,6 +102,8 @@ add_library(spacelens_core STATIC
     src/platform/windows/VolumeHandle.cpp
     src/platform/windows/FileIdentity.hpp
     src/platform/windows/FileIdentity.cpp
+    src/platform/windows/CleanupMetadataReader.hpp
+    src/platform/windows/CleanupMetadataReader.cpp
     src/platform/windows/UsnJournal.hpp
     src/platform/windows/UsnJournal.cpp
     src/platform/windows/WindowsFileEnumerator.hpp
