@@ -8,6 +8,26 @@ in-tree 0.1.0 line.
 
 ## [Unreleased]
 
+### Changed
+
+- Distribution gates are independent: a non-empty maintainer `LICENSE`
+  can unlock a CLI-only GitHub Release; the GUI zip attaches only when
+  `scripts/verify-qt-redist-review.ps1 -RequirePass` succeeds. Presence
+  of `docs/QT_REDIST_REVIEWED.md` is no longer a gate.
+- `windeployqt` now also uses `--no-system-d3d-compiler` and
+  `--no-system-dxc-compiler` so Windows SDK D3D/DXC compilers are not
+  staged.
+
+### Added
+
+- `docs/QT_REDIST_AUDIT.md` — pending Qt 6.8.3 shared-kit inventory
+  (not a PASS sentinel).
+- `packaging/qt-redist-review.env` — machine-checkable review record,
+  currently `PENDING` / `source_availability=MISSING`.
+- `scripts/verify-qt-redist-review.ps1` and `scripts/verify-package.ps1`.
+- GUI package notices plus verbatim GNU LGPL-3.0 / GPL-3.0 texts.
+  They do not complete an LGPL corresponding-source offer.
+
 ### Fixed
 
 - Incremental USN refresh treats 8.3 and long Win32 paths as the same root.

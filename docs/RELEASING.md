@@ -19,6 +19,37 @@ SHA256SUMS.txt
 
 These are verification artifacts. They are not a public distribution grant.
 
+## Independent CLI and GUI gates
+
+CLI and GUI are separate artifacts. Qt approval is **not** required to
+distribute a Qt-free CLI.
+
+| Gate | Unlocks | Check |
+|------|---------|--------|
+| Maintainer-chosen root `LICENSE` (non-empty) | CLI zip may be attached to a GitHub Release | File exists and is not whitespace |
+| Structured Qt review PASS | GUI zip may be attached | `scripts/verify-qt-redist-review.ps1 -RequirePass` |
+
+`RequirePass` succeeds only when `packaging/qt-redist-review.env` has
+**all** of:
+
+- `review_status=PASS`
+- `qt_version` equal to the packaging pin (`6.8.3`)
+- `linkage=shared`
+- `source_availability=READY`
+
+`Test-Path docs/QT_REDIST_REVIEWED.md` is **not** a gate. An empty
+sentinel must not unlock anything. The release workflow never creates
+`LICENSE`, the review env, or `QT_REDIST_REVIEWED.md`.
+
+Current tree: no `LICENSE`, review record is `PENDING` /
+`source_availability=MISSING`. Overall status is
+`RELEASE_DISTRIBUTION_BLOCKED` with `LICENSE_DECISION_REQUIRED` and
+`QT_SOURCE_AVAILABILITY_REQUIRED`.
+
+Combined public publication of **both** zips requires both gates. That
+is a product policy for a joint prerelease, not a technical reason to
+hold the CLI behind Qt.
+
 ## Build and package locally
 
 ```powershell
@@ -31,16 +62,22 @@ ctest --preset windows-release
 .\scripts\package-release.ps1
 ```
 
-`package-release.ps1` runs `cmake --install` per component, deploys Qt with
-`windeployqt --no-compiler-runtime --release`, requires
-`platforms\qwindows.dll`, forbids Qt in the CLI stage, forbids the CLI
-executable in the GUI stage, writes SHA-256 sums, extracts the CLI zip, and
-re-runs the safety script.
+`package-release.ps1` runs `cmake --install` per component, deploys Qt
+with `windeployqt --no-compiler-runtime --no-system-d3d-compiler
+--no-system-dxc-compiler --release`, copies package notices and (if
+present) `LICENSE`, then runs `scripts/verify-package.ps1`. The
+validator requires `platforms\qwindows.dll` and the dumpbin Qt
+dependents, forbids Qt in the CLI stage, forbids the CLI executable and
+MSVC CRT DLLs in either zip, forbids Windows SDK `dxcompiler.dll` /
+`dxil.dll` and the SDK-sized `d3dcompiler_47.dll`, writes SHA-256 sums,
+extracts the CLI zip, and re-runs the safety script.
 
-The Visual C++ Redistributable (x64) is a runtime prerequisite. Do not copy
-compiler-runtime DLLs from a developer machine into the zip.
+The Visual C++ Redistributable (x64) is a runtime prerequisite. Do not
+copy compiler-runtime DLLs from a developer machine into the zip.
 
 Binaries are unsigned. Do not generate a certificate or `.pfx`.
+SpaceLens v0.1.0 remains unsigned unless a legitimate signing
+certificate is provided separately.
 
 ## CI
 
@@ -69,22 +106,23 @@ It builds, tests, safety-checks, and stages archives as workflow artifacts.
 A GitHub Release is created only when **all** of the following are true:
 
 1. the ref is a `v*.*.*` tag matching `v` + `CMAKE_PROJECT_VERSION`
-2. a root `LICENSE` file exists
-3. `docs/QT_REDIST_REVIEWED.md` exists (maintainer Qt review)
+2. a non-empty root `LICENSE` file exists (`cli_eligible`)
 
-Otherwise the status is `LICENSE_DECISION_REQUIRED` and/or
-`RELEASE_DISTRIBUTION_BLOCKED`. Archives stay on the workflow run.
+The GUI zip is attached only when `cli_eligible` **and** the structured
+Qt review is PASS (`gui_eligible`). Otherwise the GUI zip stays on the
+workflow run.
 
-Even if those files exist later, the publish job attaches the **CLI zip and
-checksums only**. The GUI zip is a private verification artifact until Qt
-redistribution is actually reviewed.
+If there is no `LICENSE`, the status is `LICENSE_DECISION_REQUIRED` and
+no GitHub Release is created.
 
 Releases are prerelease. Do not mark v0.1.0 as latest/production from this
-workflow.
+workflow. Do not push a `v*` tag from an assistant session.
 
 ## Do not do from an assistant session
 
 - Choose a license
+- Set `review_status=PASS` or `source_availability=READY`
+- Create `docs/QT_REDIST_REVIEWED.md` before corresponding source exists
 - Push `v0.1.0` or any other release tag
 - Publish a GitHub Release
 - Commit Visual C++ runtime DLLs

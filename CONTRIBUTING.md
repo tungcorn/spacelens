@@ -78,3 +78,5 @@ a public issue, wait until a maintainer designates a contact.
 
 No project license has been chosen. See `docs/LICENSE_DECISION_REQUIRED.md`.
 Do not add a `LICENSE` file unless a maintainer explicitly selects one.
+Do not set `review_status=PASS` or create `docs/QT_REDIST_REVIEWED.md`
+unless corresponding Qt source is actually under maintainer control.
