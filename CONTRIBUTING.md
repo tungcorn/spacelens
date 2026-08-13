@@ -76,7 +76,8 @@ a public issue, wait until a maintainer designates a contact.
 
 ## License
 
-No project license has been chosen. See `docs/LICENSE_DECISION_REQUIRED.md`.
-Do not add a `LICENSE` file unless a maintainer explicitly selects one.
+SpaceLens-owned code is MIT. See `LICENSE`. Do not relicense the project,
+Qt, or SQLite. An assistant must not change the maintainer-selected MIT
+text except to fix a verified transcription error.
 Do not set `review_status=PASS` or create `docs/QT_REDIST_REVIEWED.md`
 unless corresponding Qt source is actually under maintainer control.
