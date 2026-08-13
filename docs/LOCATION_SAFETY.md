@@ -87,6 +87,8 @@ are preserved. Index rebuild, delete, and USN refresh do not erase declarations.
 Rejected at add time:
 
 - empty, `.`, `..`, relative, or malformed paths
+- any path whose components include `.` or `..` (not resolved or followed)
+- Win32 device-namespace paths (`\\.\`)
 - whole-volume roots (`C:\`, `D:\`)
 - built-in Protected or Sensitive roots
 - reparse roots (junctions / directory symlinks / mount points)

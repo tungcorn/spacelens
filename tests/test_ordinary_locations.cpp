@@ -182,6 +182,8 @@ SPACELENS_TEST(OrdinaryLocation_matching_is_component_aware)
     SPACELENS_REQUIRE(!declarationContainsPath(L"D:\\proj", L"D:\\project"));
     SPACELENS_REQUIRE(!declarationContainsPath(L"D:\\proj", L"D:\\proj-extra"));
     SPACELENS_REQUIRE(declarationContainsPath(L"D:\\Projects", L"D:\\Projects"));
+    SPACELENS_REQUIRE(!declarationContainsPath(L"D:\\Projects",
+                                               L"D:\\Projects\\..\\Other"));
 }
 
 SPACELENS_TEST(OrdinaryLocation_long_path_prefix_is_stripped)
@@ -304,6 +306,67 @@ SPACELENS_TEST(OrdinaryLocation_evaluate_rejects_invalid_and_blocked_roots)
             L"C:\\Users\\TestUser\\AppData\\Local\\Temp", probe, volumes)
             .result,
         OrdinaryLocationAddResult::RejectedSensitive);
+}
+
+SPACELENS_TEST(OrdinaryLocation_traversal_and_device_paths_are_rejected)
+{
+    MapMetadataReader probe;
+    MapVolumeReader volumes;
+    installPresentRoot(probe, volumes, L"C:\\NoSuch\\..\\Windows");
+    installPresentRoot(probe, volumes, L"C:\\Windows\\.");
+    installPresentRoot(probe, volumes, L"D:\\Projects\\foo\\..");
+    installPresentRoot(probe, volumes, L"\\\\.\\C:\\Windows");
+    installPresentRoot(probe, volumes, L"\\\\.\\D:\\Projects");
+
+    SPACELENS_REQUIRE_EQ(
+        evaluateOrdinaryLocationDeclaration(L"C:\\NoSuch\\..\\Windows", probe,
+                                            volumes)
+            .result,
+        OrdinaryLocationAddResult::InvalidPath);
+    SPACELENS_REQUIRE_EQ(
+        evaluateOrdinaryLocationDeclaration(L"C:\\Windows\\.", probe, volumes)
+            .result,
+        OrdinaryLocationAddResult::InvalidPath);
+    SPACELENS_REQUIRE_EQ(
+        evaluateOrdinaryLocationDeclaration(L"D:\\Projects\\foo\\..", probe,
+                                            volumes)
+            .result,
+        OrdinaryLocationAddResult::InvalidPath);
+    SPACELENS_REQUIRE_EQ(
+        evaluateOrdinaryLocationDeclaration(L"\\\\.\\C:\\Windows", probe,
+                                            volumes)
+            .result,
+        OrdinaryLocationAddResult::InvalidPath);
+    SPACELENS_REQUIRE_EQ(
+        evaluateOrdinaryLocationDeclaration(L"\\\\.\\D:\\Projects", probe,
+                                            volumes)
+            .result,
+        OrdinaryLocationAddResult::InvalidPath);
+
+    auto policy = policyWith({activeDeclaration(L"D:\\Projects", 1)});
+    const auto escaped =
+        assessLocationSafety(L"D:\\Projects\\..\\Windows\\notepad.exe", policy);
+    SPACELENS_REQUIRE_EQ(escaped.safety, LocationSafety::Unknown);
+    SPACELENS_REQUIRE_EQ(escaped.source, LocationSafetySource::Unknown);
+
+    const auto windowsAlias = assessLocationSafety(
+        L"C:\\NoSuch\\..\\Windows\\System32\\notepad.exe", policy);
+    SPACELENS_REQUIRE(windowsAlias.safety != LocationSafety::Ordinary);
+    SPACELENS_REQUIRE_EQ(windowsAlias.source, LocationSafetySource::Unknown);
+
+    auto poisoned = activeDeclaration(L"C:\\NoSuch\\..\\Windows", 9);
+    auto poisonedPolicy = policyWith({poisoned});
+    SPACELENS_REQUIRE_EQ(
+        assessLocationSafety(L"C:\\NoSuch\\..\\Windows\\System32\\notepad.exe",
+                             poisonedPolicy)
+            .source,
+        LocationSafetySource::Unknown);
+    SPACELENS_REQUIRE(poisonedPolicy.matchingActiveDeclaration(
+                          L"C:\\NoSuch\\..\\Windows\\System32\\notepad.exe") ==
+                      nullptr);
+
+    refreshOrdinaryLocationDeclaration(poisoned, probe, volumes);
+    SPACELENS_REQUIRE_EQ(poisoned.status, OrdinaryLocationStatus::Invalid);
 }
 
 SPACELENS_TEST(OrdinaryLocation_evaluate_rejects_missing_file_and_reparse)

@@ -118,7 +118,9 @@ struct OrdinaryLocationAddOutcome {
 [[nodiscard]] bool isDriveRootPathKey(std::wstring_view normalized);
 
 /// Validate and build a declaration. Does not persist. Does not follow reparse
-/// points. Built-in Protected and Sensitive roots are rejected.
+/// points or resolve '.' / '..'. Built-in Protected and Sensitive roots are
+/// rejected. Traversal components and Win32 device-namespace paths are
+/// InvalidPath.
 [[nodiscard]] OrdinaryLocationAddOutcome evaluateOrdinaryLocationDeclaration(
     std::wstring_view configuredPath,
     ICleanupMetadataReader& rootProbe,

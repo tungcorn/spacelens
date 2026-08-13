@@ -19,6 +19,49 @@ bool isDotOrDotDot(std::wstring_view path)
            path == L"./" || path == L"../";
 }
 
+bool isDeviceNamespacePath(std::wstring_view path)
+{
+    return path.rfind(L"\\\\.\\", 0) == 0 || path.rfind(L"//./", 0) == 0;
+}
+
+bool hasDotOrDotDotComponent(std::wstring_view path)
+{
+    std::size_t pos = 0;
+    if (path.size() >= 2 && isDriveLetter(path[0]) && path[1] == L':') {
+        pos = 2;
+    }
+    while (pos < path.size()) {
+        while (pos < path.size() && (path[pos] == L'\\' || path[pos] == L'/')) {
+            ++pos;
+        }
+        if (pos == path.size()) {
+            break;
+        }
+        const std::size_t begin = pos;
+        while (pos < path.size() && path[pos] != L'\\' && path[pos] != L'/') {
+            ++pos;
+        }
+        const auto component = path.substr(begin, pos - begin);
+        if (component == L"." || component == L"..") {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool pathUsesTraversalOrDeviceNamespace(std::wstring_view path)
+{
+    if (path.empty()) {
+        return false;
+    }
+    if (isDeviceNamespacePath(path) || hasDotOrDotDotComponent(path)) {
+        return true;
+    }
+    const auto normalized = normalizeOrdinaryLocationPath(path);
+    return isDeviceNamespacePath(normalized) ||
+           hasDotOrDotDotComponent(normalized);
+}
+
 bool isAbsolutePath(std::wstring_view normalized)
 {
     if (normalized.size() >= 2 && isDriveLetter(normalized[0]) &&
@@ -169,6 +212,10 @@ std::wstring normalizeOrdinaryLocationPath(std::wstring_view path)
 
 bool declarationContainsPath(std::wstring_view root, std::wstring_view path)
 {
+    if (pathUsesTraversalOrDeviceNamespace(root) ||
+        pathUsesTraversalOrDeviceNamespace(path)) {
+        return false;
+    }
     const auto a = normalizeOrdinaryLocationPath(root);
     const auto p = normalizeOrdinaryLocationPath(path);
     if (a.empty() || p.empty()) {
@@ -274,6 +321,13 @@ OrdinaryLocationAddOutcome evaluateOrdinaryLocationDeclaration(
         out.message = "Path must be an absolute directory";
         return out;
     }
+    if (pathUsesTraversalOrDeviceNamespace(raw) ||
+        pathUsesTraversalOrDeviceNamespace(key)) {
+        out.result = OrdinaryLocationAddResult::InvalidPath;
+        out.message = "Path must not contain '.' or '..' components or use "
+                      "the Win32 device namespace";
+        return out;
+    }
     if (isDriveRootPathKey(key)) {
         out.result = OrdinaryLocationAddResult::RejectedTooBroad;
         out.message = "Whole-volume roots cannot be declared ordinary";
@@ -345,6 +399,14 @@ void refreshOrdinaryLocationDeclaration(
     ICleanupMetadataReader& rootProbe,
     IVolumeIdentityReader& volumes)
 {
+    if (pathUsesTraversalOrDeviceNamespace(declaration.configuredPath) ||
+        pathUsesTraversalOrDeviceNamespace(declaration.normalizedPathKey)) {
+        declaration.status = OrdinaryLocationStatus::Invalid;
+        declaration.detail =
+            "Declaration path contains a traversal or device-namespace "
+            "component";
+        return;
+    }
     const auto probe = rootProbe.read(declaration.configuredPath);
     const auto live = volumes.read(declaration.configuredPath);
     declaration.status =
