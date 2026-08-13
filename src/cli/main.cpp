@@ -94,6 +94,9 @@ int wmain(int argc, wchar_t** argv)
             code =
                 spacelens::cli::runIndexRefresh(args, stopSource.get_token());
             break;
+        case spacelens::cli::Command::Duplicates:
+            code = spacelens::cli::runDuplicates(args, stopSource.get_token());
+            break;
         default:
             code = spacelens::cli::ExitCode::InternalError;
             break;

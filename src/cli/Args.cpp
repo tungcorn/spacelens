@@ -60,7 +60,8 @@ std::wstring normalizeExtension(std::wstring value)
 
 bool isFilterCommand(Command c)
 {
-    return c == Command::Top || c == Command::Find || c == Command::Query;
+    return c == Command::Top || c == Command::Find || c == Command::Query ||
+           c == Command::Duplicates;
 }
 
 }  // namespace
@@ -79,6 +80,7 @@ std::string helpText()
         "  spacelens index list [--json]\n"
         "  spacelens index refresh <path> [--json]\n"
         "  spacelens query <path> (--files|--dirs) [filters] [--limit N] [--json]\n"
+        "  spacelens duplicates <path> [--min-size S] [--json]\n"
         "  spacelens capabilities [--json]\n"
         "  spacelens help\n"
         "  spacelens version\n"
@@ -101,6 +103,7 @@ std::string helpText()
         "  index builds a snapshot under %LOCALAPPDATA%\\SpaceLens\\indexes\n"
         "  index refresh applies USN deltas when safe; else full_rebuild_required\n"
         "  query uses the persistent index only (no live rescan fallback)\n"
+        "  duplicates finds exact file-content copies from an index, then live-verifies\n"
         "  Source filesystem remains read-only; SpaceLens never mutates the USN journal\n"
         "\n"
         "Exit codes: 0 success, 2 usage, 3 inaccessible root, 4 scan/index failed,\n"
@@ -138,6 +141,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         out.command = Command::Capabilities;
     } else if (cmd == L"query") {
         out.command = Command::Query;
+    } else if (cmd == L"duplicates") {
+        out.command = Command::Duplicates;
     } else if (cmd == L"index") {
         // index | index status | index list | index refresh
         if (argc >= 3 && std::wstring_view(argv[2]) == L"status") {
@@ -197,7 +202,7 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         }
         if (arg == L"--min-size") {
             if (!isFilterCommand(out.command)) {
-                out.error = "--min-size is only valid with top/find/query.";
+                out.error = "--min-size is only valid with top/find/query/duplicates.";
                 return out;
             }
             if (i + 1 >= argc) {
@@ -213,7 +218,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             continue;
         }
         if (arg == L"--ext") {
-            if (!isFilterCommand(out.command)) {
+            if (out.command != Command::Top && out.command != Command::Find &&
+                out.command != Command::Query) {
                 out.error = "--ext is only valid with top/find/query.";
                 return out;
             }
@@ -229,7 +235,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             continue;
         }
         if (arg == L"--older-than") {
-            if (!isFilterCommand(out.command)) {
+            if (out.command != Command::Top && out.command != Command::Find &&
+                out.command != Command::Query) {
                 out.error = "--older-than is only valid with top/find/query.";
                 return out;
             }
@@ -246,7 +253,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             continue;
         }
         if (arg == L"--classification") {
-            if (!isFilterCommand(out.command)) {
+            if (out.command != Command::Top && out.command != Command::Find &&
+                out.command != Command::Query) {
                 out.error = "--classification is only valid with top/find/query.";
                 return out;
             }
@@ -291,7 +299,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
     if (out.command == Command::Scan || out.command == Command::Top ||
         out.command == Command::Find || out.command == Command::Index ||
         out.command == Command::IndexStatus ||
-        out.command == Command::IndexRefresh || out.command == Command::Query) {
+        out.command == Command::IndexRefresh || out.command == Command::Query ||
+        out.command == Command::Duplicates) {
         if (out.path.empty()) {
             out.error = "Missing path argument.";
             return out;

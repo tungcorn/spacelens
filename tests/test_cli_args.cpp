@@ -67,3 +67,24 @@ SPACELENS_TEST(CliArgs_scan_missing_path)
     auto a = parse({L"spacelens", L"scan", L"--json"});
     SPACELENS_REQUIRE(!a.error.empty());
 }
+
+SPACELENS_TEST(CliArgs_duplicates_min_size)
+{
+    auto a = parse({L"spacelens", L"duplicates", L"D:\\Models", L"--min-size",
+                    L"2MB", L"--json"});
+    SPACELENS_REQUIRE(a.error.empty());
+    SPACELENS_REQUIRE(a.command == Command::Duplicates);
+    SPACELENS_REQUIRE(a.json);
+    SPACELENS_REQUIRE(a.minSize.has_value());
+    SPACELENS_REQUIRE_EQ(*a.minSize, 2ULL * 1024ULL * 1024ULL);
+}
+
+SPACELENS_TEST(CliArgs_duplicates_rejects_delete)
+{
+    auto a = parse({L"spacelens", L"duplicates", L"D:\\", L"--delete"});
+    SPACELENS_REQUIRE(!a.error.empty());
+    auto b = parse({L"spacelens", L"duplicates", L"D:\\", L"--dedupe"});
+    SPACELENS_REQUIRE(!b.error.empty());
+    auto c = parse({L"spacelens", L"duplicates", L"D:\\", L"--keep-one"});
+    SPACELENS_REQUIRE(!c.error.empty());
+}

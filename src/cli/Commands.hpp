@@ -16,6 +16,7 @@ namespace spacelens::cli {
 [[nodiscard]] ExitCode runIndexRefresh(const ParsedArgs& args,
                                        std::stop_token stop);
 [[nodiscard]] ExitCode runQuery(const ParsedArgs& args);
+[[nodiscard]] ExitCode runDuplicates(const ParsedArgs& args, std::stop_token stop);
 [[nodiscard]] ExitCode runCapabilities(const ParsedArgs& args);
 
 }  // namespace spacelens::cli

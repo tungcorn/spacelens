@@ -40,7 +40,7 @@ SPACELENS_TEST(CliReadonly_registered_commands_only_safe)
         Command::Help,         Command::Version,      Command::Scan,
         Command::Top,          Command::Find,         Command::Capabilities,
         Command::Index,        Command::IndexStatus,  Command::IndexList,
-        Command::IndexRefresh, Command::Query,
+        Command::IndexRefresh, Command::Query,        Command::Duplicates,
     };
     SPACELENS_REQUIRE_EQ(kRegisteredCommands.size(), allowed.size());
     for (const Command c : kRegisteredCommands) {
@@ -53,7 +53,7 @@ SPACELENS_TEST(CliReadonly_registered_commands_only_safe)
 SPACELENS_TEST(CliReadonly_destructive_verbs_rejected)
 {
     for (const wchar_t* verb : {L"delete", L"remove", L"rm", L"move", L"purge",
-                                L"wipe", L"cleanup"}) {
+                                L"wipe", L"cleanup", L"dedupe", L"keep-one"}) {
         const auto args = parse({L"spacelens", verb, L"C:\\temp"});
         SPACELENS_REQUIRE(!args.error.empty());
     }

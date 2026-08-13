@@ -2,6 +2,8 @@
 
 #include "cli/Json.hpp"
 #include "core/Classification.hpp"
+#include "core/DuplicateDetection.hpp"
+#include "core/Duplicates.hpp"
 #include "core/FileTime.hpp"
 #include "core/Query.hpp"
 #include "core/ScanEngine.hpp"
@@ -11,6 +13,8 @@
 #include "core/index/IndexQuery.hpp"
 #include "core/index/IndexRefresh.hpp"
 #include "core/index/IndexStore.hpp"
+#include "platform/windows/CleanupMetadataReader.hpp"
+#include "platform/windows/FileContentHasher.hpp"
 #include "platform/windows/WindowsFileEnumerator.hpp"
 
 #ifndef NOMINMAX
@@ -1040,6 +1044,64 @@ ExitCode runQuery(const ParsedArgs& args)
     return result.ok ? ExitCode::Success : ExitCode::ScanFailed;
 }
 
+ExitCode runDuplicates(const ParsedArgs& args, std::stop_token stop)
+{
+    DuplicateScanOptions options;
+    options.minimumSize =
+        args.minSize.value_or(kDefaultDuplicateMinSize);
+    wchar_t profile[MAX_PATH]{};
+    const DWORD profileLen =
+        ::GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH);
+    if (profileLen > 0 && profileLen < MAX_PATH) {
+        options.userProfilePath.assign(profile, profileLen);
+    }
+    const auto candidates =
+        queryDuplicateSizeCandidates(args.path, options.minimumSize);
+    if (!candidates.ok) {
+        if (args.json) {
+            DuplicateDetectionResult failed;
+            failed.root = candidates.root.rootPath.empty()
+                              ? args.path
+                              : candidates.root.rootPath;
+            failed.minimumSize = options.minimumSize;
+            failed.error = candidates.error;
+            failed.completed = false;
+            std::cout << failed.toJson(options) << "\n";
+        } else {
+            std::cerr << "error: " << candidates.error << "\n";
+        }
+        if (candidates.error == "index_not_found") {
+            return ExitCode::IndexNotFound;
+        }
+        return ExitCode::ScanFailed;
+    }
+
+    WindowsCleanupMetadataReader reader;
+    WindowsFileContentHasher hasher;
+    const auto result = detectDuplicates(
+        candidates, reader, hasher, options,
+        [&stop]() { return stop.stop_requested(); });
+
+    if (args.json) {
+        std::cout << result.toJson(options) << "\n";
+    } else {
+        std::cout << result.toText(options);
+        std::cerr << "source=persistent_index verification=full_sha256 "
+                     "filesystem_mutation=false candidates="
+                  << result.summary.candidateFiles
+                  << " groups=" << result.summary.verifiedGroups
+                  << " bytes_read=" << result.summary.bytesRead << "\n";
+    }
+
+    if (result.cancelled) {
+        return ExitCode::Cancelled;
+    }
+    if (!result.error.empty()) {
+        return ExitCode::ScanFailed;
+    }
+    return ExitCode::Success;
+}
+
 ExitCode runCapabilities(const ParsedArgs& args)
 {
     if (args.json) {
@@ -1048,7 +1110,7 @@ ExitCode runCapabilities(const ParsedArgs& args)
                   << "\"version\":" << jsonString(SPACELENS_VERSION_STRING) << ","
                   << "\"commands\":[\"scan\",\"top\",\"find\",\"index\","
                      "\"index status\",\"index list\",\"index refresh\",\"query\","
-                     "\"capabilities\",\"help\",\"version\"],"
+                     "\"duplicates\",\"capabilities\",\"help\",\"version\"],"
                   << "\"features\":{"
                   << "\"json\":true,"
                   << "\"cancellation\":true,"
@@ -1066,7 +1128,7 @@ ExitCode runCapabilities(const ParsedArgs& args)
     } else {
         std::cout << "spacelens " << SPACELENS_VERSION_STRING << "\n"
                   << "commands: scan top find index index-refresh query "
-                     "capabilities help version\n"
+                     "duplicates capabilities help version\n"
                   << "read_only: true\n"
                   << "filesystem_mutation: false\n"
                   << "features: json, cancellation, classification, filters, "
