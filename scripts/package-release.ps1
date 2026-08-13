@@ -85,27 +85,41 @@ $guiStage = Join-Path $stage $guiName
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $cliStage, $guiStage, $OutDir | Out-Null
 
+function Copy-IfLicense([string]$Destination) {
+    $license = Join-Path $root "LICENSE"
+    if (Test-Path $license) {
+        $text = (Get-Content $license -Raw -ErrorAction SilentlyContinue)
+        if ($text -and $text.Trim().Length -gt 0) {
+            Copy-Item $license (Join-Path $Destination "LICENSE")
+        }
+    }
+}
+
+Write-Host "Checking Qt review record (well-formed, not RequirePass)"
+& (Join-Path $root "scripts\verify-qt-redist-review.ps1")
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 Write-Host "Installing CLI component -> $cliStage"
 cmake --install $BuildDir --prefix $cliStage --component SpaceLensCli
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Copy-Item (Join-Path $root "packaging\cli\README.txt") (Join-Path $cliStage "README.txt")
+Copy-Item (Join-Path $root "packaging\cli\THIRD_PARTY_NOTICES.txt") (Join-Path $cliStage "THIRD_PARTY_NOTICES.txt")
+Copy-IfLicense $cliStage
 
 $cliExe = Join-Path $cliStage "spacelens.exe"
 if (-not (Test-Path $cliExe)) {
     Write-Error "CLI install did not produce spacelens.exe"
-}
-foreach ($forbidden in @("spacelens-gui.exe", "Qt6Core.dll", "platforms")) {
-    $hit = Get-ChildItem $cliStage -Recurse -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -eq $forbidden -or $_.Name -like "Qt6*.dll" }
-    if ($hit) {
-        Write-Error "CLI stage contains forbidden GUI/Qt content: $($hit.FullName -join ', ')"
-    }
 }
 
 Write-Host "Installing GUI component -> $guiStage"
 cmake --install $BuildDir --prefix $guiStage --component SpaceLensGui
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Copy-Item (Join-Path $root "packaging\gui\README.txt") (Join-Path $guiStage "README.txt")
+Copy-Item (Join-Path $root "packaging\gui\THIRD_PARTY_NOTICES.txt") (Join-Path $guiStage "THIRD_PARTY_NOTICES.txt")
+$guiLicenses = Join-Path $guiStage "licenses"
+New-Item -ItemType Directory -Force -Path $guiLicenses | Out-Null
+Copy-Item (Join-Path $root "packaging\gui\licenses\*") $guiLicenses -Force
+Copy-IfLicense $guiStage
 
 $guiExe = Join-Path $guiStage "spacelens-gui.exe"
 if (-not (Test-Path $guiExe)) {
@@ -114,20 +128,15 @@ if (-not (Test-Path $guiExe)) {
 
 $windeploy = Get-Windeployqt
 Write-Host "Deploying Qt runtime with $windeploy"
-& $windeploy --no-compiler-runtime --release --dir $guiStage $guiExe
+& $windeploy --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --release --dir $guiStage $guiExe
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-$platform = Join-Path $guiStage "platforms\qwindows.dll"
-if (-not (Test-Path $platform)) {
-    Write-Error "GUI stage missing platforms\qwindows.dll after windeployqt"
-}
-if (Test-Path (Join-Path $guiStage "spacelens.exe")) {
-    Write-Error "GUI stage must not include the CLI executable"
-}
 
 # Inventory deployed Qt modules for the third-party audit.
 $qtDlls = Get-ChildItem $guiStage -Filter "Qt6*.dll" | Sort-Object Name | ForEach-Object { $_.Name }
 Write-Host "Deployed Qt DLLs: $($qtDlls -join ', ')"
+
+& (Join-Path $root "scripts\verify-package.ps1") -CliStage $cliStage -GuiStage $guiStage
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $cliZip = Join-Path $OutDir "$cliName.zip"
 $guiZip = Join-Path $OutDir "$guiName.zip"

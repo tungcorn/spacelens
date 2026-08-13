@@ -1,0 +1,63 @@
+SpaceLens GUI — third-party notices
+===================================
+
+This file is an inventory of third-party software shipped in this
+archive. It is not a SpaceLens project license and not a public
+distribution grant.
+
+SpaceLens project license
+-------------------------
+No project license has been chosen (LICENSE_DECISION_REQUIRED).
+If a LICENSE file is present in this folder, that file is the
+maintainer-chosen project license. Otherwise this zip is a private
+verification artifact.
+
+Qt 6.8.3 (dynamic)
+------------------
+This GUI was deployed with windeployqt from the Qt 6.8.3
+win64_msvc2022_64 shared kit.
+
+dumpbin /dependents on spacelens-gui.exe lists Qt6Widgets.dll,
+Qt6Gui.dll, and Qt6Core.dll. The executable is not statically linked
+to Qt.
+
+The 6.8.3 kit SPDX concludes, for those modules and the plugins
+windeployqt copies beside this executable:
+
+  LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+
+Verbatim GNU texts for LGPL-3.0 and GPL-3.0 are in licenses\.
+Those texts do not complete an LGPL corresponding-source offer.
+SpaceLens does not currently ship or host Qt 6.8.3 corresponding
+source under maintainer control (QT_SOURCE_AVAILABILITY_REQUIRED).
+
+Microsoft Visual C++ runtime
+----------------------------
+Not shipped. Install the official Microsoft Visual C++
+Redistributable (x64) if the machine does not already have it.
+
+SQLite 3.53.4
+-------------
+Compiled into the GUI via spacelens_core. The author of SQLite
+disclaims copyright and offers the blessing reproduced in the
+source tree at third_party/sqlite/sqlite3.h. That blessing is
+not a SpaceLens license and is independent of Qt.
+
+Windows SDK D3D / DXC compilers
+-------------------------------
+Not shipped. windeployqt is invoked with
+--no-system-d3d-compiler --no-system-dxc-compiler.
+This archive must not contain d3dcompiler_47.dll, dxcompiler.dll,
+or dxil.dll.
+
+opengl32sw.dll
+--------------
+Mesa llvmpipe software rasterizer from the Qt 6.8.3 kit bin
+directory (MIT and Boost 1.0 notices in the Qt attribution
+documentation). Not the MSVC CRT.
+
+libjpeg (via Qt Gui / qjpeg)
+----------------------------
+This software is based in part on the work of the Independent JPEG
+Group. The kit SPDX concludes IJG AND BSD-3-Clause for the copy
+bundled in Qt 6.8.3.

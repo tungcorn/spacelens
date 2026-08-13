@@ -1,0 +1,39 @@
+SpaceLens CLI — third-party notices
+===================================
+
+This file is an inventory of third-party software shipped in this
+archive. It is not a SpaceLens project license and not a public
+distribution grant.
+
+SpaceLens project license
+-------------------------
+No project license has been chosen (LICENSE_DECISION_REQUIRED).
+If a LICENSE file is present in this folder, that file is the
+maintainer-chosen project license. Otherwise this zip is a private
+verification artifact.
+
+This archive must not contain Qt.
+
+SQLite 3.53.4
+-------------
+Compiled into spacelens.exe from the vendored amalgamation
+(sqlite-amalgamation-3530400):
+
+  SQLITE_VERSION        "3.53.4"
+  SQLITE_VERSION_NUMBER 3053004
+  SQLITE_SOURCE_ID      "2026-07-24 19:02:57 bf7c7f30031888f4e796e429ab3978879485813aaca6f641c7b33e4e09459bcc"
+
+The author of SQLite disclaims copyright to that source. In place of
+a legal notice, sqlite3.h records this blessing:
+
+  May you do good and not evil.
+  May you find forgiveness for yourself and forgive others.
+  May you share freely, never taking more than you give.
+
+That blessing is SQLite's notice. It is not a SpaceLens project
+license and has no relationship to Qt.
+
+Microsoft Visual C++ runtime
+----------------------------
+Not shipped. Install the official Microsoft Visual C++
+Redistributable (x64) if the machine does not already have it.
