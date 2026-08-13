@@ -106,6 +106,8 @@ add_library(spacelens_core STATIC
     src/platform/windows/FileIdentity.cpp
     src/platform/windows/CleanupMetadataReader.hpp
     src/platform/windows/CleanupMetadataReader.cpp
+    src/platform/windows/FileContentHasher.hpp
+    src/platform/windows/FileContentHasher.cpp
     src/platform/windows/UsnJournal.hpp
     src/platform/windows/UsnJournal.cpp
     src/platform/windows/WindowsFileEnumerator.hpp
@@ -127,7 +129,7 @@ target_compile_definitions(spacelens_core
 target_link_libraries(spacelens_core PUBLIC spacelens_sqlite)
 
 if(WIN32)
-    target_link_libraries(spacelens_core PUBLIC shell32 ole32)
+    target_link_libraries(spacelens_core PUBLIC shell32 ole32 bcrypt)
 endif()
 
 # ---------------------------------------------------------------------------
