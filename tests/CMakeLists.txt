@@ -13,6 +13,7 @@ set(SPACELENS_TEST_SOURCES
     test_cleanup_review_store.cpp
     test_cleanup_plan.cpp
     test_cleanup_revalidation.cpp
+    test_maintenance.cpp
     test_duplicates.cpp
     test_reclaim.cpp
     test_index.cpp
@@ -50,3 +51,19 @@ target_include_directories(spacelens_tests
 )
 
 add_test(NAME spacelens_tests COMMAND spacelens_tests)
+
+add_executable(spacelens_maintenance_tests
+    main.cpp
+    test_recycle_adapter.cpp
+    TestRunner.hpp
+)
+target_link_libraries(spacelens_maintenance_tests
+    PRIVATE
+        spacelens_core
+        spacelens_maintenance
+)
+target_include_directories(spacelens_maintenance_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+add_test(NAME spacelens_maintenance_tests COMMAND spacelens_maintenance_tests)

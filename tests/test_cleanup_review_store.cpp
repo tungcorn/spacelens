@@ -132,9 +132,13 @@ SPACELENS_TEST(CleanupReviewStore_schema_v1_created)
     }
     SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "review_schema_version"),
                          std::string("1"));
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "maintenance_schema_version"),
+                         std::string("1"));
     SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "review_items"));
     SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "review_validation"));
     SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "meta"));
+    SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "maintenance_operations"));
+    SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "maintenance_receipt_items"));
 }
 
 SPACELENS_TEST(CleanupReviewStore_unicode_path_round_trip)
@@ -778,4 +782,78 @@ SPACELENS_TEST(CleanupReviewStore_validation_batch_rejects_path_mismatch)
     SPACELENS_REQUIRE(reopened.open(dir.dbPath()));
     SPACELENS_REQUIRE_EQ(reopened.review().findById(first.add.id)->validation.state,
                          CleanupValidationState::NotValidated);
+}
+
+SPACELENS_TEST(CleanupReviewStore_maintenance_receipt_and_lifecycle_round_trip)
+{
+    TempDir dir;
+    CleanupReviewController controller;
+    SPACELENS_REQUIRE(controller.open(dir.dbPath()));
+    auto first = fileCandidate(L"C:\\Users\\TestUser\\Projects\\gone.bin", 64, 30);
+    auto second = fileCandidate(L"C:\\Users\\TestUser\\Projects\\stay.bin", 32, 31);
+    const auto addedFirst = controller.addDetailed(std::move(first));
+    const auto addedSecond = controller.addDetailed(std::move(second));
+    SPACELENS_REQUIRE(addedFirst.ok);
+    SPACELENS_REQUIRE(addedSecond.ok);
+
+    MaintenanceReceipt receipt;
+    receipt.requestedAt = 11;
+    receipt.confirmedAt = 12;
+    receipt.completedAt = 13;
+    receipt.attempted = 1;
+    receipt.recycled = 1;
+    receipt.blocked = 1;
+    receipt.recycledLogicalBytes = 64;
+    MaintenanceItemReceipt recycled;
+    recycled.reviewId = addedFirst.add.id;
+    recycled.path = L"C:\\Users\\TestUser\\Projects\\gone.bin";
+    recycled.result = MaintenanceItemResult::Recycled;
+    recycled.recycleParsingName = "recycle://fixture";
+    recycled.detail = "Recycled to Recycle Bin";
+    recycled.expectedIdentity = strongId(30);
+    MaintenanceItemReceipt blocked;
+    blocked.reviewId = addedSecond.add.id;
+    blocked.path = L"C:\\Users\\TestUser\\Projects\\stay.bin";
+    blocked.result = MaintenanceItemResult::BlockedPreflight;
+    blocked.blockReason = MaintenanceBlockReason::UnknownLocation;
+    blocked.detail = "blocked in fixture";
+    blocked.expectedIdentity = strongId(31);
+    receipt.items.push_back(std::move(recycled));
+    receipt.items.push_back(std::move(blocked));
+
+    const auto recorded = controller.recordMaintenance(std::move(receipt));
+    SPACELENS_REQUIRE(recorded.ok);
+    SPACELENS_REQUIRE(recorded.changed);
+    SPACELENS_REQUIRE(recorded.id != 0);
+    SPACELENS_REQUIRE_EQ(
+        controller.review().findById(addedFirst.add.id)->lifecycle,
+        CleanupItemLifecycle::Recycled);
+    SPACELENS_REQUIRE_EQ(
+        controller.review().findById(addedSecond.add.id)->lifecycle,
+        CleanupItemLifecycle::Active);
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "review_schema_version"),
+                         std::string("1"));
+
+    CleanupReviewController reopened;
+    SPACELENS_REQUIRE(reopened.open(dir.dbPath()));
+    SPACELENS_REQUIRE_EQ(
+        reopened.review().findById(addedFirst.add.id)->lifecycle,
+        CleanupItemLifecycle::Recycled);
+    SPACELENS_REQUIRE_EQ(
+        reopened.review().findById(addedSecond.add.id)->lifecycle,
+        CleanupItemLifecycle::Active);
+    const auto receipts = reopened.maintenanceReceipts();
+    SPACELENS_REQUIRE_EQ(receipts.size(), 1u);
+    SPACELENS_REQUIRE_EQ(receipts.front().recycled, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipts.front().blocked, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipts.front().recycledLogicalBytes, 64ULL);
+    SPACELENS_REQUIRE_EQ(receipts.front().items.size(), 2u);
+    SPACELENS_REQUIRE_EQ(receipts.front().items[0].result,
+                         MaintenanceItemResult::Recycled);
+    SPACELENS_REQUIRE(receipts.front().items[0].recycleParsingName ==
+                      std::string("recycle://fixture"));
+    SPACELENS_REQUIRE_EQ(receipts.front().items[1].blockReason,
+                         MaintenanceBlockReason::UnknownLocation);
+    SPACELENS_REQUIRE(identitiesEqual(receipts.front().items[0].expectedIdentity,
+                                      strongId(30)));
 }
