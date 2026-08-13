@@ -100,6 +100,44 @@ std::wstring canonicalWin32Path(std::wstring_view path)
     return normalizePathForPolicy(stripExtendedPrefix(std::move(expanded)));
 }
 
+bool win32PathsEqual(std::wstring_view a, std::wstring_view b)
+{
+    if (a.empty() || b.empty()) {
+        return a.empty() && b.empty();
+    }
+    return toLowerCopy(canonicalWin32Path(a)) == toLowerCopy(canonicalWin32Path(b));
+}
+
+std::wstring rebasePathOntoRoot(const std::wstring& path, const std::wstring& root)
+{
+    if (path.empty()) {
+        return {};
+    }
+    if (root.empty()) {
+        return normalizePathForPolicy(path);
+    }
+
+    const std::wstring canonPath = canonicalWin32Path(path);
+    const std::wstring canonRoot = canonicalWin32Path(root);
+    if (canonPath.empty() || canonRoot.empty()) {
+        return normalizePathForPolicy(path);
+    }
+
+    const std::wstring p = toLowerCopy(canonPath);
+    const std::wstring r = toLowerCopy(canonRoot);
+    if (p == r) {
+        return normalizePathForPolicy(root);
+    }
+    if (p.size() > r.size() && p.compare(0, r.size(), r) == 0) {
+        const bool rootHasSep = (r.back() == L'\\' || r.back() == L'/');
+        const bool atSep = (p[r.size()] == L'\\' || p[r.size()] == L'/');
+        if (rootHasSep || atSep) {
+            return normalizePathForPolicy(root) + canonPath.substr(canonRoot.size());
+        }
+    }
+    return normalizePathForPolicy(path);
+}
+
 std::optional<FileIdentity> queryFileIdentity(const std::wstring& path)
 {
     if (path.empty()) {

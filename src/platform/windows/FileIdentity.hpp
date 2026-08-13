@@ -37,6 +37,16 @@ struct FileIdentity {
 /// normalize when the path does not exist (GetLongPathName requires it).
 [[nodiscard]] std::wstring canonicalWin32Path(std::wstring_view path);
 
+/// True if both sides resolve to the same location after 8.3 expansion.
+[[nodiscard]] bool win32PathsEqual(std::wstring_view a, std::wstring_view b);
+
+/// If `path` is under `root` after 8.3 expansion, return `root`'s lexical
+/// form plus the relative suffix. Otherwise return `path` unchanged (policy
+/// normalized). Keeps incremental USN rows in the same spelling as a full
+/// walk of `root` — hosted TEMP is 8.3; GetFinalPathName is long.
+[[nodiscard]] std::wstring rebasePathOntoRoot(const std::wstring& path,
+                                              const std::wstring& root);
+
 /// True if `path` is equal to or under `root` (case-insensitive, 8.3-aware).
 [[nodiscard]] bool pathIsUnderRoot(const std::wstring& path,
                                    const std::wstring& root);

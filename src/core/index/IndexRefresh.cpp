@@ -536,13 +536,12 @@ std::optional<std::int64_t> ensureDirUnderRoot(
     if (depth > 64 || dirPath.empty()) {
         return std::nullopt;
     }
-    if (auto existing = findEntryIdByPath(db, dirPath)) {
+    const std::wstring aligned = rebasePathOntoRoot(dirPath, root);
+    if (auto existing = findEntryIdByPath(db, aligned)) {
         return existing;
     }
 
-    const std::wstring normDir = normalizePathForPolicy(dirPath);
-    const std::wstring normRoot = normalizePathForPolicy(root);
-    if (normDir == normRoot) {
+    if (win32PathsEqual(aligned, root)) {
         SqliteStmt rs(
             db,
             "SELECT id FROM entries WHERE root_id=1 AND parent_id IS NULL LIMIT 1;");
@@ -551,18 +550,18 @@ std::optional<std::int64_t> ensureDirUnderRoot(
         }
         return findEntryIdByPath(db, root);
     }
-    if (!pathIsUnderRoot(dirPath, root)) {
+    if (!pathIsUnderRoot(aligned, root)) {
         return std::nullopt;
     }
 
-    const std::wstring parentPath = parentPathOf(dirPath);
+    const std::wstring parentPath = parentPathOf(aligned);
     auto parentId =
         ensureDirUnderRoot(db, parentPath, root, now, stats, dirtyDirs, depth + 1);
     if (!parentId || *parentId <= 0) {
         return std::nullopt;
     }
 
-    auto identity = queryFileIdentity(dirPath);
+    auto identity = queryFileIdentity(aligned);
     if (!identity || !identity->isDirectory) {
         return std::nullopt;
     }
@@ -571,7 +570,7 @@ std::optional<std::int64_t> ensureDirUnderRoot(
     }
 
     const UpsertTouch touch =
-        upsertEntryFromDisk(db, dirPath, *identity, *parentId, now, stats);
+        upsertEntryFromDisk(db, aligned, *identity, *parentId, now, stats);
     if (touch.entryId <= 0) {
         return std::nullopt;
     }
@@ -1034,8 +1033,13 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
                 return r;
             }
 
-            // Resolve path: live OpenFileById, else DB.
+            // Resolve path: live OpenFileById, else DB. Rebase onto the
+            // indexed root spelling so 8.3 TEMP and long GetFinalPathName
+            // forms share one prefix (path lookups and stored rows).
             std::wstring path = pathFromFileId(reader.volumeHandle(), fileId);
+            if (!path.empty()) {
+                path = rebasePathOntoRoot(path, root);
+            }
             std::optional<std::int64_t> existingId = findEntryIdByFileId(store.db(), fileId);
 
             if (path.empty() && existingId) {
@@ -1107,8 +1111,7 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
 
             // Parent entry id.
             std::int64_t parentEntryId = 0;
-            if (pathIsUnderRoot(path, root) &&
-                normalizePathForPolicy(path) == normalizePathForPolicy(root)) {
+            if (win32PathsEqual(path, root)) {
                 parentEntryId = 0;  // root has null parent — handled below
             } else {
                 const std::wstring parentPath = parentPathOf(path);
@@ -1129,8 +1132,7 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
                     // Parent still unresolved: under-root gap → full rebuild;
                     // otherwise treat as root child when parent is the root.
                     if (pathIsUnderRoot(parentPath, root) &&
-                        normalizePathForPolicy(parentPath) !=
-                            normalizePathForPolicy(root)) {
+                        !win32PathsEqual(parentPath, root)) {
                         txn.rollback();
                         r.outcome = IndexRefreshOutcome::FullRebuildRequired;
                         r.reason = "missing_parent";
@@ -1153,8 +1155,7 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
                 }
             }
 
-            if (parentEntryId == 0 &&
-                normalizePathForPolicy(path) != normalizePathForPolicy(root)) {
+            if (parentEntryId == 0 && !win32PathsEqual(path, root)) {
                 SqliteStmt rs(
                     store.db(),
                     "SELECT id FROM entries WHERE root_id=1 AND parent_id IS NULL "
@@ -1169,7 +1170,7 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
                 ++r.renamed;
             }
 
-            if (normalizePathForPolicy(path) == normalizePathForPolicy(root)) {
+            if (win32PathsEqual(path, root)) {
                 // Update root node metadata only.
                 auto rootId = findEntryIdByFileId(store.db(), identity->fileId);
                 if (!rootId) {

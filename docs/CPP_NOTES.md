@@ -98,7 +98,11 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
   on some Windows Server images returns 8.3 (`C:\Users\RUNNER~1\...`).
   `pathIsUnderRoot` must expand both sides with `GetLongPathNameW` before the
   prefix compare; otherwise incremental refresh treats in-root creates as outside
-  and existing rows as moved-out (deleted from the index).
+  and existing rows as moved-out (deleted from the index). After a path is
+  accepted as in-root, `rebasePathOntoRoot` rewrites it to the indexed root's
+  lexical form so stored paths match a full walk and `findEntryIdByPath` /
+  `ensureDirUnderRoot` can see the existing 8.3 root row. Do not change
+  `normalizeIndexRoot` (that would orphan existing 8.3-keyed indexes).
 
 ## Indexed discovery queries (Index Browser V2)
 

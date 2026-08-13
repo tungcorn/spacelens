@@ -13,6 +13,9 @@ in-tree 0.1.0 line.
 - Incremental USN refresh treats 8.3 and long Win32 paths as the same root.
   Hosted-runner TEMP (`C:\Users\RUNNER~1\...`) no longer drops in-root
   records whose `GetFinalPathNameByHandle` form is `C:\Users\runneradmin\...`.
+  Reconstructed live paths are rebased onto the indexed root spelling so
+  stored rows match a full walk and same-window parent materialization
+  can find the existing root entry.
 - Debug GUI link no longer fails with `rc.exe` RC1109 (`manifest.res`).
   `spacelens-gui` is non-incremental so CMake `vs_link_exe` does not pass
   a mixed-slash `/fo .../manifest.res` to the resource compiler.

@@ -373,4 +373,23 @@ SPACELENS_TEST(Refresh_path_under_root_expands_short_names)
     const std::wstring canonChild = canonicalWin32Path(shortChild);
     SPACELENS_REQUIRE(!canonRoot.empty());
     SPACELENS_REQUIRE(pathIsUnderRoot(canonChild, canonRoot));
+    SPACELENS_REQUIRE(win32PathsEqual(shortRoot, longRoot));
+    SPACELENS_REQUIRE(win32PathsEqual(shortChild, longChild));
+
+    // Incremental USN must store the same spelling a full walk of `root` uses.
+    const std::wstring ontoShort = rebasePathOntoRoot(longChild, shortRoot);
+    const std::wstring ontoLong = rebasePathOntoRoot(shortChild, longRoot);
+    SPACELENS_REQUIRE(pathIsUnderRoot(ontoShort, shortRoot));
+    SPACELENS_REQUIRE(pathIsUnderRoot(ontoLong, longRoot));
+    SPACELENS_REQUIRE(win32PathsEqual(rebasePathOntoRoot(longRoot, shortRoot),
+                                      shortRoot));
+
+    auto startsWithFold = [](const std::wstring& value, const std::wstring& prefix) {
+        if (value.size() < prefix.size()) {
+            return false;
+        }
+        return _wcsnicmp(value.c_str(), prefix.c_str(), prefix.size()) == 0;
+    };
+    SPACELENS_REQUIRE(startsWithFold(ontoShort, shortRoot));
+    SPACELENS_REQUIRE(startsWithFold(ontoLong, longRoot));
 }
