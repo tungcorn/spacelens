@@ -66,8 +66,9 @@ ctest --preset windows-release
 with `windeployqt --no-compiler-runtime --no-system-d3d-compiler
 --no-system-dxc-compiler --release`, copies package notices and (if
 present) `LICENSE`, then runs `scripts/verify-package.ps1`. The
-validator requires `platforms\qwindows.dll` and the dumpbin Qt
-dependents, forbids Qt in the CLI stage, forbids the CLI executable and
+validator requires `platforms\qwindows.dll` and the Qt DLLs that
+`dumpbin /dependents` reports on `spacelens-gui.exe` (`Qt6Core.dll`,
+`Qt6Gui.dll`, `Qt6Widgets.dll`), forbids Qt in the CLI stage, forbids the CLI executable and
 MSVC CRT DLLs in either zip, forbids Windows SDK `dxcompiler.dll` /
 `dxil.dll` and the SDK-sized `d3dcompiler_47.dll`, writes SHA-256 sums,
 extracts the CLI zip, and re-runs the safety script.
@@ -110,7 +111,8 @@ A GitHub Release is created only when **all** of the following are true:
 
 The GUI zip is attached only when `cli_eligible` **and** the structured
 Qt review is PASS (`gui_eligible`). Otherwise the GUI zip stays on the
-workflow run.
+workflow run. The `SHA256SUMS.txt` attached to the GitHub Release lists
+only the uploaded zips. The workflow artifact may still list both.
 
 If there is no `LICENSE`, the status is `LICENSE_DECISION_REQUIRED` and
 no GitHub Release is created.

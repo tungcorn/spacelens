@@ -178,16 +178,40 @@ jobs:
           # Independent gates: LICENSE unlocks CLI. Structured Qt review
           # PASS+READY unlocks attaching the GUI zip. This job never writes
           # LICENSE, qt-redist-review.env, or QT_REDIST_REVIEWED.md.
-          assets=(dist/spacelens-cli-*.zip dist/SHA256SUMS.txt)
+          # Checksums attached to the Release must name only uploaded zips.
+          # The workflow artifact may still list both archives.
+          shopt -s nullglob
+          cli_zips=(dist/spacelens-cli-*.zip)
+          gui_zips=(dist/spacelens-gui-*.zip)
+          if [ "${#cli_zips[@]}" -ne 1 ]; then
+            echo "expected exactly one CLI zip, found ${#cli_zips[@]}" >&2
+            exit 1
+          fi
+          attached=("${cli_zips[0]}")
           notes="Unsigned prerelease. See docs/RELEASING.md."
           if [ "$GUI_ELIGIBLE" = "true" ]; then
-            assets+=(dist/spacelens-gui-*.zip)
+            if [ "${#gui_zips[@]}" -ne 1 ]; then
+              echo "gui_eligible but found ${#gui_zips[@]} GUI zip(s)" >&2
+              exit 1
+            fi
+            attached+=("${gui_zips[0]}")
             notes="$notes CLI and GUI archives attached."
           else
             notes="$notes CLI archive only. GUI zip remains a workflow artifact until the structured Qt review is PASS with source_availability=READY."
           fi
+          : > dist/SHA256SUMS-release.txt
+          for f in "${attached[@]}"; do
+            base=$(basename "$f")
+            grep -F "  ${base}" dist/SHA256SUMS.txt >> dist/SHA256SUMS-release.txt
+          done
+          if [ "$(wc -l < dist/SHA256SUMS-release.txt)" -ne "${#attached[@]}" ]; then
+            echo "filtered checksums do not match attached zip count" >&2
+            cat dist/SHA256SUMS-release.txt >&2
+            exit 1
+          fi
+          mv dist/SHA256SUMS-release.txt dist/SHA256SUMS.txt
           gh release create "${{ needs.package.outputs.tag }}" \
-            "${assets[@]}" \
+            "${attached[@]}" dist/SHA256SUMS.txt \
             --repo "${{ github.repository }}" \
             --prerelease \
             --title "SpaceLens ${{ needs.package.outputs.tag }} (prerelease)" \

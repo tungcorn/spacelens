@@ -13,7 +13,8 @@ in-tree 0.1.0 line.
 - Distribution gates are independent: a non-empty maintainer `LICENSE`
   can unlock a CLI-only GitHub Release; the GUI zip attaches only when
   `scripts/verify-qt-redist-review.ps1 -RequirePass` succeeds. Presence
-  of `docs/QT_REDIST_REVIEWED.md` is no longer a gate.
+  of `docs/QT_REDIST_REVIEWED.md` is no longer a gate. A CLI-only
+  Release checksum file lists only the uploaded zip.
 - `windeployqt` now also uses `--no-system-d3d-compiler` and
   `--no-system-dxc-compiler` so Windows SDK D3D/DXC compilers are not
   staged.
