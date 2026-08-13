@@ -75,8 +75,10 @@ The Indexed tab is discovery, visualization, and planning only:
 - No Delete / Move / Rename controls.
 - Treemap interaction is navigation/inspection only (hover, select, drill-down).
 - The “Other” treemap bucket is a visualization aggregate — never a cleanup target.
-- Cleanup Review remains an in-memory planning queue (`source=persistent_index`
-  preserves snapshot age and classification metadata).
+- Cleanup Review is a durable planning queue in
+  `%LOCALAPPDATA%\SpaceLens\state.db` (`source=persistent_index` preserves
+  snapshot age and classification metadata). Index rebuild/refresh does not
+  rewrite review evidence.
 - Open / Reveal / default-app launch are human-initiated shell actions on paths
   the user selected; missing paths surface a stale-snapshot message rather than
   rewriting the index.
@@ -178,19 +180,33 @@ Cleanup review should flag reparse-point entries when they appear.
 
 ## Stale snapshots and TOCTOU
 
-A scan is a snapshot at time T1. The filesystem at T2 may differ.
+A scan or index is a snapshot at time T1. The filesystem at T2 may differ.
 
-Future mutation execution (not implemented now) must **revalidate** before acting:
+Cleanup Review V2 already performs **explicit, metadata-only revalidation**
+when the user asks. It answers whether the reviewed object still looks like
+the captured one; it does **not** authorize deletion.
+
+Current checks:
 
 - Does the path still exist?
 - Is it still the same item type?
+- Is the strong object identity the same (`FILE_ID_INFO`, with an explicit
+  64-bit fallback that never compares as equivalent)?
 - Is it now a reparse point?
 - Is it protected by policy?
-- Has size / write time changed materially?
-- Is the target still under the expected parent?
+- Has direct size / write time / attributes changed?
+- For directories: object identity and direct metadata can match while
+  recursive evidence remains **not revalidated**.
 
-`CleanupCandidate` stores enough metadata (path, kind, size at selection,
-write time, attributes, classification) so revalidation remains possible.
+It does **not** read file contents, recurse into directories, follow the
+final-component reparse point, enable extra privileges, or relocate a missing
+item by scanning a volume for a file ID. Cancellation discards partial
+results. Missing, denied, and failed records stay until the user refreshes
+evidence or removes them.
+
+Future mutation execution (not implemented now) must still revalidate again
+immediately before acting. `Refresh Evidence` only replaces the captured
+baseline; it is not permission to delete.
 
 ## Future deletion policy (documented only)
 
@@ -226,16 +242,26 @@ with structured arguments.
 
 ## Cleanup Review (this milestone)
 
-Cleanup Review is a **planning queue**, not a deletion feature.
+Cleanup Review is a **durable planning queue**, not a deletion feature.
+Details: [`docs/CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md).
 
 Flow:
 
 ```text
-discovery → selection → review → (future) explicit human-authorized action
+discovery → add (persist captured evidence) → later reopen
+         → explicit live revalidation → review changes/warnings
+         → Cleanup Plan (text/JSON) → (future) explicit human-authorized action
 ```
 
-Available review actions today: open, reveal in Explorer, remove from review,
-clear review, copy report. **No Delete. No Move.**
+Available review actions today: revalidate all, cancel, refresh evidence,
+open, reveal in Explorer, remove from review, clear review, copy plan,
+export JSON. **No Delete. No Move.**
+
+```text
+Delete: NOT IMPLEMENTED
+Move: NOT IMPLEMENTED
+Recycle Bin: NOT IMPLEMENTED
+```
 
 ## Reclaim / stale storage candidates
 

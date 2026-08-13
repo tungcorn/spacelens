@@ -40,8 +40,11 @@ than claiming a shipped feature.
   descendant activity for directories and bounded age/count/byte summaries.
 - **Read-only reclaim analysis** that combines size, activity evidence,
   classification, reclaimability, and location policy to prioritize human review.
-- An in-memory **Cleanup Review** queue for planning and reporting. It does not
-  delete, move, or otherwise mutate filesystem content.
+- A durable **Cleanup Review V2** queue for planning and reporting. Captured
+  evidence, object identity, and last validation live in
+  `%LOCALAPPDATA%\SpaceLens\state.db` (`review_schema_version = 1`), independent
+  of replaceable per-root indexes. It does not delete, move, or otherwise
+  mutate filesystem content. See [`docs/CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md).
 - An agent-safe CLI contract with `capabilities`, `scan`, `top`, and `find`
   query surfaces, filters, versioned JSON output, and explicit read-only
   capability reporting.
@@ -92,6 +95,27 @@ The “Other” bucket folds a long tail of tiny siblings for readability only.
 Discovery presets continue to drive the result table independently of treemap
 areas. Core remains free of Qt; paintEvent never runs SQL or filesystem scans.
 
+**Cleanup Review V2** persists planning state independently of the index:
+
+```text
+Live Scan / Indexed add
+        ↓
+prepareCleanupCandidateForAdd (best-effort live identity)
+        ↓
+CleanupReviewController  (draft → persist → swap)
+        ↓
+%LOCALAPPDATA%\SpaceLens\state.db
+        ↓
+explicit Revalidate All  (metadata-only, cancellable, sequential)
+        ↓
+CleanupPlan  (overlap-aware unique size, planning-only JSON)
+```
+
+`MainWindow` owns the controller and `CleanupRevalidationSession`. Startup
+loads review rows; it does not probe the filesystem. Core JSON helpers live
+in `src/core/Json.*` so CLI and Cleanup Plan share escaping without core
+depending on CLI.
+
 Deferred work includes AI inside the product, auto-refresh on query, MFT-based
 initial scan, watch mode, duplicate detection, MCP, and any automatic
 deletion or movement. A future mutation service, if approved, must be a separately
@@ -111,10 +135,10 @@ platform/windows (IFileEnumerator, FindHandle, Explorer helpers)
 
 | Layer | Responsibility | Forbidden |
 |-------|----------------|-----------|
-| **core** | Scan algorithms, owned data model, live queries, classification, location policy, activity summaries, read-only reclaim analysis, cleanup-review values, size formatting, **persistent index** (SQLite schema, builder, query, USN refresh) | Qt types, interactive prompts, stdout policy, filesystem mutation of analyzed roots |
-| **platform** | Win32 enumeration, volume/USN read-only helpers, file identity (FRN), path/Explorer integration | Qt, CLI argument parsing, shell-command construction, journal mutation |
+| **core** | Scan algorithms, owned data model, live queries, classification, location policy, activity summaries, read-only reclaim analysis, cleanup-review values, Cleanup Plan, shared JSON/UTF-8 helpers, size formatting, **persistent index**, **durable review state** (`state.db`) | Qt types, interactive prompts, stdout policy, filesystem mutation of analyzed roots |
+| **platform** | Win32 enumeration, volume/USN read-only helpers, file identity (FRN), metadata-only cleanup probes (`FILE_ID_INFO`), path/Explorer integration | Qt, CLI argument parsing, shell-command construction, journal mutation, following reparse points for identity |
 | **cli** | argv parsing, capability declaration, human/JSON rendering, filters, exit codes, Ctrl+C → `stop_token`, index/refresh/query commands | GUI widgets, delete/move/execute commands |
-| **gui/app** | Qt windows, models/views, review planning, threads↔signals bridge | Scan algorithms, direct ownership of Win32 enumeration |
+| **gui/app** | Qt windows, models/views, review planning, `CleanupRevalidationSession`, threads↔signals bridge | Scan algorithms, direct ownership of Win32 enumeration |
 
 Index storage is AppData-only metadata. Core may create/replace files under
 `%LOCALAPPDATA%\SpaceLens\`; it must never delete or move user content under a
@@ -206,12 +230,25 @@ No layer emits or stores `safe_to_delete`. That field is intentionally absent.
 
 ### Cleanup Review
 
-`CleanupReview` owns value-type `CleanupCandidate` records for a human planning
-queue. A selected record retains the path, item kind, size at selection, write
-time, attributes, classification, and reason so a future action layer could
-revalidate it. The review queue currently supports planning operations such as
-add, remove from review, clear, and copy a report. It has no filesystem delete or
-move operation.
+`CleanupReview` is the in-memory value model. `CleanupReviewController` is the
+durable facade: mutate a draft, persist the whole logical operation, then swap
+memory only after commit. Default storage is
+`%LOCALAPPDATA%\SpaceLens\state.db` (`review_schema_version = 1`), independent of
+`indexes/*/index.db`.
+
+A candidate keeps captured evidence, preferred `FILE_ID_INFO` identity (with an
+explicit 64-bit file-index fallback), historical directory aggregate, and last
+validation. Revalidation is metadata-only, explicit, sequential, and
+cancellable; cancellation discards partial batches. A directory whose object
+identity and direct metadata still match is
+`DirectUnchangedRecursiveNotRevalidated`, never unqualified `Unchanged`.
+
+`CleanupPlan` computes overlap-aware unique selected logical size and emits
+deterministic UTF-8 text/JSON (`plan_schema_version: 1`, `planning_only`,
+`read_only`, `filesystem_mutation: false`). Optional `%USERPROFILE%` redaction
+is serialization-only. There is no filesystem delete or move operation.
+
+See [`docs/CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md).
 
 ## Targets
 
@@ -239,8 +276,15 @@ Building the CLI must not require a running GUI. Qt is required only when
 - **`LocationSafety`** — deterministic location-policy value.
 - **`ReclaimCandidate` / `ReclaimQuery`** — read-only analysis values; neither
   carries mutation authority.
-- **`CleanupReview` / `CleanupCandidate`** — an owning in-memory review queue of
-  candidate values, not owners of filesystem objects.
+- **`CleanupReview` / `CleanupCandidate`** — value-owned planning records
+  (captured/current evidence, identity, validation). Not owners of filesystem
+  objects or mutation permission.
+- **`CleanupReviewStore` / `CleanupReviewController`** — independent SQLite
+  review state and transactional draft/persist/swap facade.
+- **`CleanupPlan`** — pure overlap-aware planning transform and text/JSON
+  export. Shared JSON helpers live in `core/Json`.
+- **`ICleanupMetadataReader` / `CleanupRevalidation`** — Qt-free metadata
+  probe and sequential cancellable compare.
 - **`IFileEnumerator`** — platform-neutral listing; tests use fakes.
 - **`ScanEngine`** — synchronous recursive scan; accepts `std::stop_token` and a
   throttled progress callback; contains no Qt.
@@ -250,6 +294,9 @@ GUI-only:
 
 - **`ScanSession`** — owns `std::jthread`, requests cooperative cancellation, and
   marshals progress/completion to the GUI thread.
+- **`CleanupRevalidationSession`** — MainWindow-owned sequential metadata
+  worker; applies only a completed validation batch; destruction requests stop
+  and joins.
 - A Qt model/view may reference the currently published snapshot, but it does
   not own or mutate the core scan records through raw pointers.
 
@@ -378,8 +425,10 @@ commands, hidden aliases, generic shell execution, or automatic conversion of AI
 text into filesystem operations.
 
 The GUI may present inspection and Cleanup Review planning. Review actions such as
-open, reveal in Explorer, remove from review, clear review, and copy a report are
-not filesystem mutation. If destructive actions are ever approved, they belong in
+open, reveal in Explorer, revalidate, refresh evidence, remove from review, clear
+review, copy a plan, and export JSON are not filesystem mutation. Revalidation
+reads attributes only and never follows a reparse point merely to make identity
+comparison succeed. If destructive actions are ever approved, they belong in
 a separately permissioned maintenance executable/service or a clearly isolated
 human-authorized GUI path. That surface must revalidate every selected candidate
 against the filesystem and deterministic policy before acting.
@@ -394,7 +443,8 @@ replaced as a whole for a new scan.
 ## Concurrency and cancellation
 
 - Core scan is synchronous + `stop_token` and is straightforward to test.
-- GUI runs the engine on `std::jthread` via `ScanSession`.
+- GUI runs the engine on `std::jthread` via `ScanSession`, and Cleanup Review
+  revalidation on `CleanupRevalidationSession` (one probe at a time).
 - CLI runs the engine on the main thread (or a worker) and maps console cancel to
   `stop_source`.
 - No global mutex is held during filesystem I/O.

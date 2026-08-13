@@ -25,7 +25,8 @@ spacelens_core  →  spacelens (CLI, read-only)
   `version` with versioned JSON and `filesystem_mutation: false`
 - GUI: Live Scan + **Indexed** storage discovery (presets, search, filters,
   breadcrumb navigation, storage overview, interactive squarified treemap,
-  inspector, Explorer/copy, Cleanup Review planning only — no delete/move)
+  inspector, Explorer/copy, durable Cleanup Review V2 planning only — no
+  delete/move)
 - Not yet: auto-refresh on query, journal creation, duplicates, MFT initial
   scan, MCP, product AI, automatic deletion, or automatic movement
 
@@ -37,7 +38,9 @@ spacelens_core  →  spacelens (CLI, read-only)
 - Protected/Sensitive/Ordinary/Unknown location safety policy
 - Write-based file and descendant-based directory activity summaries
 - Read-only reclaim analysis for human review prioritization
-- Cleanup Review planning data with no delete or move operation
+- Durable Cleanup Review V2: captured evidence, strong object identity,
+  metadata-only revalidation, overlap-aware Cleanup Plan, and planning-only
+  JSON — no delete or move operation
 - Persistent SQLite index for fast repeated filtered queries
 - Optional USN-based incremental refresh (`index refresh`) — read-only journal
   access; full rebuild required on discontinuity or access denied
@@ -50,12 +53,13 @@ spacelens_core  →  spacelens (CLI, read-only)
   rescanning; search name/path/ext; storage overview with non-overlapping
   logical-size metrics; interactive squarified treemap of immediate children
   (with “Other” aggregation); drill into folders via treemap or breadcrumbs;
-  add snapshot-provenance items to Cleanup Review
+  add snapshot-provenance items to durable Cleanup Review
 - Directory reparse points not followed by default; access errors are non-fatal
   and counted
 
 **Safety contract:** the CLI is read-only by design. See
 [`docs/SAFETY.md`](docs/SAFETY.md). Index design: [`docs/INDEX.md`](docs/INDEX.md).
+Cleanup Review: [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md).
 Measured baselines: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ## Build prerequisites
@@ -122,6 +126,27 @@ All Indexed queries and the treemap hit the persistent SQLite snapshot — they
 do not rescan the analyzed tree. Sizes are **logical** (not physical size-on-disk).
 See [`docs/INDEX.md`](docs/INDEX.md).
 
+### Cleanup Review V2 (GUI)
+
+1. Add candidates from **Live Scan** or **Indexed** discovery. SpaceLens
+   persists captured evidence and best-effort object identity under
+   `%LOCALAPPDATA%\SpaceLens\state.db`.
+2. Close and reopen later — review state survives; indexes can be rebuilt
+   without erasing it. Startup does not revalidate automatically.
+3. Open **Cleanup Review** and run **Revalidate All** (cancellable,
+   metadata-only). Missing, changed, denied, and failed records stay until
+   you refresh evidence or remove them.
+4. Inspect identity / direct-metadata / recursive-not-revalidated facts
+   separately. A directory is never shown as simply Unchanged when recursive
+   evidence was not revalidated.
+5. **Refresh Evidence** replaces the captured baseline with current
+   metadata. It never authorizes deletion.
+6. **Copy Plan** or **Export JSON** (`plan_schema_version: 1`,
+   `filesystem_mutation: false`). Optional `%USERPROFILE%` redaction is
+   serialization-only.
+
+See [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md).
+
 Tests:
 
 ```powershell
@@ -129,7 +154,8 @@ ctest --test-dir build --output-on-failure
 ```
 
 See [`docs/CLI.md`](docs/CLI.md), [`docs/SAFETY.md`](docs/SAFETY.md),
-[`docs/INDEX.md`](docs/INDEX.md), [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md),
+[`docs/INDEX.md`](docs/INDEX.md), [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md),
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md),
 and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Architecture

@@ -130,9 +130,37 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 ## Cleanup candidate ownership
 
 - **Why used:** Cleanup Review is a planning queue, not a filesystem-operation owner.
-- **Ownership:** `CleanupReview` owns a `std::vector<CleanupCandidate>` by value. A candidate owns its path and copied selection metadata; it does not own a file handle, directory, or permission to mutate the filesystem.
-- **Lifetime:** A candidate remains valid until removed or the review queue is cleared. Its snapshot metadata is retained for future revalidation, not treated as current filesystem truth.
-- **Bug prevented:** Review state accidentally becoming delete authority, dangling references to scan entries, and hidden resource ownership in a UI queue.
+- **Ownership:** `CleanupReview` owns a `std::vector<CleanupCandidate>` by value. A candidate owns its path, captured/current evidence, identity, and validation; it does not own a file handle, directory, or permission to mutate the filesystem. `CleanupReviewController` owns the durable store and is the only mutation path.
+- **Lifetime:** Candidates persist in `%LOCALAPPDATA%\SpaceLens\state.db` across process restarts. In-memory state is swapped only after a successful transaction. Snapshot metadata is captured evidence, not current filesystem truth, until the user revalidates or refreshes.
+- **Bug prevented:** Review state accidentally becoming delete authority, dangling references to scan or index entries, and losing planning evidence when an index is rebuilt.
+
+## Durable review store
+
+- **Why used:** Review evidence must survive closing SpaceLens and must not be tied to a replaceable `indexes/*/index.db`.
+- **Ownership:** `CleanupReviewStore` owns one `SqliteDb` at `spaceLensReviewStatePath()`. Schema marker is independent: `review_schema_version = 1`. Tests inject a temporary database path.
+- **Lifetime:** `openDefault()` loads items and last validation without probing the filesystem. Mutations draft a `CleanupReview`, persist the whole operation, then swap memory after commit. Failed writes leave both memory and disk unchanged.
+- **Bug prevented:** Index rebuild/refresh silently rewriting review rows; partial validation batches surviving cancel; newer/malformed schemas being “fixed” by replacing a valid database.
+
+## Object identity for review
+
+- **Why used:** Path equality cannot tell a deleted-and-recreated file from the same object.
+- **Ownership:** `CleanupIdentity` stores source plus either `VolumeSerialNumber + FILE_ID_128` (`GetFileInformationByHandleEx` / `FileIdInfo`) or the weaker `BY_HANDLE_FILE_INFORMATION` 64-bit file-index fallback. Source is part of equality.
+- **Lifetime:** Identity is captured best-effort at add time and compared only during explicit revalidation. Unavailable identity is represented explicitly; zero is never a match. The two forms never compare as equivalent.
+- **Bug prevented:** Treating a same-path replacement as unchanged, merging `FILE_ID_128` with a 64-bit fallback, and following a reparse point just to make comparison succeed.
+
+## Cleanup revalidation session
+
+- **Why used:** Metadata probes must not freeze the GUI or commit a half-finished pass.
+- **Ownership:** `MainWindow` owns `CleanupRevalidationSession`. The session owns one `std::jthread` and snapshots candidates in stable order. The modal dialog observes signals; it does not own the worker.
+- **Lifetime:** One probe at a time, `stop_token` between candidates, queued progress/completion on the GUI thread. Cancellation clears partial updates. Destruction requests stop and joins. Only a completed batch is applied through `replaceValidationBatch`.
+- **Bug prevented:** Callbacks into a destroyed dialog, committing cancelled probes, one thread per candidate, and treating a failed persist as an in-memory success.
+
+## Shared core JSON
+
+- **Why used:** Cleanup Plan and CLI both need deterministic UTF-8 JSON escaping; core must not include CLI headers.
+- **Ownership:** `src/core/Json.*` is the single implementation. CLI wrappers delegate; Cleanup Plan does not keep a private escaper.
+- **Lifetime:** Redaction of `%USERPROFILE%` happens only while rendering text/JSON. Stored candidate paths are never rewritten.
+- **Bug prevented:** Divergent escaping, core depending on CLI, and redaction mutating durable review state.
 
 ## SQLite RAII (`SqliteDb` / `SqliteStmt` / `SqliteTxn`)
 
@@ -171,10 +199,10 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 
 ## TOCTOU and future mutation gates
 
-- **Why used:** A scan is evidence at T1; a future action may run against a different filesystem state at T2.
-- **Ownership:** `CleanupCandidate` owns the path, item kind, size-at-selection, write time, attributes, and classification needed to request revalidation. A future mutation layer owns the revalidation decision, not the analysis layer or AI output.
-- **Lifetime:** Before any future action, recheck existence, item kind, reparse status, protected-location policy, expected parent, and material size/write-time changes. Reject stale or ambiguous candidates.
-- **Bug prevented:** Acting on a replaced path, traversing a newly introduced junction, deleting changed data, or trusting an old review selection as current authorization.
+- **Why used:** A scan or index is evidence at T1; revalidation and any future action run against a different filesystem state at T2.
+- **Ownership:** `CleanupCandidate` owns captured evidence and identity. `ICleanupMetadataReader` owns one no-follow metadata probe. A future mutation layer would own the action decision; analysis, the Cleanup Plan, and AI output never do.
+- **Lifetime:** Explicit revalidation compares existence, type, identity, reparse, location policy, and direct size/write/attributes. Directory recursive evidence stays historical unless separately revalidated. Refresh Evidence replaces the captured baseline only. Before any future action, recheck again and reject stale or ambiguous candidates.
+- **Bug prevented:** Acting on a replaced path, traversing a newly introduced junction, comparing recursive directory size to a handle size, deleting changed data, or treating Refresh Evidence / a plan export as authorization.
 
 ## Path normalization for policy and review keys
 

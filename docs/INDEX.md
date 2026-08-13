@@ -32,11 +32,16 @@ analyzed user data.
 ## Storage layout
 
 ```text
-%LOCALAPPDATA%\SpaceLens\indexes\<rootKey>\
-    index.db              published, ready for query
-    index.db.building     staging during full rebuild (ephemeral)
-    index.db.bak          temporary during publish swap
+%LOCALAPPDATA%\SpaceLens\
+    state.db              durable Cleanup Review (independent; see CLEANUP_REVIEW.md)
+    indexes\<rootKey>\
+        index.db              published, ready for query
+        index.db.building     staging during full rebuild (ephemeral)
+        index.db.bak          temporary during publish swap
 ```
+
+`state.db` is not an index. Rebuild, USN refresh, and deleting `index.db` must
+not touch review rows.
 
 - **rootKey**: FNV-1a 64-bit hex of the case-folded normalized root path
 - **index_schema_version**: **2** (CLI JSON still uses `schema_version: 1` for the
@@ -251,7 +256,10 @@ overrides still win when the user changes them.
 - Queries always declare **snapshot** source; inspector shows age / indexed-at /
   matched rule id when stored.
 - Cleanup Review items from the index carry `source=persistent_index`, age, and
-  captured classification metadata.
+  captured classification metadata. They are stored in independent
+  `%LOCALAPPDATA%\SpaceLens\state.db` (`review_schema_version = 1`). Rebuilding,
+  refreshing, or deleting an index must not erase or rewrite those rows. See
+  [`CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md).
 - Refresh / rebuild are **explicit**; full rebuild is never silent after
   `full_rebuild_required`. Incremental USN may require elevation — the GUI does
   not spam UAC; it states incremental unavailable and offers Rebuild.
