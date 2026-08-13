@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/CleanupRevalidationSession.hpp"
+#include "app/MaintenanceSession.hpp"
 #include "app/ScanSession.hpp"
 #include "core/Classification.hpp"
 #include "core/CleanupReviewStore.hpp"
@@ -95,6 +96,7 @@ private:
     DirIndex m_currentDir = InvalidDirIndex;
     CleanupReviewController m_reviewController;
     std::unique_ptr<CleanupRevalidationSession> m_revalidationSession;
+    std::unique_ptr<MaintenanceSession> m_maintenanceSession;
 
     QTabWidget* m_tabs = nullptr;
     IndexBrowserPage* m_indexPage = nullptr;

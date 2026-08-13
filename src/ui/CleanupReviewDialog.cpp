@@ -1,9 +1,11 @@
 #include "ui/CleanupReviewDialog.hpp"
 
 #include "app/CleanupRevalidationSession.hpp"
+#include "app/MaintenanceSession.hpp"
 #include "core/CleanupPlan.hpp"
 #include "core/CleanupReview.hpp"
 #include "core/CleanupReviewStore.hpp"
+#include "core/Maintenance.hpp"
 #include "core/SizeFormatter.hpp"
 #include "platform/windows/ExplorerIntegration.hpp"
 
@@ -23,6 +25,14 @@
 #include <QSplitter>
 #include <QTextEdit>
 #include <QVBoxLayout>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
 
 #include <algorithm>
 #include <map>
@@ -59,14 +69,17 @@ QString itemLabel(const CleanupCandidate& item, bool overlapSuppressed)
         reasonText = QStringLiteral(" — %1").arg(
             QString::fromStdString(reasons.front()));
     }
-    return QStringLiteral("[%1] %2\n  %3 · %4%5%6")
+    return QStringLiteral("[%1] %2\n  %3 · %4%5%6%7")
         .arg(QString::fromUtf8(toString(item.kind)))
         .arg(QString::fromStdWString(item.path))
         .arg(QString::fromStdString(SizeFormatter::format(item.sizeAtSelection)))
         .arg(QString::fromUtf8(toString(item.validation.state)))
         .arg(reasonText)
         .arg(overlapSuppressed ? QStringLiteral(" · overlap suppressed")
-                               : QString());
+                               : QString())
+        .arg(item.lifecycle == CleanupItemLifecycle::Recycled
+                 ? QStringLiteral(" · Recycled")
+                 : QString());
 }
 
 QString itemDetails(const CleanupCandidate& item, bool overlapSuppressed)
@@ -102,15 +115,17 @@ QString itemDetails(const CleanupCandidate& item, bool overlapSuppressed)
                "Captured safety: %8\n"
                "Current safety: %9\n"
                "Identity: %10\n"
-               "Validation: %11\n"
-               "Reasons: %12\n"
-               "Identity matched: %13\n"
-               "Direct metadata unchanged: %14\n"
-               "Recursive evidence revalidated: %15\n"
-               "Overlap: %16\n"
-               "Diffs: %17"
-               "%18\n\n"
-               "Planning only — this is not permission to delete or move.")
+               "Lifecycle: %11\n"
+               "Validation: %12\n"
+               "Reasons: %13\n"
+               "Identity matched: %14\n"
+               "Direct metadata unchanged: %15\n"
+               "Recursive evidence revalidated: %16\n"
+               "Overlap: %17\n"
+               "Diffs: %18"
+               "%19\n\n"
+               "Recycle Bin moves require a fresh preflight, explicit confirmation, "
+               "and a final identity guard. This screen does not permanently delete.")
         .arg(QString::fromStdWString(item.path))
         .arg(QString::fromUtf8(toString(item.kind)))
         .arg(QString::fromStdString(SizeFormatter::format(item.sizeAtSelection)))
@@ -121,6 +136,7 @@ QString itemDetails(const CleanupCandidate& item, bool overlapSuppressed)
         .arg(QString::fromUtf8(toString(item.capturedSafety)))
         .arg(QString::fromUtf8(toString(item.currentEvidence.safety)))
         .arg(QString::fromUtf8(toString(identityOf(item).source)))
+        .arg(QString::fromUtf8(toString(item.lifecycle)))
         .arg(QString::fromUtf8(toString(item.validation.state)))
         .arg(reasonList.join(QStringLiteral(", ")))
         .arg(item.validation.objectIdentityMatched ? QStringLiteral("yes")
@@ -138,17 +154,29 @@ QString itemDetails(const CleanupCandidate& item, bool overlapSuppressed)
         .arg(directoryNote);
 }
 
+FileTimeTicks nowFileTimeTicks()
+{
+    FILETIME ft{};
+    ::GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER value;
+    value.LowPart = ft.dwLowDateTime;
+    value.HighPart = ft.dwHighDateTime;
+    return value.QuadPart;
+}
+
 }  // namespace
 
 CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
                                          CleanupRevalidationSession& session,
+                                         MaintenanceSession& maintenance,
                                          QWidget* parent)
     : QDialog(parent)
     , m_controller(controller)
     , m_session(session)
+    , m_maintenance(maintenance)
 {
     setWindowTitle(QStringLiteral("Cleanup Review"));
-    resize(860, 560);
+    resize(960, 560);
 
     auto* root = new QVBoxLayout(this);
     m_summary = new QLabel(this);
@@ -175,7 +203,9 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     root->addWidget(m_status);
 
     auto* note = new QLabel(
-        QStringLiteral("Planning only — no files will be deleted or moved."),
+        QStringLiteral(
+            "Cleanup Review is planning-only until you confirm Move to Recycle "
+            "Bin. That path is Recycle Bin only — not permanent deletion."),
         this);
     note->setStyleSheet(QStringLiteral("color: #666;"));
     root->addWidget(note);
@@ -194,6 +224,8 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     m_revealButton = new QPushButton(QStringLiteral("Show in Explorer"), this);
     m_removeButton = new QPushButton(QStringLiteral("Remove from Review"), this);
     m_clearButton = new QPushButton(QStringLiteral("Clear Review"), this);
+    m_recycleButton =
+        new QPushButton(QStringLiteral("Move to Recycle Bin…"), this);
     auto* copyBtn = new QPushButton(QStringLiteral("Copy Plan"), this);
     auto* exportBtn = new QPushButton(QStringLiteral("Export JSON"), this);
     auto* closeBtn = new QPushButton(QStringLiteral("Close"), this);
@@ -204,6 +236,7 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     buttons->addWidget(m_revealButton);
     buttons->addWidget(m_removeButton);
     buttons->addWidget(m_clearButton);
+    buttons->addWidget(m_recycleButton);
     buttons->addWidget(copyBtn);
     buttons->addWidget(exportBtn);
     buttons->addStretch(1);
@@ -226,6 +259,8 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
             &CleanupReviewDialog::onRemoveSelected);
     connect(m_clearButton, &QPushButton::clicked, this,
             &CleanupReviewDialog::onClear);
+    connect(m_recycleButton, &QPushButton::clicked, this,
+            &CleanupReviewDialog::onMoveToRecycleBin);
     connect(copyBtn, &QPushButton::clicked, this,
             &CleanupReviewDialog::onCopyPlan);
     connect(exportBtn, &QPushButton::clicked, this,
@@ -235,6 +270,12 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
             &CleanupReviewDialog::onRevalidationProgress);
     connect(&m_session, &CleanupRevalidationSession::finished, this,
             &CleanupReviewDialog::onRevalidationFinished);
+    connect(&m_maintenance, &MaintenanceSession::planReady, this,
+            &CleanupReviewDialog::onMaintenancePlanReady);
+    connect(&m_maintenance, &MaintenanceSession::progressUpdated, this,
+            &CleanupReviewDialog::onMaintenanceProgress);
+    connect(&m_maintenance, &MaintenanceSession::finished, this,
+            &CleanupReviewDialog::onMaintenanceFinished);
 
     if (m_session.isRunning()) {
         m_progress->setVisible(true);
@@ -242,8 +283,19 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
         m_progress->setValue(static_cast<int>(m_session.probed()));
         showStatus(QStringLiteral("Revalidating metadata…"));
     }
+    if (m_maintenance.isExecuting()) {
+        m_progress->setVisible(true);
+        m_progress->setRange(0, static_cast<int>(m_maintenance.total()));
+        m_progress->setValue(static_cast<int>(m_maintenance.progressed()));
+        showStatus(QStringLiteral("Moving eligible files to the Recycle Bin…"));
+    }
 
     refresh();
+}
+
+CleanupReviewDialog::~CleanupReviewDialog()
+{
+    m_maintenance.abortIfNotExecuting();
 }
 
 void CleanupReviewDialog::refresh()
@@ -259,12 +311,19 @@ void CleanupReviewDialog::refresh()
         }
     }
     const auto counts = formatStateCounts(review);
+    std::uint64_t recycled = 0;
+    for (const auto& item : review.items()) {
+        if (item.lifecycle == CleanupItemLifecycle::Recycled) {
+            ++recycled;
+        }
+    }
     m_summary->setText(
         QStringLiteral(
-            "Selected: %1 items — Unique logical size: %2\n%3")
+            "Selected: %1 items — Unique logical size: %2 — Recycled: %3\n%4")
             .arg(review.size())
             .arg(QString::fromStdString(
                 SizeFormatter::format(review.totalLogicalSize())))
+            .arg(recycled)
             .arg(counts.isEmpty() ? QStringLiteral("No validation states yet.")
                                   : counts));
 
@@ -418,8 +477,146 @@ void CleanupReviewDialog::onRevalidateAll()
 
 void CleanupReviewDialog::onCancelRevalidate()
 {
+    if (m_maintenance.isRunning()) {
+        m_maintenance.cancel();
+        showStatus(QStringLiteral("Cancelling Recycle Bin operation…"));
+        return;
+    }
     m_session.cancel();
     showStatus(QStringLiteral("Cancelling revalidation…"));
+}
+
+void CleanupReviewDialog::onMoveToRecycleBin()
+{
+    if (m_session.isRunning() || m_maintenance.isRunning()) {
+        showStatus(QStringLiteral(
+            "Wait for the current review or Recycle Bin operation to finish."));
+        return;
+    }
+    const auto ids = selectedIds();
+    if (ids.empty()) {
+        showStatus(QStringLiteral(
+            "Select one or more review items before moving to the Recycle Bin."));
+        return;
+    }
+    if (!m_maintenance.startPrepare(ids)) {
+        showStatus(QStringLiteral(
+            "Could not start Recycle Bin preflight. Review may be busy."));
+        return;
+    }
+    m_progress->setVisible(true);
+    m_progress->setRange(0, 0);
+    showStatus(QStringLiteral(
+        "Checking selected files for Recycle Bin eligibility…"));
+    updateActionState();
+}
+
+void CleanupReviewDialog::onMaintenancePlanReady(bool ok, const QString& message)
+{
+    m_progress->setVisible(false);
+    showStatus(message);
+    updateActionState();
+    if (!ok) {
+        return;
+    }
+    confirmAndExecute();
+}
+
+void CleanupReviewDialog::confirmAndExecute()
+{
+    const auto plan = m_maintenance.lastPlan();
+    if (plan.eligibleCount == 0) {
+        QStringList blocked;
+        for (const auto& item : plan.items) {
+            if (!item.eligible) {
+                blocked << QStringLiteral("%1 — %2")
+                               .arg(QString::fromStdWString(item.path))
+                               .arg(QString::fromUtf8(toString(item.blockReason)));
+            }
+        }
+        QMessageBox::information(
+            this, QStringLiteral("Move to Recycle Bin"),
+            QStringLiteral(
+                "No selected files are eligible to move to the Recycle Bin.\n\n"
+                "Selected: %1\nBlocked: %2\nSelected logical size: %3\n\n%4")
+                .arg(plan.selectedCount)
+                .arg(plan.blockedCount)
+                .arg(QString::fromStdString(
+                    SizeFormatter::format(plan.selectedLogicalBytes)))
+                .arg(blocked.join(QStringLiteral("\n"))));
+        m_maintenance.abortIfNotExecuting();
+        updateActionState();
+        return;
+    }
+
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(QStringLiteral("Move to Recycle Bin"));
+    box.setText(QStringLiteral("Move %1 eligible file(s) to the Recycle Bin?")
+                    .arg(plan.eligibleCount));
+    box.setInformativeText(
+        QStringLiteral(
+            "Selected: %1 file(s) — %2\n"
+            "Eligible: %3 file(s) — %4\n"
+            "Blocked: %5 file(s)\n\n"
+            "The Recycle Bin still occupies storage. This is not permanent "
+            "deletion. SpaceLens will not empty the Recycle Bin.\n"
+            "Directories, reparse points, protected/sensitive/unknown "
+            "locations, and items without a matching strong identity are "
+            "never recycled.")
+            .arg(plan.selectedCount)
+            .arg(QString::fromStdString(
+                SizeFormatter::format(plan.selectedLogicalBytes)))
+            .arg(plan.eligibleCount)
+            .arg(QString::fromStdString(
+                SizeFormatter::format(plan.eligibleLogicalBytes)))
+            .arg(plan.blockedCount));
+    auto* moveButton = box.addButton(QStringLiteral("Move to Recycle Bin"),
+                                     QMessageBox::AcceptRole);
+    box.addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
+    box.exec();
+    if (box.clickedButton() != moveButton) {
+        m_maintenance.abortIfNotExecuting();
+        showStatus(QStringLiteral("Recycle Bin operation cancelled."));
+        updateActionState();
+        return;
+    }
+    if (!m_maintenance.startExecute(nowFileTimeTicks())) {
+        showStatus(QStringLiteral("Could not start the Recycle Bin operation."));
+        updateActionState();
+        return;
+    }
+    m_progress->setVisible(true);
+    m_progress->setRange(0, static_cast<int>(plan.eligibleCount));
+    m_progress->setValue(0);
+    showStatus(QStringLiteral("Moving eligible files to the Recycle Bin…"));
+    updateActionState();
+}
+
+void CleanupReviewDialog::onMaintenanceProgress(quint64 done, quint64 total)
+{
+    m_progress->setVisible(true);
+    m_progress->setRange(0, static_cast<int>(total));
+    m_progress->setValue(static_cast<int>(done));
+}
+
+void CleanupReviewDialog::onMaintenanceFinished(bool completed,
+                                               const QString& message)
+{
+    m_progress->setVisible(false);
+    showStatus(message);
+    if (!completed) {
+        QMessageBox::warning(this, QStringLiteral("Move to Recycle Bin"),
+                             message);
+    } else if (m_maintenance.lastReceipt().unexpectedPermanentRemoval) {
+        QMessageBox::critical(
+            this, QStringLiteral("Move to Recycle Bin"),
+            QStringLiteral(
+                "A file left its source path without Recycle Bin item "
+                "evidence. Remaining files were not attempted.\n\n%1")
+                .arg(message));
+    }
+    refresh();
 }
 
 void CleanupReviewDialog::onSelectionChanged()
@@ -486,17 +683,20 @@ std::optional<std::uint64_t> CleanupReviewDialog::singleSelectedId() const
 
 void CleanupReviewDialog::updateActionState()
 {
-    const bool running = m_session.isRunning();
+    const bool revalidating = m_session.isRunning();
+    const bool maintaining = m_maintenance.isRunning();
+    const bool busy = revalidating || maintaining;
     const bool hasItems = !m_controller.review().empty();
     const bool single = singleSelectedId().has_value();
     const bool any = !selectedIds().empty();
-    m_revalidateButton->setEnabled(!running && hasItems);
-    m_cancelButton->setEnabled(running);
-    m_refreshEvidenceButton->setEnabled(!running && single);
+    m_revalidateButton->setEnabled(!busy && hasItems);
+    m_cancelButton->setEnabled(busy);
+    m_refreshEvidenceButton->setEnabled(!busy && single);
     m_openButton->setEnabled(single);
     m_revealButton->setEnabled(single);
-    m_removeButton->setEnabled(!running && any);
-    m_clearButton->setEnabled(!running && hasItems);
+    m_removeButton->setEnabled(!busy && any);
+    m_clearButton->setEnabled(!busy && hasItems);
+    m_recycleButton->setEnabled(!busy && any);
 }
 
 void CleanupReviewDialog::showStatus(const QString& message)

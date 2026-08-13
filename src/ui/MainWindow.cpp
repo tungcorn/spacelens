@@ -72,6 +72,8 @@ MainWindow::MainWindow(QWidget* parent)
     const auto reviewStatus = m_reviewController.openDefault();
     m_revalidationSession = std::make_unique<CleanupRevalidationSession>(
         m_reviewController, this);
+    m_maintenanceSession =
+        std::make_unique<MaintenanceSession>(m_reviewController, this);
 
     buildUi();
     updateActionState();
@@ -976,10 +978,11 @@ void MainWindow::onAddToReview()
 
 void MainWindow::onShowReview()
 {
-    if (!m_revalidationSession) {
+    if (!m_revalidationSession || !m_maintenanceSession) {
         return;
     }
-    CleanupReviewDialog dialog(m_reviewController, *m_revalidationSession, this);
+    CleanupReviewDialog dialog(m_reviewController, *m_revalidationSession,
+                               *m_maintenanceSession, this);
     dialog.exec();
     setStatusMessage(QStringLiteral("Cleanup Review: %1 item(s)")
                          .arg(m_reviewController.review().size()));

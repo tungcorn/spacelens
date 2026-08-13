@@ -210,6 +210,8 @@ if(SPACELENS_BUILD_GUI)
         src/app/CleanupRevalidationSession.cpp
         src/app/DuplicateDetectionSession.hpp
         src/app/DuplicateDetectionSession.cpp
+        src/app/MaintenanceSession.hpp
+        src/app/MaintenanceSession.cpp
         src/ui/MainWindow.hpp
         src/ui/MainWindow.cpp
         src/ui/IndexBrowserPage.hpp
@@ -225,6 +227,7 @@ if(SPACELENS_BUILD_GUI)
     target_link_libraries(SpaceLens
         PRIVATE
             spacelens_core
+            spacelens_maintenance
             Qt6::Widgets
             Qt6::Concurrent
     )

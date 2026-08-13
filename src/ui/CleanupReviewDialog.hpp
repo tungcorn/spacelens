@@ -17,6 +17,7 @@ namespace spacelens {
 
 class CleanupReviewController;
 class CleanupRevalidationSession;
+class MaintenanceSession;
 
 class CleanupReviewDialog final : public QDialog {
     Q_OBJECT
@@ -24,7 +25,9 @@ class CleanupReviewDialog final : public QDialog {
 public:
     CleanupReviewDialog(CleanupReviewController& controller,
                         CleanupRevalidationSession& session,
+                        MaintenanceSession& maintenance,
                         QWidget* parent = nullptr);
+    ~CleanupReviewDialog() override;
 
     void refresh();
 
@@ -38,18 +41,24 @@ private slots:
     void onRefreshEvidence();
     void onRevalidateAll();
     void onCancelRevalidate();
+    void onMoveToRecycleBin();
     void onSelectionChanged();
     void onRevalidationProgress(quint64 probed, quint64 total);
     void onRevalidationFinished(bool completed, const QString& message);
+    void onMaintenancePlanReady(bool ok, const QString& message);
+    void onMaintenanceProgress(quint64 done, quint64 total);
+    void onMaintenanceFinished(bool completed, const QString& message);
 
 private:
     [[nodiscard]] std::vector<std::uint64_t> selectedIds() const;
     [[nodiscard]] std::optional<std::uint64_t> singleSelectedId() const;
     void updateActionState();
     void showStatus(const QString& message);
+    void confirmAndExecute();
 
     CleanupReviewController& m_controller;
     CleanupRevalidationSession& m_session;
+    MaintenanceSession& m_maintenance;
     QLabel* m_summary = nullptr;
     QLabel* m_status = nullptr;
     QListWidget* m_list = nullptr;
@@ -63,6 +72,7 @@ private:
     QPushButton* m_revealButton = nullptr;
     QPushButton* m_removeButton = nullptr;
     QPushButton* m_clearButton = nullptr;
+    QPushButton* m_recycleButton = nullptr;
 };
 
 }  // namespace spacelens
