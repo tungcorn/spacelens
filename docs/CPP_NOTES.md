@@ -273,6 +273,21 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Lifetime:** Use queued delivery (`QMetaObject::invokeMethod(..., Qt::QueuedConnection)` or equivalent) and ensure session destruction requests stop and joins before session-owned state disappears.
 - **Bug prevented:** Cross-thread widget access, event-loop races, callbacks into destroyed windows, and completion handlers reading partially published results.
 
+## First-party MSVC warnings and `/analyze`
+
+- **Why used:** Release Engineering V0.1 treats first-party core, CLI, and
+  maintenance as a warnings-as-errors surface. SQLite, Qt headers, and
+  generated moc/uic stay outside that gate.
+- **Ownership:** `cmake/SpaceLensWarnings.cmake` applies `/W4 /permissive-`
+  and optional `/WX` per target. `/analyze /analyze:external-` is a separate
+  preset (`windows-analyze`) and is never combined with `/WX`, so analyzer
+  C6xxx noise cannot fail a `/WX` build.
+- **Lifetime:** `/WX` is the default for those first-party targets. `/analyze`
+  is off unless `SPACELENS_MSVC_ANALYZE=ON`.
+- **Bug prevented:** Shipping first-party C4530-class noise as “clean”, and
+  failing CI on third-party or analyzer warnings that are not confirmed
+  product defects.
+
 ## LastAccessTime is advisory
 
 - **Why used:** Windows last-access updates can be disabled, delayed, or caused by scanners and backup tools.

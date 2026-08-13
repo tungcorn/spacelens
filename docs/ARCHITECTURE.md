@@ -275,15 +275,48 @@ See [`docs/CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md).
 | CMake target | Kind | Output (Windows) | Links |
 |--------------|------|------------------|-------|
 | `spacelens_core` | static library | `spacelens_core.lib` | Win32 — **no Qt** |
-| `spacelens` | CLI executable | `build/cli/spacelens.exe` (console) | `spacelens_core` only |
-| `SpaceLens` | GUI executable | `build/gui/spacelens-gui.exe` | `spacelens_core` + Qt6 |
+| `spacelens_maintenance` | static library | `spacelens_maintenance.lib` | Recycle Bin adapter — **not linked by CLI** |
+| `spacelens` | CLI executable | `build-*/cli/spacelens.exe` (console) | `spacelens_core` only |
+| `SpaceLens` | GUI executable | `build-*/gui/spacelens-gui.exe` | `spacelens_core` + `spacelens_maintenance` + Qt6 |
 | `spacelens_tests` | unit tests | `spacelens_tests.exe` | `spacelens_core` (+ CLI helpers) |
+| `spacelens_maintenance_tests` | adapter tests | `spacelens_maintenance_tests.exe` | core + maintenance |
 
 **Windows case-insensitivity:** `spacelens.exe` and `SpaceLens.exe` are the same
 path. CLI and GUI therefore use distinct output names/directories.
 
 Building the CLI must not require a running GUI. Qt is required only when
-`SPACELENS_BUILD_GUI=ON` (default ON if Qt is found).
+`SPACELENS_BUILD_GUI=ON`. `windows-cli-release` sets that option OFF.
+
+Configure fails if target `spacelens` lists `spacelens_maintenance` in its
+link libraries.
+
+## Build, install, and CI
+
+Presets (CMake 3.21 schema 3) live in `CMakePresets.json`. They contain no
+user Qt paths. Local overrides belong in gitignored `CMakeUserPresets.json`
+or in `CMAKE_PREFIX_PATH`.
+
+| Preset | Output dir | GUI | Notes |
+|--------|------------|-----|-------|
+| `windows-debug` | `build-debug/` | ON | Full Debug |
+| `windows-release` | `build-release/` | ON | Full Release |
+| `windows-cli-release` | `build-cli-release/` | OFF | No Qt |
+| `windows-analyze` | `build-analyze/` | OFF | MSVC `/analyze` on core/CLI |
+
+Install is portable staging, not a Program Files installer:
+
+```text
+cmake --install <build> --prefix <stage> --component SpaceLensCli
+cmake --install <build> --prefix <stage> --component SpaceLensGui
+```
+
+Only runtime executables are installed. Tests, PDBs, static libraries, and
+`%LOCALAPPDATA%\SpaceLens` state are not.
+
+CI (`.github/workflows/ci.yml`) is the quality gate: Full Debug, Full Release
+(with `scripts/verify-cli-safety.ps1` and zip staging), CLI-only Latest, and
+`/analyze`. Third-party actions are SHA-pinned. See
+[`docs/RELEASING.md`](RELEASING.md).
 
 ## Core types and ownership
 

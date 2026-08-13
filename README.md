@@ -81,44 +81,49 @@ Measured baselines: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 - Windows 10/11 x64
 - MSVC (Visual Studio 2022/2026 C++ tools) with Windows 10/11 SDK
 - CMake 3.21+
-- Ninja (recommended) or MSBuild
-- Qt 6.8+ (Widgets, Concurrent) — e.g. `D:\Qt\6.8.3\msvc2022_64`
+- Ninja
+- Qt 6.8.3 (Widgets, Concurrent) — only for the GUI. Supply it with
+  `CMAKE_PREFIX_PATH`; do not put a machine path in `CMakePresets.json`.
 
-See [`docs/SURVEY.md`](docs/SURVEY.md) for the environment used during bootstrap.
+Presets: `windows-debug`, `windows-release`, `windows-cli-release`,
+`windows-analyze`. See [`CONTRIBUTING.md`](CONTRIBUTING.md) and
+[`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Build and run
 
 ```powershell
 . .\scripts\dev-env.ps1
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake --preset windows-release
+cmake --build --preset windows-release
+ctest --preset windows-release
 ```
 
 CLI only (no Qt required):
 
 ```powershell
-cmake -S . -B build-cli -G Ninja -DCMAKE_BUILD_TYPE=Release -DSPACELENS_BUILD_GUI=OFF
-cmake --build build-cli --target spacelens
-.\build-cli\cli\spacelens.exe scan C:\Users --json
-.\build-cli\cli\spacelens.exe top C:\Users --dirs --limit 20 --json
-.\build-cli\cli\spacelens.exe index C:\Users --json
-.\build-cli\cli\spacelens.exe index refresh C:\Users --json
-.\build-cli\cli\spacelens.exe query C:\Users --files --min-size 100MB --limit 20 --json
-.\build-cli\cli\spacelens.exe duplicates C:\Users --min-size 1MB --json
+cmake --preset windows-cli-release
+cmake --build --preset windows-cli-release --target spacelens
+.\build-cli-release\cli\spacelens.exe capabilities --json
+.\build-cli-release\cli\spacelens.exe scan <folder> --json
+.\build-cli-release\cli\spacelens.exe top <folder> --dirs --limit 20 --json
+.\build-cli-release\cli\spacelens.exe index <folder> --json
+.\build-cli-release\cli\spacelens.exe index refresh <folder> --json
+.\build-cli-release\cli\spacelens.exe query <folder> --files --min-size 100MB --limit 20 --json
+.\build-cli-release\cli\spacelens.exe duplicates <folder> --min-size 1MB --json
 ```
 
-The CLI is read-only; capability discovery:
+Point those commands at a folder you own. Do not use the SpaceLens source tree
+as a destructive or stress target. Generated fixtures: `scripts/stress-v01.ps1`.
 
-```powershell
-.\build-cli\cli\spacelens.exe capabilities --json
-```
-
+The CLI is read-only; `capabilities --json` must report
+`filesystem_mutation: false`. CI re-checks that with
+`scripts/verify-cli-safety.ps1`.
 
 GUI (Windows output name is `spacelens-gui.exe` — not `spacelens.exe`, because
 NTFS is case-insensitive and those names would collide):
 
 ```powershell
-.\build\gui\spacelens-gui.exe
+.\build-release\gui\spacelens-gui.exe
 ```
 
 ### Indexed storage discovery (GUI)
@@ -167,13 +172,26 @@ See [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md).
 Tests:
 
 ```powershell
-ctest --test-dir build --output-on-failure
+ctest --preset windows-release
+.\build-release\tests\spacelens_tests.exe
 ```
+
+Packaging (unsigned verification zips; not a public grant):
+
+```powershell
+.\scripts\package-release.ps1
+```
+
+No project license has been chosen (`LICENSE_DECISION_REQUIRED`). Qt
+redistribution is not maintainer-reviewed. Public distribution is
+`RELEASE_DISTRIBUTION_BLOCKED`. See [`docs/RELEASING.md`](docs/RELEASING.md)
+and [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md).
 
 See [`docs/CLI.md`](docs/CLI.md), [`docs/SAFETY.md`](docs/SAFETY.md),
 [`docs/INDEX.md`](docs/INDEX.md), [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md),
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md),
-and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),
+and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Architecture
 

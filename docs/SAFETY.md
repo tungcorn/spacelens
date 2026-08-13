@@ -318,3 +318,21 @@ candidate strength: Review Only
 
 A future AI layer may *explain* candidates; it must never override deterministic
 safety or reclaimability classifications.
+
+## Release and CI safety gates
+
+Quality-gate automation must not weaken this document.
+
+- `scripts/verify-cli-safety.ps1` requires valid `capabilities --json`,
+  `filesystem_mutation: false`, `read_only: true`, and rejection of
+  delete / remove / rm / move / purge / wipe / recycle / restore /
+  `cleanup --execute` / `duplicates --delete` / trust / allow-root /
+  ordinary-root / `safety --write`.
+- CMake configure fails if the CLI links `spacelens_maintenance`.
+- CLI zip staging fails if Qt DLLs or the GUI binary are present.
+- Stress and packaging use generated temporary fixtures or install staging.
+  They must not recycle, delete, or rewrite user data or the source tree.
+- CI jobs use `contents: read` and no secrets on pull requests.
+- A missing project license is `LICENSE_DECISION_REQUIRED`, not a reason to
+  invent one. Unreviewed Qt runtime redistribution is
+  `RELEASE_DISTRIBUTION_BLOCKED`.
