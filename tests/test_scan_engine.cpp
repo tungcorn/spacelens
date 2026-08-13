@@ -4,6 +4,7 @@
 #include "FakeFileEnumerator.hpp"
 
 #include <stop_token>
+#include <string>
 
 using namespace spacelens;
 using namespace spacelens::test;
@@ -126,4 +127,27 @@ SPACELENS_TEST(ScanEngine_topk_order)
     SPACELENS_REQUIRE(result.largestFiles.size() == 2);
     SPACELENS_REQUIRE(result.largestFiles[0].size == 1000);
     SPACELENS_REQUIRE(result.largestFiles[1].size == 500);
+}
+
+SPACELENS_TEST(ScanEngine_deep_tree_does_not_overflow)
+{
+    FakeFileEnumerator fake;
+    std::wstring path = L"R";
+    fake.setChildren(path, {makeDir(L"d")});
+    constexpr int kDepth = 80;
+    for (int i = 0; i < kDepth; ++i) {
+        path += L"\\d";
+        if (i + 1 < kDepth) {
+            fake.setChildren(path, {makeDir(L"d")});
+        } else {
+            fake.setChildren(path, {makeFile(L"leaf.bin", 7)});
+        }
+    }
+
+    ScanEngine engine(fake);
+    ScanResult result = engine.scan(L"R", {});
+    SPACELENS_REQUIRE(result.state == ScanState::Completed);
+    SPACELENS_REQUIRE(result.tree.dir(result.tree.root()).recursiveSize == 7);
+    SPACELENS_REQUIRE(result.progress.filesSeen == 1);
+    SPACELENS_REQUIRE(result.progress.directoriesSeen == static_cast<std::uint64_t>(kDepth + 1));
 }
