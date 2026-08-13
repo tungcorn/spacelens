@@ -77,6 +77,8 @@ add_library(spacelens_core STATIC
     src/core/CleanupPlan.cpp
     src/core/CleanupRevalidation.hpp
     src/core/CleanupRevalidation.cpp
+    src/core/Maintenance.hpp
+    src/core/Maintenance.cpp
     src/core/Duplicates.hpp
     src/core/Duplicates.cpp
     src/core/DuplicateDetection.hpp

@@ -226,6 +226,13 @@ struct CleanupValidation {
     bool recursiveEvidenceRevalidated = false;
 };
 
+enum class CleanupItemLifecycle {
+    Active,
+    Recycled
+};
+
+[[nodiscard]] const char* toString(CleanupItemLifecycle lifecycle) noexcept;
+
 enum class CleanupAddResult {
     Added,
     DuplicateUpdated,
@@ -289,6 +296,7 @@ struct CleanupCandidate {
     /// Snapshot age when added from an index (0 if live / unknown).
     std::uint64_t indexAgeMs = 0;
     std::string indexIndexedAtIso;
+    CleanupItemLifecycle lifecycle = CleanupItemLifecycle::Active;
 };
 
 /// Public path helpers used by review duplicate handling and plan overlap.
@@ -330,6 +338,8 @@ public:
     [[nodiscard]] bool replaceValidationBatch(
         const std::vector<CleanupValidationReplacement>& updates);
     [[nodiscard]] bool refreshEvidence(std::uint64_t id);
+    [[nodiscard]] bool setLifecycle(std::uint64_t id,
+                                    CleanupItemLifecycle lifecycle);
 
     /// Next durable id that add() will assign.
     [[nodiscard]] std::uint64_t nextId() const noexcept { return m_nextId; }

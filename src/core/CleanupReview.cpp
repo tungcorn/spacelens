@@ -389,6 +389,17 @@ const char* toString(CleanupValidationDiffKind kind) noexcept
     return "LogicalSize";
 }
 
+const char* toString(CleanupItemLifecycle lifecycle) noexcept
+{
+    switch (lifecycle) {
+    case CleanupItemLifecycle::Active:
+        return "Active";
+    case CleanupItemLifecycle::Recycled:
+        return "Recycled";
+    }
+    return "Active";
+}
+
 const char* toString(CleanupAddResult result) noexcept
 {
     switch (result) {
@@ -830,6 +841,17 @@ bool CleanupReview::refreshEvidence(std::uint64_t id)
     for (auto& item : m_items) {
         if (item.id == id) {
             return refreshCapturedEvidence(item);
+        }
+    }
+    return false;
+}
+
+bool CleanupReview::setLifecycle(std::uint64_t id, CleanupItemLifecycle lifecycle)
+{
+    for (auto& item : m_items) {
+        if (item.id == id) {
+            item.lifecycle = lifecycle;
+            return true;
         }
     }
     return false;
