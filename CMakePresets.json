@@ -1,0 +1,114 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "windows-debug",
+      "displayName": "Windows Debug (GUI + CLI + tests)",
+      "description": "Full Debug build. Supply Qt via CMAKE_PREFIX_PATH.",
+      "inherits": "windows-base",
+      "binaryDir": "${sourceDir}/build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SPACELENS_BUILD_GUI": "ON",
+        "SPACELENS_BUILD_CLI": "ON",
+        "SPACELENS_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows Release (GUI + CLI + tests)",
+      "description": "Full Release build. Supply Qt via CMAKE_PREFIX_PATH.",
+      "inherits": "windows-base",
+      "binaryDir": "${sourceDir}/build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SPACELENS_BUILD_GUI": "ON",
+        "SPACELENS_BUILD_CLI": "ON",
+        "SPACELENS_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "windows-cli-release",
+      "displayName": "Windows CLI-only Release (no Qt)",
+      "description": "Release CLI + core + tests. Does not require Qt.",
+      "inherits": "windows-base",
+      "binaryDir": "${sourceDir}/build-cli-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SPACELENS_BUILD_GUI": "OFF",
+        "SPACELENS_BUILD_CLI": "ON",
+        "SPACELENS_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "windows-analyze",
+      "displayName": "Windows CLI-only Release + MSVC /analyze",
+      "description": "First-party core/CLI static analysis. No Qt.",
+      "inherits": "windows-cli-release",
+      "binaryDir": "${sourceDir}/build-analyze",
+      "cacheVariables": {
+        "SPACELENS_MSVC_ANALYZE": "ON",
+        "SPACELENS_BUILD_GUI": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release"
+    },
+    {
+      "name": "windows-cli-release",
+      "configurePreset": "windows-cli-release"
+    },
+    {
+      "name": "windows-analyze",
+      "configurePreset": "windows-analyze"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-cli-release",
+      "configurePreset": "windows-cli-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

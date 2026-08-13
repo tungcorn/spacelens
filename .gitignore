@@ -1,11 +1,19 @@
 # Build
 /build/
+/build-debug/
 /build-release/
+/build-cli-release/
+/build-analyze/
 /out/
+/dist/
+/stage/
 /cmake-build-*/
 /.tmp-*/
 /.vs/
 /_bench_*/
+/_stress_*/
+/stress-smoke.json
+/stress-v01.json
 
 /*.user
 /*.suo

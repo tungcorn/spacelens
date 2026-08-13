@@ -13,6 +13,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(SPACELENS_BUILD_TESTS "Build unit tests" ON)
 option(SPACELENS_BUILD_GUI "Build Qt GUI (SpaceLens.exe)" ON)
 option(SPACELENS_BUILD_CLI "Build CLI (spacelens.exe)" ON)
+option(SPACELENS_MSVC_WARNINGS_AS_ERRORS
+    "Treat first-party MSVC warnings as errors (not SQLite/Qt/generated)" ON)
+option(SPACELENS_MSVC_ANALYZE
+    "Enable MSVC /analyze on first-party core and CLI" OFF)
+
+# Version source of truth: project(VERSION) above. Consumed as
+# SPACELENS_VERSION_STRING on first-party targets.
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpaceLensWarnings.cmake")
 
 if(MSVC)
     add_compile_options(/W4 /permissive- /Zc:__cplusplus /utf-8 /EHsc)
@@ -140,6 +149,8 @@ if(WIN32)
     target_link_libraries(spacelens_core PUBLIC shell32 ole32 bcrypt)
 endif()
 
+spacelens_apply_first_party_warnings(spacelens_core)
+
 # ---------------------------------------------------------------------------
 # Maintenance — Recycle Bin adapter. GUI + adapter tests only; never CLI.
 # ---------------------------------------------------------------------------
@@ -155,6 +166,8 @@ target_link_libraries(spacelens_maintenance PUBLIC spacelens_core)
 if(WIN32)
     target_link_libraries(spacelens_maintenance PUBLIC ole32 uuid shell32)
 endif()
+
+spacelens_apply_first_party_warnings(spacelens_maintenance)
 
 # ---------------------------------------------------------------------------
 # CLI — console subsystem, core only
@@ -187,6 +200,7 @@ if(SPACELENS_BUILD_CLI)
             target_link_options(spacelens PRIVATE "/SUBSYSTEM:CONSOLE")
             set_target_properties(spacelens PROPERTIES WIN32_EXECUTABLE FALSE)
         endif()
+        spacelens_apply_first_party_warnings(spacelens)
     else()
         message(WARNING "SPACELENS_BUILD_CLI=ON but src/cli/main.cpp missing; CLI target skipped")
     endif()
@@ -251,6 +265,8 @@ if(SPACELENS_BUILD_GUI)
         set_target_properties(SpaceLens PROPERTIES WIN32_EXECUTABLE TRUE)
         target_link_options(SpaceLens PRIVATE "/SUBSYSTEM:WINDOWS")
     endif()
+    # Do not apply /WX or /analyze to the GUI: Qt headers and moc/uic are
+    # outside the first-party warning gate.
 endif()
 
 # ---------------------------------------------------------------------------
@@ -269,3 +285,8 @@ message(STATUS "  Tests:${SPACELENS_BUILD_TESTS}")
 if(SPACELENS_BUILD_GUI)
     message(STATUS "  Qt6:  ${Qt6_DIR}")
 endif()
+message(STATUS "  Version: ${PROJECT_VERSION}")
+message(STATUS "  MSVC /WX (first-party): ${SPACELENS_MSVC_WARNINGS_AS_ERRORS}")
+message(STATUS "  MSVC /analyze (core/CLI): ${SPACELENS_MSVC_ANALYZE}")
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpaceLensInstall.cmake")
