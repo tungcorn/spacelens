@@ -110,6 +110,17 @@ public:
     [[nodiscard]] CleanupReviewStatus replaceValidationBatch(
         const std::vector<CleanupValidationReplacement>& updates);
 
+    /// Blocks add/remove/clear/refresh while a revalidation pass is in flight.
+    /// Validation batch apply stays allowed so the pass can commit.
+    void setReviewMutationsBlocked(bool blocked) noexcept
+    {
+        m_mutationsBlocked = blocked;
+    }
+    [[nodiscard]] bool reviewMutationsBlocked() const noexcept
+    {
+        return m_mutationsBlocked;
+    }
+
     void failNextWrite() noexcept { m_store.failNextWrite(); }
 
 private:
@@ -118,6 +129,7 @@ private:
 
     CleanupReviewStore m_store;
     CleanupReview m_review;
+    bool m_mutationsBlocked = false;
 };
 
 }  // namespace spacelens

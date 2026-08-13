@@ -193,7 +193,7 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     m_openButton = new QPushButton(QStringLiteral("Open"), this);
     m_revealButton = new QPushButton(QStringLiteral("Show in Explorer"), this);
     m_removeButton = new QPushButton(QStringLiteral("Remove from Review"), this);
-    auto* clearBtn = new QPushButton(QStringLiteral("Clear Review"), this);
+    m_clearButton = new QPushButton(QStringLiteral("Clear Review"), this);
     auto* copyBtn = new QPushButton(QStringLiteral("Copy Plan"), this);
     auto* exportBtn = new QPushButton(QStringLiteral("Export JSON"), this);
     auto* closeBtn = new QPushButton(QStringLiteral("Close"), this);
@@ -203,7 +203,7 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     buttons->addWidget(m_openButton);
     buttons->addWidget(m_revealButton);
     buttons->addWidget(m_removeButton);
-    buttons->addWidget(clearBtn);
+    buttons->addWidget(m_clearButton);
     buttons->addWidget(copyBtn);
     buttons->addWidget(exportBtn);
     buttons->addStretch(1);
@@ -224,7 +224,7 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
             &CleanupReviewDialog::onReveal);
     connect(m_removeButton, &QPushButton::clicked, this,
             &CleanupReviewDialog::onRemoveSelected);
-    connect(clearBtn, &QPushButton::clicked, this,
+    connect(m_clearButton, &QPushButton::clicked, this,
             &CleanupReviewDialog::onClear);
     connect(copyBtn, &QPushButton::clicked, this,
             &CleanupReviewDialog::onCopyPlan);
@@ -496,6 +496,7 @@ void CleanupReviewDialog::updateActionState()
     m_openButton->setEnabled(single);
     m_revealButton->setEnabled(single);
     m_removeButton->setEnabled(!running && any);
+    m_clearButton->setEnabled(!running && hasItems);
 }
 
 void CleanupReviewDialog::showStatus(const QString& message)

@@ -597,6 +597,68 @@ SPACELENS_TEST(CleanupRevalidation_attach_live_evidence_keeps_directory_aggregat
                          CleanupEvidenceScope::Direct);
 }
 
+SPACELENS_TEST(CleanupRevalidation_prepare_add_promotes_directory_reparse)
+{
+    FakeCleanupMetadataReader reader;
+    auto captured = dirCandidate(L"D:\\proj\\junction", 24, 0);
+    captured.kind = ItemKind::Directory;
+    auto live = dirEvidence(24, 1040, ItemKind::ReparseDirectory);
+    reader.set(captured.path, presentProbe(live, true));
+
+    prepareCleanupCandidateForAdd(captured, reader, 7);
+    CleanupReview review;
+    const auto id = review.add(captured);
+    const auto stored = review.findById(id);
+    SPACELENS_REQUIRE(stored.has_value());
+    SPACELENS_REQUIRE_EQ(stored->kind, ItemKind::ReparseDirectory);
+    SPACELENS_REQUIRE_EQ(stored->objectEvidence.kind, ItemKind::ReparseDirectory);
+
+    const auto result = revalidateCleanupCandidate(*stored, reader);
+    SPACELENS_REQUIRE(result.validation.state !=
+                      CleanupValidationState::TypeChanged);
+    SPACELENS_REQUIRE_EQ(
+        result.validation.state,
+        CleanupValidationState::DirectUnchangedRecursiveNotRevalidated);
+}
+
+SPACELENS_TEST(CleanupRevalidation_replace_batch_rejects_path_mismatch)
+{
+    CleanupReview review;
+    auto first = fileCandidate(L"D:\\proj\\a.bin", 25, 10);
+    auto second = fileCandidate(L"D:\\proj\\b.bin", 26, 20);
+    const auto firstId = review.add(first);
+    const auto secondId = review.add(second);
+
+    CleanupCurrentEvidence missing;
+    missing.available = true;
+    missing.exists = false;
+    missing.observation = CleanupObservation::Missing;
+    missing.safety = LocationSafety::Ordinary;
+
+    std::vector<CleanupValidationReplacement> updates(2);
+    updates[0].id = firstId;
+    updates[0].expectedPath = first.path;
+    updates[0].current = missing;
+    updates[0].checkedAt = 90;
+    updates[1].id = secondId;
+    updates[1].expectedPath = L"D:\\proj\\renamed.bin";
+    updates[1].current = missing;
+    updates[1].checkedAt = 90;
+
+    SPACELENS_REQUIRE(!review.replaceValidationBatch(updates));
+    SPACELENS_REQUIRE_EQ(review.findById(firstId)->validation.state,
+                         CleanupValidationState::NotValidated);
+    SPACELENS_REQUIRE_EQ(review.findById(secondId)->validation.state,
+                         CleanupValidationState::NotValidated);
+
+    updates[1].expectedPath = second.path;
+    SPACELENS_REQUIRE(review.replaceValidationBatch(updates));
+    SPACELENS_REQUIRE_EQ(review.findById(firstId)->validation.state,
+                         CleanupValidationState::Missing);
+    SPACELENS_REQUIRE_EQ(review.findById(secondId)->validation.state,
+                         CleanupValidationState::Missing);
+}
+
 SPACELENS_TEST(CleanupRevalidation_prepare_add_keeps_directory_aggregate)
 {
     FakeCleanupMetadataReader reader;

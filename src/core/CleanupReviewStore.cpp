@@ -1203,6 +1203,11 @@ CleanupReviewStatus CleanupReviewController::add(CleanupCandidate candidate)
 CleanupReviewStatus CleanupReviewController::addDetailed(
     CleanupCandidate candidate)
 {
+    if (m_mutationsBlocked) {
+        return makeStatus(
+            CleanupReviewError::InvalidArgument,
+            "Cleanup review is being revalidated. Wait or cancel first.");
+    }
     return commit([&](CleanupReview& draft) {
         CleanupReviewStatus status;
         status.add = draft.addDetailed(std::move(candidate));
@@ -1214,6 +1219,11 @@ CleanupReviewStatus CleanupReviewController::addDetailed(
 
 CleanupReviewStatus CleanupReviewController::removeById(std::uint64_t id)
 {
+    if (m_mutationsBlocked) {
+        return makeStatus(
+            CleanupReviewError::InvalidArgument,
+            "Cleanup review is being revalidated. Wait or cancel first.");
+    }
     return commit([&](CleanupReview& draft) {
         CleanupReviewStatus status;
         status.changed = draft.removeById(id);
@@ -1224,6 +1234,11 @@ CleanupReviewStatus CleanupReviewController::removeById(std::uint64_t id)
 
 CleanupReviewStatus CleanupReviewController::removeByPath(std::wstring_view path)
 {
+    if (m_mutationsBlocked) {
+        return makeStatus(
+            CleanupReviewError::InvalidArgument,
+            "Cleanup review is being revalidated. Wait or cancel first.");
+    }
     return commit([&](CleanupReview& draft) {
         CleanupReviewStatus status;
         status.changed = draft.removeByPath(path);
@@ -1233,6 +1248,11 @@ CleanupReviewStatus CleanupReviewController::removeByPath(std::wstring_view path
 
 CleanupReviewStatus CleanupReviewController::clear()
 {
+    if (m_mutationsBlocked) {
+        return makeStatus(
+            CleanupReviewError::InvalidArgument,
+            "Cleanup review is being revalidated. Wait or cancel first.");
+    }
     return commit([](CleanupReview& draft) {
         CleanupReviewStatus status;
         status.changed = !draft.empty();
@@ -1243,6 +1263,11 @@ CleanupReviewStatus CleanupReviewController::clear()
 
 CleanupReviewStatus CleanupReviewController::refreshEvidence(std::uint64_t id)
 {
+    if (m_mutationsBlocked) {
+        return makeStatus(
+            CleanupReviewError::InvalidArgument,
+            "Cleanup review is being revalidated. Wait or cancel first.");
+    }
     return commit([&](CleanupReview& draft) {
         CleanupReviewStatus status;
         status.id = id;
@@ -1280,7 +1305,9 @@ CleanupReviewStatus CleanupReviewController::replaceValidationBatch(
         if (!draft.replaceValidationBatch(updates)) {
             status.ok = false;
             status.error = CleanupReviewError::InvalidArgument;
-            status.message = "Cleanup review item was not found.";
+            status.message =
+                "Cleanup review item was not found or no longer matches "
+                "the revalidation snapshot.";
             return status;
         }
         status.changed = true;

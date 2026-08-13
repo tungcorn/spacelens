@@ -62,6 +62,7 @@ private:
     QPushButton* m_openButton = nullptr;
     QPushButton* m_revealButton = nullptr;
     QPushButton* m_removeButton = nullptr;
+    QPushButton* m_clearButton = nullptr;
 };
 
 }  // namespace spacelens

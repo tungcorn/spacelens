@@ -239,6 +239,10 @@ struct CleanupValidationReplacement {
     std::uint64_t id = 0;
     CleanupCurrentEvidence current{};
     FileTimeTicks checkedAt = 0;
+    /// Snapshot path used to produce `current`. Empty skips the match check
+    /// (single-item refresh). A non-empty path must still identify the same
+    /// review row or the whole batch is rejected.
+    std::wstring expectedPath;
 };
 
 struct CleanupAddOutcome {

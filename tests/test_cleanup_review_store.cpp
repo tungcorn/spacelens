@@ -688,3 +688,94 @@ SPACELENS_TEST(CleanupReviewStore_validation_batch_commits_only_complete_set)
     SPACELENS_REQUIRE_EQ(
         reopened.review().findById(first.add.id)->validationCheckedAt, 300ULL);
 }
+
+SPACELENS_TEST(CleanupReviewStore_mutations_blocked_during_revalidation)
+{
+    TempDir dir;
+    CleanupReviewController controller;
+    SPACELENS_REQUIRE(controller.open(dir.dbPath()));
+    const auto first = controller.addDetailed(fileCandidate(L"D:\\a.bin", 4, 20));
+    SPACELENS_REQUIRE(first.ok);
+    SPACELENS_REQUIRE_EQ(controller.review().size(), 1u);
+
+    controller.setReviewMutationsBlocked(true);
+    SPACELENS_REQUIRE(controller.reviewMutationsBlocked());
+
+    const auto blockedAdd =
+        controller.addDetailed(fileCandidate(L"D:\\b.bin", 5, 21));
+    SPACELENS_REQUIRE(!blockedAdd.ok);
+    SPACELENS_REQUIRE_EQ(blockedAdd.error, CleanupReviewError::InvalidArgument);
+    SPACELENS_REQUIRE(blockedAdd.message.find("revalidated") != std::string::npos);
+
+    const auto blockedRemove = controller.removeById(first.add.id);
+    SPACELENS_REQUIRE(!blockedRemove.ok);
+    SPACELENS_REQUIRE_EQ(blockedRemove.error, CleanupReviewError::InvalidArgument);
+
+    const auto blockedPath = controller.removeByPath(L"D:\\a.bin");
+    SPACELENS_REQUIRE(!blockedPath.ok);
+
+    const auto blockedClear = controller.clear();
+    SPACELENS_REQUIRE(!blockedClear.ok);
+
+    const auto blockedRefresh = controller.refreshEvidence(first.add.id);
+    SPACELENS_REQUIRE(!blockedRefresh.ok);
+    SPACELENS_REQUIRE_EQ(controller.review().size(), 1u);
+    SPACELENS_REQUIRE_EQ(controller.review().items().front().id, first.add.id);
+    SPACELENS_REQUIRE_EQ(controller.review().findById(first.add.id)->validation.state,
+                         CleanupValidationState::NotValidated);
+
+    CleanupCurrentEvidence missing;
+    missing.available = true;
+    missing.exists = false;
+    missing.observation = CleanupObservation::Missing;
+    missing.safety = LocationSafety::Ordinary;
+    CleanupValidationReplacement update;
+    update.id = first.add.id;
+    update.expectedPath = L"D:\\a.bin";
+    update.current = missing;
+    update.checkedAt = 400;
+    const auto applied = controller.replaceValidationBatch({update});
+    SPACELENS_REQUIRE(applied.ok);
+    SPACELENS_REQUIRE_EQ(controller.review().findById(first.add.id)->validation.state,
+                         CleanupValidationState::Missing);
+
+    controller.setReviewMutationsBlocked(false);
+    SPACELENS_REQUIRE(!controller.reviewMutationsBlocked());
+    const auto added = controller.addDetailed(fileCandidate(L"D:\\b.bin", 5, 21));
+    SPACELENS_REQUIRE(added.ok);
+    SPACELENS_REQUIRE_EQ(controller.review().size(), 2u);
+    SPACELENS_REQUIRE(controller.removeById(added.add.id).ok);
+    SPACELENS_REQUIRE_EQ(controller.review().size(), 1u);
+}
+
+SPACELENS_TEST(CleanupReviewStore_validation_batch_rejects_path_mismatch)
+{
+    TempDir dir;
+    CleanupReviewController controller;
+    SPACELENS_REQUIRE(controller.open(dir.dbPath()));
+    const auto first = controller.addDetailed(fileCandidate(L"D:\\a.bin", 4, 22));
+    SPACELENS_REQUIRE(first.ok);
+
+    CleanupCurrentEvidence missing;
+    missing.available = true;
+    missing.exists = false;
+    missing.observation = CleanupObservation::Missing;
+    missing.safety = LocationSafety::Ordinary;
+    CleanupValidationReplacement update;
+    update.id = first.add.id;
+    update.expectedPath = L"D:\\moved.bin";
+    update.current = missing;
+    update.checkedAt = 500;
+
+    const auto failed = controller.replaceValidationBatch({update});
+    SPACELENS_REQUIRE(!failed.ok);
+    SPACELENS_REQUIRE_EQ(failed.error, CleanupReviewError::InvalidArgument);
+    SPACELENS_REQUIRE(failed.message.find("snapshot") != std::string::npos);
+    SPACELENS_REQUIRE_EQ(controller.review().findById(first.add.id)->validation.state,
+                         CleanupValidationState::NotValidated);
+
+    CleanupReviewController reopened;
+    SPACELENS_REQUIRE(reopened.open(dir.dbPath()));
+    SPACELENS_REQUIRE_EQ(reopened.review().findById(first.add.id)->validation.state,
+                         CleanupValidationState::NotValidated);
+}

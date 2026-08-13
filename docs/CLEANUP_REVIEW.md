@@ -168,6 +168,15 @@ Cancellation **discards partial results**. Only a completed pass is written,
 and it is written as one transaction. Failed persistence leaves both memory
 and disk on the previous valid state.
 
+While Revalidate All is running, add / remove / clear / refresh are rejected.
+The completed batch still applies. Each update carries the snapshot path from
+the start of the pass; if that path no longer identifies the same review row,
+the whole batch is rejected and validation stays `NotValidated`.
+
+Adding a path discovered as an ordinary directory promotes it to
+`ReparseDirectory` when the live metadata probe observes a reparse point. The
+captured kind must match the object that was actually inspected.
+
 `Refresh Evidence` replaces the captured baseline with successfully observed
 current metadata. It never authorizes deletion, never clears protected /
 sensitive / reparse warnings, and never invents directory recursive size.

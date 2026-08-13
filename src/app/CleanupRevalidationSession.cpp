@@ -38,6 +38,7 @@ CleanupRevalidationSession::~CleanupRevalidationSession()
 {
     cancel();
     joinWorker();
+    m_controller.setReviewMutationsBlocked(false);
 }
 
 bool CleanupRevalidationSession::isRunning() const
@@ -78,6 +79,7 @@ bool CleanupRevalidationSession::start()
         m_probed = 0;
         m_total = snapshot.size();
     }
+    m_controller.setReviewMutationsBlocked(true);
 
     m_worker = std::jthread([this, snapshot = std::move(snapshot)](
                                 std::stop_token stop) {
@@ -105,6 +107,7 @@ bool CleanupRevalidationSession::start()
             auto one = revalidateCleanupCandidate(item, reader);
             CleanupValidationReplacement update;
             update.id = item.id;
+            update.expectedPath = item.path;
             update.current = std::move(one.current);
             update.checkedAt = checkedAt;
             result.updates.push_back(std::move(update));
@@ -172,6 +175,7 @@ void CleanupRevalidationSession::onWorkerFinished(
         m_running = false;
         m_probed = result.probedCount;
     }
+    m_controller.setReviewMutationsBlocked(false);
     emit finished(completed, message);
 }
 

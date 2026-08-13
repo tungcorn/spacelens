@@ -113,6 +113,7 @@ CleanupRevalidationPassResult probeCleanupReview(
         auto result = revalidateCleanupCandidate(item, reader);
         CleanupValidationReplacement update;
         update.id = item.id;
+        update.expectedPath = item.path;
         update.current = std::move(result.current);
         update.checkedAt = checkedAt;
         out.updates.push_back(std::move(update));
@@ -131,6 +132,7 @@ void attachLiveObjectEvidence(CleanupCandidate& candidate,
         return;
     }
     candidate.objectEvidence = probe.objectEvidence;
+    candidate.kind = probe.objectEvidence.kind;
     candidate.attributes = probe.objectEvidence.attributes;
     if (candidate.kind == ItemKind::File) {
         candidate.lastWriteTime = probe.objectEvidence.lastWriteTime;

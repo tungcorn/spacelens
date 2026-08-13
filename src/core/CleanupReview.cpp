@@ -80,7 +80,15 @@ void normalizeCandidate(CleanupCandidate& candidate)
         candidate.objectEvidence.attributes = candidate.attributes;
     }
     if (candidate.objectEvidence.kind != candidate.kind) {
-        candidate.objectEvidence.kind = candidate.kind;
+        // Live object metadata can be more specific than discovery (ordinary
+        // directory vs reparse). Do not throw that away.
+        if (candidate.objectEvidence.available &&
+            candidate.kind == ItemKind::Directory &&
+            candidate.objectEvidence.kind == ItemKind::ReparseDirectory) {
+            candidate.kind = ItemKind::ReparseDirectory;
+        } else {
+            candidate.objectEvidence.kind = candidate.kind;
+        }
     }
     if (candidate.kind != ItemKind::File) {
         // Legacy scalar candidates and recursive object evidence still need
@@ -794,10 +802,16 @@ bool CleanupReview::replaceValidationBatch(
     for (const auto& update : updates) {
         bool found = false;
         for (const auto& item : m_items) {
-            if (item.id == update.id) {
-                found = true;
-                break;
+            if (item.id != update.id) {
+                continue;
             }
+            if (!update.expectedPath.empty() &&
+                normalizeCleanupPath(item.path) !=
+                    normalizeCleanupPath(update.expectedPath)) {
+                return false;
+            }
+            found = true;
+            break;
         }
         if (!found) {
             return false;
