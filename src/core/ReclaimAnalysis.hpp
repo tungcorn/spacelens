@@ -14,23 +14,6 @@
 
 namespace spacelens {
 
-enum class Reclaimability {
-    LikelyRegenerable,
-    PossiblyRegenerable,
-    Unknown,
-    NotApplicable
-};
-
-enum class CandidateStrength {
-    None,
-    ReviewOnly,
-    Moderate,
-    Strong
-};
-
-[[nodiscard]] const char* toString(Reclaimability value) noexcept;
-[[nodiscard]] const char* toString(CandidateStrength value) noexcept;
-
 /// Combined read-only analysis for human review prioritization.
 /// Does NOT include safe_to_delete.
 struct ReclaimCandidate {
