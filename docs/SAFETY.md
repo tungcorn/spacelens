@@ -333,6 +333,6 @@ Quality-gate automation must not weaken this document.
 - Stress and packaging use generated temporary fixtures or install staging.
   They must not recycle, delete, or rewrite user data or the source tree.
 - CI jobs use `contents: read` and no secrets on pull requests.
-- A missing project license is `LICENSE_DECISION_REQUIRED`, not a reason to
-  invent one. Unreviewed Qt runtime redistribution is
-  `RELEASE_DISTRIBUTION_BLOCKED`.
+- SpaceLens-owned code is MIT (`LICENSE`). An assistant must not change
+  that selection. Qt remains under its own licenses; see
+  `docs/THIRD_PARTY.md` and `docs/QT_REDIST_REVIEWED.md`.

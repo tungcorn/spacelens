@@ -17,6 +17,5 @@ MSVC runtime. Binaries in the v0.1.0 prerelease are unsigned.
 
 This archive does not include Qt.
 
-Project license: none has been chosen unless a LICENSE file is present
-in this folder. This package is not a public distribution grant. See
-THIRD_PARTY_NOTICES.txt for SQLite 3.53.4.
+SpaceLens-owned files in this archive are licensed under MIT.
+See LICENSE. SQLite is independent; see THIRD_PARTY_NOTICES.txt.

@@ -1,25 +1,11 @@
 # Qt 6.8.3 redistribution audit
 
-**Status: PENDING — not a redistribution grant.**
+Inventory of the shipped Qt 6.8.3 shared runtime. The completed
+machine-checkable review is `packaging/qt-redist-review.env`. The
+human narrative is [`QT_REDIST_REVIEWED.md`](QT_REDIST_REVIEWED.md).
 
-This file is evidence for a future maintainer review. It is **not**
-`docs/QT_REDIST_REVIEWED.md`. Presence of this file must not unlock a
-public GUI release.
-
-Machine-checkable record: `packaging/qt-redist-review.env`.
-
-```
-review_status=PENDING
-qt_version=6.8.3
-linkage=shared
-source_availability=MISSING
-```
-
-`scripts/verify-qt-redist-review.ps1 -RequirePass` exits non-zero on this
-record. A GitHub Release must not treat `Test-Path` of this document, of
-an empty sentinel, or of `docs/QT_REDIST_REVIEWED.md` as approval.
-
-This is an engineering inventory. It is not legal advice.
+This is an engineering inventory. It is not legal advice. It is not
+the SpaceLens MIT license. Qt is not MIT.
 
 ## Scope
 
@@ -27,11 +13,6 @@ This is an engineering inventory. It is not legal advice.
 |----------|-----|------------|
 | `spacelens-cli-v*-windows-x64.zip` | No | Out of scope. CLI is Qt-free. |
 | `spacelens-gui-v*-windows-x64.zip` | Yes | In scope. |
-
-A Qt-free CLI must not stay blocked solely because this GUI audit is
-unfinished. Combined public publication of **both** zips still requires
-a maintainer-chosen project `LICENSE` **and** a structured review PASS.
-See `docs/RELEASING.md`.
 
 ## Kit identity
 
@@ -94,17 +75,9 @@ windeployqt --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compi
 is kept (Mesa llvmpipe software rasterizer shipped with the kit).
 
 A fresh Release package after those flags contains **no**
-`d3dcompiler_47.dll`, `dxcompiler.dll`, or `dxil.dll`. windeployqt
-reports direct dependents `Qt6Core Qt6Gui Qt6Widgets` and deploys
-those plus `Qt6Network` / `Qt6Svg` for plugins. `Qt6Concurrent.dll`
-is not deployed: this GUI's dumpbin dependents do not include it,
-even though CMake links `Qt6::Concurrent` (templates can inline).
+`d3dcompiler_47.dll`, `dxcompiler.dll`, or `dxil.dll`.
 
 ## Shipped Qt modules and plugins (GUI zip)
-
-Inventory is of a **fresh** Release package after the flags above, not of
-a leftover `stage\` directory. `scripts/verify-package.ps1` enforces the
-required/forbidden categories.
 
 Direct dumpbin dependents (must be present):
 
@@ -183,53 +156,34 @@ invalid for that kit.
 
 ## Corresponding source
 
-LGPL-3.0, if relied on for the shipped Qt libraries, requires
-corresponding source and the other applicable LGPL conditions for those
-libraries. SpaceLens does **not** currently:
+See [`QT_SOURCE_OFFER.md`](QT_SOURCE_OFFER.md) and
+`packaging/qt-source/SOURCE_IDENTITY.txt`.
 
-- vendor a Qt 6.8.3 source archive under maintainer control
-- publish a written offer that a recipient can actually use
-- point at a SpaceLens-controlled URL that hosts that source
+Pinned official archive:
 
-The official Qt open-source source drop exists upstream. That is not a
-SpaceLens-controlled corresponding-source mechanism.
+```text
+qt-everywhere-src-6.8.3.tar.xz
+SHA-256 cdd3a69967208276bb01af7ace7dba0ba53e679f886a4cbe624225c60fb73f2c
+https://download.qt.io/official_releases/qt/6.8/6.8.3/single/qt-everywhere-src-6.8.3.tar.xz
+```
 
-`source_availability=MISSING`.
+The SHA-256 is copied from Qt's official `.sha256` file on 2026-08-13.
+The pin and the written offer live in this repository. Recipients request
+fulfillment via GitHub issues. The maintainer fulfills with
+`scripts/fetch-qt-corresponding-source.ps1`, which refuses a hash
+mismatch.
 
-Therefore:
+Do not put the full Qt source archive inside the GUI zip.
 
-- `docs/QT_REDIST_REVIEWED.md` must **not** be created
-- `review_status` must stay `PENDING` (or `FAIL`)
-- GUI public distribution stays blocked (`QT_SOURCE_AVAILABILITY_REQUIRED`)
+## Relinking
 
-`packaging/gui/licenses/LGPL-3.0.txt` and `GPL-3.0.txt` are verbatim GNU
-texts included as **notices** of Qt's license options. They do **not**
-complete an LGPL corresponding-source offer.
-
-Do not put the full Qt source archive inside the GUI zip automatically.
+`spacelens-gui.exe` loads stock shared Qt DLLs from the application
+directory and plugin subdirectories. There is no DLL signature
+allowlist, encrypted Qt container, anti-replacement loader, or DRM.
+Users may replace compatible Qt DLLs. SpaceLens does not promise ABI
+compatibility beyond Qt's own guarantees.
 
 ## Project license interaction
 
-`MAINTAINER_PROJECT_LICENSE` is undecided. An assistant must not choose
-one. See `docs/LICENSE_DECISION_REQUIRED.md`.
-
-Even a completed Qt review would not make SpaceLens itself
-redistributable until a maintainer writes a real root `LICENSE`.
-
-## What would flip this record to PASS
-
-A **maintainer** (not an assistant guessing) must:
-
-1. Choose a project license and write root `LICENSE`.
-2. Confirm this still ships Qt **6.8.3** shared, not static, not another
-   version.
-3. Re-inventory a fresh GUI zip and confirm no GPL-only-only runtime
-   and no Windows SDK D3D/DXC compilers.
-4. Put a real corresponding-source mechanism under SpaceLens control
-   and set `source_availability=READY`.
-5. Set `review_status=PASS` in `packaging/qt-redist-review.env` only
-   after 1–4.
-6. Only then create `docs/QT_REDIST_REVIEWED.md` as human narrative.
-
-Until then the only honest overall status is
-`RELEASE_DISTRIBUTION_BLOCKED`.
+SpaceLens is MIT. That license covers SpaceLens-owned code only. It
+does not make Qt MIT and does not relicense SQLite.

@@ -1,0 +1,14 @@
+# Qt 6.8.3 corresponding-source identity
+#
+# This pin is controlled by the SpaceLens maintainer. It identifies the
+# official Qt open-source source drop that corresponds to the Qt 6.8.3
+# shared libraries shipped beside spacelens-gui.exe.
+#
+# It is not the SpaceLens MIT license and not a Qt binary.
+
+version=6.8.3
+archive=qt-everywhere-src-6.8.3.tar.xz
+sha256=cdd3a69967208276bb01af7ace7dba0ba53e679f886a4cbe624225c60fb73f2c
+url=https://download.qt.io/official_releases/qt/6.8/6.8.3/single/qt-everywhere-src-6.8.3.tar.xz
+sha256_url=https://download.qt.io/official_releases/qt/6.8/6.8.3/single/qt-everywhere-src-6.8.3.tar.xz.sha256
+retrieved=2026-08-13

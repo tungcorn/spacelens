@@ -10,24 +10,33 @@ in-tree 0.1.0 line.
 
 ### Changed
 
-- Distribution gates are independent: a non-empty maintainer `LICENSE`
-  can unlock a CLI-only GitHub Release; the GUI zip attaches only when
+- Maintainer-selected project license is MIT (`LICENSE`,
+  `Copyright (c) 2026 tungcorn`). Qt is not MIT.
+- Qt 6.8.3 corresponding source is a maintainer-controlled written
+  offer plus a pinned official archive SHA-256
+  (`docs/QT_SOURCE_OFFER.md`, `packaging/qt-source/SOURCE_IDENTITY.txt`).
+- `packaging/qt-redist-review.env` is `PASS` / `source_availability=READY`
+  for this 6.8.3 shared kit.
+- Staged CLI and GUI zips must include `LICENSE`. The GUI zip must
+  include the source identity and written offer.
+- Distribution gates remain independent: a non-empty `LICENSE` can
+  unlock a CLI-only GitHub Release; the GUI zip attaches only when
   `scripts/verify-qt-redist-review.ps1 -RequirePass` succeeds. Presence
-  of `docs/QT_REDIST_REVIEWED.md` is no longer a gate. A CLI-only
-  Release checksum file lists only the uploaded zip.
-- `windeployqt` now also uses `--no-system-d3d-compiler` and
+  of `docs/QT_REDIST_REVIEWED.md` is not a gate. A CLI-only Release
+  checksum file lists only the uploaded zip.
+- `windeployqt` uses `--no-system-d3d-compiler` and
   `--no-system-dxc-compiler` so Windows SDK D3D/DXC compilers are not
   staged.
 
 ### Added
 
-- `docs/QT_REDIST_AUDIT.md` — pending Qt 6.8.3 shared-kit inventory
-  (not a PASS sentinel).
-- `packaging/qt-redist-review.env` — machine-checkable review record,
-  currently `PENDING` / `source_availability=MISSING`.
-- `scripts/verify-qt-redist-review.ps1` and `scripts/verify-package.ps1`.
+- `docs/QT_REDIST_REVIEWED.md` — completed 6.8.3 shared-kit review.
+- `docs/QT_REDIST_AUDIT.md` — shipped-module inventory.
+- `scripts/verify-qt-redist-review.ps1`, `scripts/verify-package.ps1`,
+  `scripts/verify-release-checksums.ps1`,
+  `scripts/verify-distribution-selftest.ps1`,
+  `scripts/fetch-qt-corresponding-source.ps1`.
 - GUI package notices plus verbatim GNU LGPL-3.0 / GPL-3.0 texts.
-  They do not complete an LGPL corresponding-source offer.
 
 ### Fixed
 

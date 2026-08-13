@@ -1,64 +1,83 @@
 # Third-party components
 
-This is an inventory, not a redistribution grant.
+This is an inventory, not legal advice.
+
+SpaceLens-owned code is MIT. See the root `LICENSE`. MIT does not apply to
+Qt, to Qt's bundled third-party code, or to SQLite.
+
+## SpaceLens
+
+| Field | Value |
+|-------|--------|
+| License | MIT |
+| SPDX | MIT |
+| Copyright | Copyright (c) 2026 tungcorn |
+| Text | root `LICENSE` (also copied into both zip archives) |
+
+The maintainer selected MIT. An assistant did not choose this license.
+
+## SQLite
+
+| Field | Value |
+|-------|--------|
+| Type | vendored source dependency |
+| Path | `third_party/sqlite/` |
+| Version | 3.53.4 (`sqlite-amalgamation-3530400`) |
+| Macros | `SQLITE_VERSION "3.53.4"`, `SQLITE_VERSION_NUMBER 3053004` |
+| Source ID | `2026-07-24 19:02:57 bf7c7f30031888f4e796e429ab3978879485813aaca6f641c7b33e4e09459bcc` |
+| Upstream | https://www.sqlite.org/download.html |
+| Status | author blessing; not a SpaceLens license and not Qt |
+
+Compiled into `spacelens_core` and therefore into both the CLI and the GUI.
 
 ## Shipped in the CLI archive
 
 | Component | Location | Notes |
 |-----------|----------|--------|
-| SQLite amalgamation 3.53.4 | `third_party/sqlite/` | Compiled into `spacelens_core`. Blessing in `sqlite3.h`; see `third_party/sqlite/README.md`. Independent of the SpaceLens project license and of Qt. |
-| MSVC runtime | not shipped | Official Microsoft Visual C++ Redistributable (x64) is a prerequisite. |
+| SpaceLens | `LICENSE` | MIT |
+| SQLite amalgamation 3.53.4 | compiled in | blessing in `sqlite3.h`; see `third_party/sqlite/README.md` |
+| MSVC runtime | not shipped | Official Microsoft Visual C++ Redistributable (x64) is a prerequisite |
 
 The CLI archive must not contain Qt DLLs, `platforms\`, or the GUI executable.
 
-## Shipped in the GUI archive (private verification only)
+## Qt
+
+| Field | Value |
+|-------|--------|
+| Type | dynamically distributed runtime dependency (GUI zip only) |
+| Version | 6.8.3 |
+| Kit | `win64_msvc2022_64` shared (`qconfig.pri`: `QT_VERSION=6.8.3`, `QT_ARCH=x86_64`, enabled `shared`, disabled `static`) |
+| Kit compiler | MSVC 19.39.33520 |
+| Modification | unmodified stock kit binaries (aqtinstall / official kit). SpaceLens does not rebuild Qt |
+| Direct dumpbin dependents | `Qt6Widgets.dll`, `Qt6Gui.dll`, `Qt6Core.dll` |
+| Also deployed | `Qt6Network.dll`, `Qt6Svg.dll`, `opengl32sw.dll`, plugins listed below |
+| Not a dumpbin dependent | `Qt6Concurrent.dll` (CMake still links `Qt6::Concurrent`; templates can inline) |
+| License basis (kit SPDX) | `LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only` |
+| Distribution option used | LGPL-3.0-only (with GPL-3.0 as required by LGPL-3.0) |
+| Corresponding source | maintainer-controlled written offer + pinned official archive; see `docs/QT_SOURCE_OFFER.md` |
+
+### Shipped in the GUI archive
 
 | Component | How it gets there | Notes |
 |-----------|-------------------|--------|
-| Qt 6.8.3 shared kit | `windeployqt --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --release` | Dynamic Widgets/Gui/Core runtime and plugins. Binary proof: `dumpbin /dependents` lists `Qt6Widgets.dll`, `Qt6Gui.dll`, `Qt6Core.dll`. |
-| `platforms\qwindows.dll` | required by windeployqt | Packaging fails if this file is missing. |
-| `Qt6Network.dll`, `Qt6Svg.dll` | windeployqt (plugin dependents) | Allowed; not every plugin name is hardcoded. |
-| `opengl32sw.dll` | Qt kit `bin\` | Mesa software rasterizer. Size matches the kit, not a compiler CRT. |
-| SQLite 3.53.4 | linked via `spacelens_core` | Same blessing as the CLI. |
-| MSVC runtime | not shipped | Same Visual C++ Redistributable prerequisite. No `vcruntime*.dll` / `msvcp*.dll` in the zip. |
+| Qt 6.8.3 shared kit | `windeployqt --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --release` | Dynamic Widgets/Gui/Core runtime and plugins |
+| `platforms\qwindows.dll` | required by windeployqt | Packaging fails if this file is missing |
+| `Qt6Network.dll`, `Qt6Svg.dll` | windeployqt (plugin dependents) | Allowed; not every plugin name is hardcoded |
+| `opengl32sw.dll` | Qt kit `bin\` | Mesa software rasterizer. Size matches the kit, not a compiler CRT |
+| SQLite 3.53.4 | linked via `spacelens_core` | Same blessing as the CLI |
+| MSVC runtime | not shipped | Same Visual C++ Redistributable prerequisite |
 
 Windows SDK `d3dcompiler_47.dll` (`4741488` bytes), `dxcompiler.dll`, and
-`dxil.dll` are **not** shipped. Default windeployqt pulled them from
-`Windows Kits\10\Redist\D3D\x64`; the extra flags stop that.
+`dxil.dll` are **not** shipped.
 
-Kit SPDX (SPDX 2.3 under `<qt-prefix>/sbom/`) concludes the shipped Qt
-modules and plugins as:
-
-`LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`
-
-GPL-only entries in that SPDX set are **build tools** (`moc`, `rcc`,
+GPL-only entries in the kit SPDX set are **build tools** (`moc`, `rcc`,
 `uic`, `qmake`, `windeployqt`). They are not in the zip.
 
-Full module/plugin table, bundled third-party concluded licenses, and
-corresponding-source status: [`docs/QT_REDIST_AUDIT.md`](QT_REDIST_AUDIT.md).
+Module/plugin table and bundled third-party concluded licenses:
+[`docs/QT_REDIST_AUDIT.md`](QT_REDIST_AUDIT.md).
+Completed review: [`docs/QT_REDIST_REVIEWED.md`](QT_REDIST_REVIEWED.md).
 
-**Qt redistribution status: PENDING.**
-`packaging/qt-redist-review.env` has `review_status=PENDING`,
-`qt_version=6.8.3`, `linkage=shared`, `source_availability=MISSING`.
-
-There is no maintainer-controlled Qt corresponding-source archive or
-offer (`QT_SOURCE_AVAILABILITY_REQUIRED`). Do not create
-`docs/QT_REDIST_REVIEWED.md`.
-
-`packaging/gui/licenses/LGPL-3.0.txt` and `GPL-3.0.txt` are verbatim GNU
-texts packaged as notices. They do not complete an LGPL source offer.
-
-Public GUI distribution stays blocked until a maintainer:
-
-1. chooses a project `LICENSE`
-2. provides a real corresponding-source mechanism and sets
-   `source_availability=READY`
-3. sets `review_status=PASS` only after a completed review of **this**
-   6.8.3 shared kit
-
-A Qt-free CLI is not technically blocked by the unfinished Qt review.
-A joint public prerelease of both zips still needs both gates. See
-[`docs/RELEASING.md`](RELEASING.md).
+Machine-checkable record: `packaging/qt-redist-review.env`.
 
 ## Used to build, not shipped
 
@@ -81,5 +100,4 @@ replace a pin with a floating major tag.
 - No committed Visual C++ runtime DLLs
 - No certificates, `.pfx` files, private keys, or passwords
 - No self-signed Authenticode material
-- No Qt corresponding source archive
-- No project `LICENSE`
+- No Qt corresponding source archive inside the GUI zip

@@ -2,16 +2,17 @@ SpaceLens CLI — third-party notices
 ===================================
 
 This file is an inventory of third-party software shipped in this
-archive. It is not a SpaceLens project license and not a public
-distribution grant.
+archive. It is not the SpaceLens project license.
 
 SpaceLens project license
 -------------------------
-No project license has been chosen (LICENSE_DECISION_REQUIRED).
-If a LICENSE file is present in this folder, that file is the
-maintainer-chosen project license. Otherwise this zip is a private
-verification artifact.
+SpaceLens-owned code and content in this archive are licensed under
+the MIT License. See the LICENSE file in this folder.
 
+SPDX-License-Identifier: MIT
+Copyright (c) 2026 tungcorn
+
+That license does not apply to third-party components listed below.
 This archive must not contain Qt.
 
 SQLite 3.53.4

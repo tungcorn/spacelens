@@ -7,6 +7,16 @@ The CLI `version` command and zip names must contain that string.
 
 Do not invent a marketing version that disagrees with CMake.
 
+## License
+
+SpaceLens-owned code is MIT. SPDX: `MIT`. Text: root `LICENSE`.
+Copyright: `Copyright (c) 2026 tungcorn`.
+
+The maintainer selected MIT. An assistant did not choose this license.
+MIT does not relicense Qt or SQLite.
+
+Both staged zip archives must contain `LICENSE`.
+
 ## What a release candidate is
 
 A local or CI-produced pair of unsigned zip archives plus `SHA256SUMS.txt`:
@@ -17,7 +27,8 @@ spacelens-gui-v<version>-windows-x64.zip
 SHA256SUMS.txt
 ```
 
-These are verification artifacts. They are not a public distribution grant.
+These are verification artifacts. They are not a public GitHub Release
+until a maintainer pushes a matching `v*` tag.
 
 ## Independent CLI and GUI gates
 
@@ -41,10 +52,7 @@ distribute a Qt-free CLI.
 sentinel must not unlock anything. The release workflow never creates
 `LICENSE`, the review env, or `QT_REDIST_REVIEWED.md`.
 
-Current tree: no `LICENSE`, review record is `PENDING` /
-`source_availability=MISSING`. Overall status is
-`RELEASE_DISTRIBUTION_BLOCKED` with `LICENSE_DECISION_REQUIRED` and
-`QT_SOURCE_AVAILABILITY_REQUIRED`.
+A Qt review bound to 6.8.3 is invalid for any other Qt version.
 
 Combined public publication of **both** zips requires both gates. That
 is a product policy for a joint prerelease, not a technical reason to
@@ -59,19 +67,23 @@ cmake --build --preset windows-release
 ctest --preset windows-release
 .\build-release\tests\spacelens_tests.exe
 .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
+.\scripts\verify-distribution-selftest.ps1
 .\scripts\package-release.ps1
 ```
 
 `package-release.ps1` runs `cmake --install` per component, deploys Qt
 with `windeployqt --no-compiler-runtime --no-system-d3d-compiler
---no-system-dxc-compiler --release`, copies package notices and (if
-present) `LICENSE`, then runs `scripts/verify-package.ps1`. The
-validator requires `platforms\qwindows.dll` and the Qt DLLs that
-`dumpbin /dependents` reports on `spacelens-gui.exe` (`Qt6Core.dll`,
-`Qt6Gui.dll`, `Qt6Widgets.dll`), forbids Qt in the CLI stage, forbids the CLI executable and
-MSVC CRT DLLs in either zip, forbids Windows SDK `dxcompiler.dll` /
-`dxil.dll` and the SDK-sized `d3dcompiler_47.dll`, writes SHA-256 sums,
-extracts the CLI zip, and re-runs the safety script.
+--no-system-dxc-compiler --release`, copies package notices, the MIT
+`LICENSE`, and the Qt source offer/identity, then runs
+`scripts/verify-package.ps1`. The validator requires
+`platforms\qwindows.dll` and the Qt DLLs that `dumpbin /dependents`
+reports on `spacelens-gui.exe` (`Qt6Core.dll`, `Qt6Gui.dll`,
+`Qt6Widgets.dll`), forbids Qt in the CLI stage, forbids the CLI
+executable and MSVC CRT DLLs in either zip, forbids Windows SDK
+`dxcompiler.dll` / `dxil.dll` and the SDK-sized `d3dcompiler_47.dll`,
+writes SHA-256 sums, verifies a full CLI+GUI checksum set and a
+CLI-only filtered set, extracts the CLI zip, and re-runs the safety
+script.
 
 The Visual C++ Redistributable (x64) is a runtime prerequisite. Do not
 copy compiler-runtime DLLs from a developer machine into the zip.
@@ -89,7 +101,7 @@ certificate is provided separately.
 |-----|--------|----|--------|
 | Windows / Full Debug | windows-2022 | 6.8.3 via aqtinstall | configure / build / ctest / logical tests |
 | Windows / Full Release | windows-2022 | 6.8.3 | tests, CLI safety, package staging |
-| Windows / CLI-only Latest | windows-latest | none | `SPACELENS_BUILD_GUI=OFF`, safety, 2k stress smoke |
+| Windows / CLI-only Latest | windows-latest | none | `SPACELENS_BUILD_GUI=OFF`, safety, 2k stress smoke, distribution selftest |
 | Quality / MSVC Analyze | windows-2022 | none | `/analyze` on core + CLI |
 
 Concurrency cancels superseded runs. Default `contents: read`. No secrets are
@@ -114,19 +126,15 @@ Qt review is PASS (`gui_eligible`). Otherwise the GUI zip stays on the
 workflow run. The `SHA256SUMS.txt` attached to the GitHub Release lists
 only the uploaded zips. The workflow artifact may still list both.
 
-If there is no `LICENSE`, the status is `LICENSE_DECISION_REQUIRED` and
-no GitHub Release is created.
-
 Releases are prerelease. Do not mark v0.1.0 as latest/production from this
 workflow. Do not push a `v*` tag from an assistant session.
 
 ## Do not do from an assistant session
 
-- Choose a license
-- Set `review_status=PASS` or `source_availability=READY`
-- Create `docs/QT_REDIST_REVIEWED.md` before corresponding source exists
+- Change the maintainer-selected MIT license
 - Push `v0.1.0` or any other release tag
 - Publish a GitHub Release
 - Commit Visual C++ runtime DLLs
 - Generate or commit a certificate, `.pfx`, or private key
 - Weaken `filesystem_mutation: false` so CI is easier
+- Put the Qt source archive inside the GUI runtime zip

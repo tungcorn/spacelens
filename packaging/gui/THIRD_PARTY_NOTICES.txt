@@ -2,15 +2,17 @@ SpaceLens GUI — third-party notices
 ===================================
 
 This file is an inventory of third-party software shipped in this
-archive. It is not a SpaceLens project license and not a public
-distribution grant.
+archive. It is not the SpaceLens project license.
 
 SpaceLens project license
 -------------------------
-No project license has been chosen (LICENSE_DECISION_REQUIRED).
-If a LICENSE file is present in this folder, that file is the
-maintainer-chosen project license. Otherwise this zip is a private
-verification artifact.
+SpaceLens-owned code and content in this archive are licensed under
+the MIT License. See the LICENSE file in this folder.
+
+SPDX-License-Identifier: MIT
+Copyright (c) 2026 tungcorn
+
+MIT does not relicense Qt, Qt bundled third-party code, or SQLite.
 
 Qt 6.8.3 (dynamic)
 ------------------
@@ -19,17 +21,39 @@ win64_msvc2022_64 shared kit.
 
 dumpbin /dependents on spacelens-gui.exe lists Qt6Widgets.dll,
 Qt6Gui.dll, and Qt6Core.dll. The executable is not statically linked
-to Qt.
+to Qt. Recipients can replace those DLLs and the plugin directories
+with ABI-compatible Qt builds. SpaceLens does not use a DLL
+allowlist, encrypted Qt container, or anti-replacement loader.
+Replacement is not a promise of compatibility beyond Qt's own ABI
+guarantees.
 
 The 6.8.3 kit SPDX concludes, for those modules and the plugins
 windeployqt copies beside this executable:
 
   LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-Verbatim GNU texts for LGPL-3.0 and GPL-3.0 are in licenses\.
-Those texts do not complete an LGPL corresponding-source offer.
-SpaceLens does not currently ship or host Qt 6.8.3 corresponding
-source under maintainer control (QT_SOURCE_AVAILABILITY_REQUIRED).
+SpaceLens distributes these libraries under the LGPL-3.0-only option
+together with GPL-3.0 as required by LGPL-3.0. Verbatim GNU texts are
+in licenses\. Qt is not MIT.
+
+Corresponding source (written offer)
+------------------------------------
+The SpaceLens maintainer offers to provide the Corresponding Source
+for the Qt 6.8.3 libraries and plugins in this archive for at least
+three years after each distribution of these binaries.
+
+The exact archive is pinned under maintainer control in
+licenses\QT_SOURCE_IDENTITY.txt:
+
+  qt-everywhere-src-6.8.3.tar.xz
+  SHA-256 cdd3a69967208276bb01af7ace7dba0ba53e679f886a4cbe624225c60fb73f2c
+
+Request it by opening a GitHub issue on
+https://github.com/tungcorn/spacelens/issues
+with the title prefix [Qt corresponding source].
+
+The full offer is licenses\QT_SOURCE_OFFER.md. The runtime zip does
+not contain the ~1 GB source archive.
 
 Microsoft Visual C++ runtime
 ----------------------------

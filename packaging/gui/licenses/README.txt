@@ -1,8 +1,10 @@
-Qt license option texts (not a SpaceLens project license)
-=========================================================
+Qt license option texts and corresponding-source offer
+======================================================
 
-These files are verbatim GNU license texts fetched from
-https://www.gnu.org/licenses/ on 2026-08-13:
+These files are not the SpaceLens project license. SpaceLens itself is
+MIT (see ../LICENSE).
+
+GNU texts fetched from https://www.gnu.org/licenses/ on 2026-08-13:
 
   LGPL-3.0.txt  https://www.gnu.org/licenses/lgpl-3.0.txt
   GPL-3.0.txt   https://www.gnu.org/licenses/gpl-3.0.txt
@@ -10,11 +12,10 @@ https://www.gnu.org/licenses/ on 2026-08-13:
 They document license options declared by the Qt 6.8.3 kit SPDX for the
 dynamic libraries and plugins shipped next to spacelens-gui.exe.
 
-They are not:
+Also in this folder:
 
-  - a SpaceLens project license (none has been chosen)
-  - a completed LGPL corresponding-source offer
-  - permission to treat this zip as a public release
+  QT_SOURCE_IDENTITY.txt  maintainer-pinned official Qt 6.8.3 source
+  QT_SOURCE_OFFER.md      written offer of that corresponding source
 
-See THIRD_PARTY_NOTICES.txt in this archive and docs/QT_REDIST_AUDIT.md
-in the source repository.
+See ../THIRD_PARTY_NOTICES.txt and the source-tree files
+docs/QT_REDIST_REVIEWED.md and docs/QT_SOURCE_OFFER.md.

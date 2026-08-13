@@ -13,13 +13,13 @@ windeployqt --no-compiler-runtime --no-system-d3d-compiler
 
 v0.1.0 prerelease binaries are unsigned.
 
-Public redistribution of this GUI package additionally requires:
-  - an explicit project license decision (root LICENSE)
-  - a structured Qt review PASS with maintainer-controlled
-    corresponding source (see docs/QT_REDIST_AUDIT.md)
+SpaceLens-owned files in this archive are licensed under MIT.
+See LICENSE. Qt remains under its own licenses (LGPL-3.0-only option
+for this dynamic build). Qt is not MIT.
 
-licenses\ holds verbatim GNU LGPL-3.0 and GPL-3.0 texts as notices of
-Qt's license options. They do not complete an LGPL source offer.
+licenses\ holds:
+  - verbatim GNU LGPL-3.0 and GPL-3.0 texts
+  - the maintainer-controlled Qt corresponding-source identity
+  - the written source offer
 
-Until those are satisfied, treat this zip as a private verification
-artifact, not a public release. See THIRD_PARTY_NOTICES.txt.
+See THIRD_PARTY_NOTICES.txt.

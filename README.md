@@ -182,15 +182,15 @@ Packaging (unsigned verification zips; not a public grant):
 .\scripts\package-release.ps1
 ```
 
-No project license has been chosen (`LICENSE_DECISION_REQUIRED`). The
-Qt 6.8.3 GUI audit is pending and corresponding source is not under
-maintainer control (`QT_SOURCE_AVAILABILITY_REQUIRED`). Public
-distribution is `RELEASE_DISTRIBUTION_BLOCKED`. The CLI is Qt-free and
-is not technically gated on the Qt review; a joint public prerelease of
-both zips still needs both gates. See
+SpaceLens-owned code is **MIT**. See [`LICENSE`](LICENSE). The
+maintainer selected this license; an assistant did not choose it. Qt
+6.8.3 remains under its own licenses (LGPL-3.0-only option for the
+dynamic GUI runtime). Corresponding Qt source is offered by the
+maintainer — [`docs/QT_SOURCE_OFFER.md`](docs/QT_SOURCE_OFFER.md).
+Do not treat Qt as MIT. See
 [`docs/RELEASING.md`](docs/RELEASING.md),
 [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md), and
-[`docs/QT_REDIST_AUDIT.md`](docs/QT_REDIST_AUDIT.md).
+[`docs/QT_REDIST_REVIEWED.md`](docs/QT_REDIST_REVIEWED.md).
 
 See [`docs/CLI.md`](docs/CLI.md), [`docs/SAFETY.md`](docs/SAFETY.md),
 [`docs/INDEX.md`](docs/INDEX.md), [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md),
