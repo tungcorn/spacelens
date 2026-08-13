@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "dev-env.ps1")
 
-$buildDir = Join-Path $root "build-debug"
-cmake -S $root -B $buildDir -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$env:CMAKE_PREFIX_PATH"
+Set-Location $root
+cmake --preset windows-debug
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Write-Host "Configured Debug in $buildDir"
+Write-Host "Configured Debug preset windows-debug"

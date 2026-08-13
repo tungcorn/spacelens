@@ -26,6 +26,11 @@ std::string SizeFormatter::format(ByteSize bytes)
     }
 
     char buffer[48];
+    // The loop keeps unit in [1, 4]. Clamp so MSVC /analyze (C28020) can
+    // see the std::array subscript is in range.
+    if (unit >= kUnits.size()) {
+        unit = kUnits.size() - 1;
+    }
     // One decimal place for KB and above keeps status lines readable.
     std::snprintf(buffer, sizeof(buffer), "%.1f %s", value, kUnits[unit]);
     return buffer;
