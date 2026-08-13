@@ -11,6 +11,7 @@
 #include <Windows.h>
 
 #include <chrono>
+#include <limits>
 #include <sstream>
 
 namespace spacelens {
@@ -342,6 +343,119 @@ IndexQueryResult queryIndex(const std::wstring& rootPath,
             std::chrono::steady_clock::now() - t0)
             .count());
     return r;
+}
+
+DuplicateCandidateQueryResult queryDuplicateSizeCandidates(
+    IndexStore& store,
+    ByteSize minimumSize)
+{
+    DuplicateCandidateQueryResult result;
+    result.minimumSize = minimumSize;
+    result.location = store.location();
+    try {
+        if (auto meta = store.readRootMeta()) {
+            result.root = *meta;
+        }
+        result.root.rootPath = result.location.rootPath.empty()
+                                   ? result.root.rootPath
+                                   : result.location.rootPath;
+        result.ageMs = ageMs(result.root.indexedAtTicks, nowFileTime());
+
+        const char* sql =
+            "SELECT path, name, size_bytes, last_write_ticks, attributes, "
+            "is_reparse FROM entries WHERE root_id = 1 AND kind = 0 AND "
+            "size_bytes > 0 AND size_bytes >= ?1 AND is_reparse = 0 AND "
+            "size_bytes IN (SELECT size_bytes FROM entries WHERE root_id = 1 "
+            "AND kind = 0 AND size_bytes > 0 AND size_bytes >= ?1 AND "
+            "is_reparse = 0 GROUP BY size_bytes HAVING COUNT(*) >= 2) "
+            "ORDER BY size_bytes DESC, path COLLATE NOCASE ASC, path ASC";
+
+        SqliteStmt stmt(store.db(), sql);
+        stmt.bindInt64(1, static_cast<std::int64_t>(minimumSize));
+
+        DuplicateSizeBucket* current = nullptr;
+        bool saturated = false;
+        while (stmt.step()) {
+            DuplicateIndexCandidate file;
+            file.path = stmt.columnText16(0);
+            file.name = stmt.columnText16(1);
+            file.logicalSize = static_cast<ByteSize>(stmt.columnInt64(2));
+            file.lastWriteTicks = static_cast<FileTimeTicks>(stmt.columnInt64(3));
+            file.attributes = static_cast<std::uint32_t>(stmt.columnInt64(4));
+            file.indexedAsReparse = stmt.columnInt64(5) != 0;
+            if (current == nullptr || current->logicalSize != file.logicalSize) {
+                result.buckets.push_back({});
+                current = &result.buckets.back();
+                current->logicalSize = file.logicalSize;
+            }
+            current->files.push_back(std::move(file));
+            ++result.candidateFiles;
+            const ByteSize maxBytes = std::numeric_limits<ByteSize>::max();
+            if (maxBytes - result.candidateBytes < current->logicalSize) {
+                result.candidateBytes = maxBytes;
+                saturated = true;
+            } else if (!saturated) {
+                result.candidateBytes += current->logicalSize;
+            }
+        }
+        result.ok = true;
+    } catch (const SqliteError& ex) {
+        result.ok = false;
+        result.error = ex.what();
+        if (result.error.find("not found") != std::string::npos) {
+            result.error = "index_not_found";
+        } else if (result.error.find("unsupported") != std::string::npos) {
+            result.error = "unsupported_schema";
+        } else {
+            result.error = "index_query_failed";
+        }
+    } catch (...) {
+        result.ok = false;
+        result.error = "index_query_failed";
+    }
+    return result;
+}
+
+DuplicateCandidateQueryResult queryDuplicateSizeCandidates(
+    const std::wstring& rootPath,
+    ByteSize minimumSize)
+{
+    DuplicateCandidateQueryResult result;
+    result.minimumSize = minimumSize;
+    result.location = locateIndex(rootPath);
+    result.root.rootPath = result.location.rootPath;
+    if (!indexDatabaseExists(result.location)) {
+        result.error = "index_not_found";
+        return result;
+    }
+    try {
+        auto store = IndexStore::openRead(result.location);
+        auto meta = store.readRootMeta();
+        if (!meta || meta->status != IndexStatus::Ready) {
+            result.error = meta ? "index_not_ready" : "index_corrupt";
+            result.root = meta.value_or(result.root);
+            return result;
+        }
+        result = queryDuplicateSizeCandidates(store, minimumSize);
+        result.minimumSize = minimumSize;
+        result.root = *meta;
+        result.location = locateIndex(rootPath);
+        result.ageMs = ageMs(result.root.indexedAtTicks, nowFileTime());
+    } catch (const SqliteError& ex) {
+        result.ok = false;
+        result.error = ex.what();
+        if (result.error.find("not found") != std::string::npos) {
+            result.error = "index_not_found";
+        } else if (result.error.find("unsupported") != std::string::npos) {
+            result.error = "unsupported_schema";
+        } else {
+            result.error = "index_open_failed";
+        }
+    } catch (...) {
+        result.ok = false;
+        result.error = "index_open_failed";
+    }
+    return result;
 }
 
 }  // namespace spacelens

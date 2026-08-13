@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Duplicates.hpp"
 #include "core/FileTime.hpp"
 #include "core/Types.hpp"
 #include "core/index/IndexPaths.hpp"
@@ -95,5 +96,17 @@ struct IndexQueryResult {
 
 /// Read status for a root without running a query.
 [[nodiscard]] IndexQueryResult indexStatus(const std::wstring& rootPath);
+
+/// Same-size regular-file candidate buckets. This is not duplicate proof.
+/// Directories, zero-length files, and indexed reparse files are excluded.
+/// Live verification still has to reject stale/missing/reparse paths.
+[[nodiscard]] DuplicateCandidateQueryResult queryDuplicateSizeCandidates(
+    const std::wstring& rootPath,
+    ByteSize minimumSize);
+
+/// Query an already-open store. Used by tests and the root-path wrapper.
+[[nodiscard]] DuplicateCandidateQueryResult queryDuplicateSizeCandidates(
+    IndexStore& store,
+    ByteSize minimumSize);
 
 }  // namespace spacelens
