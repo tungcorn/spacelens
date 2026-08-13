@@ -85,6 +85,10 @@ if ($CliStage) {
         Test-RequiredFile $cliRoot "spacelens.exe" | Out-Null
         Test-RequiredFile $cliRoot "README.txt" | Out-Null
         Test-RequiredFile $cliRoot "THIRD_PARTY_NOTICES.txt" | Out-Null
+        $cliLicense = Test-RequiredFile $cliRoot "LICENSE"
+        if ($cliLicense -and [string]::IsNullOrWhiteSpace((Get-Content $cliLicense.FullName -Raw -ErrorAction SilentlyContinue))) {
+            Add-Fail "CLI LICENSE is empty"
+        }
 
         Test-ForbiddenName $cliRoot @(
             "spacelens-gui.exe",
@@ -128,8 +132,25 @@ if ($GuiStage) {
         Test-RequiredFile $guiRoot "Qt6Core.dll" | Out-Null
         Test-RequiredFile $guiRoot "Qt6Gui.dll" | Out-Null
         Test-RequiredFile $guiRoot "Qt6Widgets.dll" | Out-Null
+        Test-RequiredFile $guiRoot "LICENSE" | Out-Null
+        $guiLicense = Join-Path $guiRoot "LICENSE"
+        if ((Test-Path $guiLicense) -and [string]::IsNullOrWhiteSpace((Get-Content $guiLicense -Raw -ErrorAction SilentlyContinue))) {
+            Add-Fail "GUI LICENSE is empty"
+        }
         Test-RequiredFile $guiRoot "licenses\LGPL-3.0.txt" | Out-Null
         Test-RequiredFile $guiRoot "licenses\GPL-3.0.txt" | Out-Null
+        Test-RequiredFile $guiRoot "licenses\QT_SOURCE_IDENTITY.txt" | Out-Null
+        Test-RequiredFile $guiRoot "licenses\QT_SOURCE_OFFER.md" | Out-Null
+        $identity = Join-Path $guiRoot "licenses\QT_SOURCE_IDENTITY.txt"
+        if (Test-Path $identity) {
+            $idText = Get-Content $identity -Raw
+            if ($idText -notmatch "qt-everywhere-src-6.8.3.tar.xz") {
+                Add-Fail "QT_SOURCE_IDENTITY.txt missing archive name"
+            }
+            if ($idText -notmatch "cdd3a69967208276bb01af7ace7dba0ba53e679f886a4cbe624225c60fb73f2c") {
+                Add-Fail "QT_SOURCE_IDENTITY.txt missing official SHA-256 pin"
+            }
+        }
 
         Test-ForbiddenName $guiRoot @(
             "spacelens.exe",

@@ -75,6 +75,18 @@ function New-Sha256Sums([string]$Directory) {
     return $out
 }
 
+function Copy-ProjectLicense([string]$Destination) {
+    $license = Join-Path $root "LICENSE"
+    if (-not (Test-Path $license)) {
+        Write-Error "root LICENSE is required in staged packages"
+    }
+    $text = (Get-Content $license -Raw -ErrorAction SilentlyContinue)
+    if (-not $text -or $text.Trim().Length -eq 0) {
+        Write-Error "root LICENSE is empty"
+    }
+    Copy-Item $license (Join-Path $Destination "LICENSE")
+}
+
 $version = Get-ProjectVersion (Join-Path $BuildDir "CMakeCache.txt")
 $cliName = "spacelens-cli-v$version-windows-x64"
 $guiName = "spacelens-gui-v$version-windows-x64"
@@ -85,16 +97,6 @@ $guiStage = Join-Path $stage $guiName
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $cliStage, $guiStage, $OutDir | Out-Null
 
-function Copy-IfLicense([string]$Destination) {
-    $license = Join-Path $root "LICENSE"
-    if (Test-Path $license) {
-        $text = (Get-Content $license -Raw -ErrorAction SilentlyContinue)
-        if ($text -and $text.Trim().Length -gt 0) {
-            Copy-Item $license (Join-Path $Destination "LICENSE")
-        }
-    }
-}
-
 Write-Host "Checking Qt review record (well-formed, not RequirePass)"
 & (Join-Path $root "scripts\verify-qt-redist-review.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -104,7 +106,7 @@ cmake --install $BuildDir --prefix $cliStage --component SpaceLensCli
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Copy-Item (Join-Path $root "packaging\cli\README.txt") (Join-Path $cliStage "README.txt")
 Copy-Item (Join-Path $root "packaging\cli\THIRD_PARTY_NOTICES.txt") (Join-Path $cliStage "THIRD_PARTY_NOTICES.txt")
-Copy-IfLicense $cliStage
+Copy-ProjectLicense $cliStage
 
 $cliExe = Join-Path $cliStage "spacelens.exe"
 if (-not (Test-Path $cliExe)) {
@@ -119,7 +121,9 @@ Copy-Item (Join-Path $root "packaging\gui\THIRD_PARTY_NOTICES.txt") (Join-Path $
 $guiLicenses = Join-Path $guiStage "licenses"
 New-Item -ItemType Directory -Force -Path $guiLicenses | Out-Null
 Copy-Item (Join-Path $root "packaging\gui\licenses\*") $guiLicenses -Force
-Copy-IfLicense $guiStage
+Copy-Item (Join-Path $root "packaging\qt-source\SOURCE_IDENTITY.txt") (Join-Path $guiLicenses "QT_SOURCE_IDENTITY.txt")
+Copy-Item (Join-Path $root "docs\QT_SOURCE_OFFER.md") (Join-Path $guiLicenses "QT_SOURCE_OFFER.md")
+Copy-ProjectLicense $guiStage
 
 $guiExe = Join-Path $guiStage "spacelens-gui.exe"
 if (-not (Test-Path $guiExe)) {
@@ -145,7 +149,27 @@ if (Test-Path $guiZip) { Remove-Item -Force $guiZip }
 
 Compress-Archive -Path (Join-Path $cliStage "*") -DestinationPath $cliZip
 Compress-Archive -Path (Join-Path $guiStage "*") -DestinationPath $guiZip
-New-Sha256Sums $OutDir | Out-Null
+$sums = New-Sha256Sums $OutDir
+$cliZipName = Split-Path $cliZip -Leaf
+$guiZipName = Split-Path $guiZip -Leaf
+& (Join-Path $root "scripts\verify-release-checksums.ps1") `
+    -SumsPath $sums `
+    -ZipDir $OutDir `
+    -AttachedNames @($cliZipName, $guiZipName)
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# Simulate a CLI-only publish set: checksums must name only the CLI zip.
+$cliOnlySums = Join-Path $OutDir "SHA256SUMS-cli-only.txt"
+$cliLine = Select-String -LiteralPath $sums -SimpleMatch "  $cliZipName" | ForEach-Object { $_.Line }
+if (-not $cliLine) { Write-Error "CLI zip missing from SHA256SUMS.txt" }
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllLines($cliOnlySums, @($cliLine), $utf8)
+& (Join-Path $root "scripts\verify-release-checksums.ps1") `
+    -SumsPath $cliOnlySums `
+    -ZipDir $OutDir `
+    -AttachedNames @($cliZipName)
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Remove-Item -Force $cliOnlySums
 
 if (-not $SkipSmoke) {
     $extract = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-pkg-" + [guid]::NewGuid().ToString("N"))
