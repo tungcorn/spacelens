@@ -1,0 +1,223 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: "6.8.3"
+  AQTINSTALL_VERSION: "3.3.0"
+
+jobs:
+  full-debug:
+    name: Windows / Full Debug
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        shell: pwsh
+        run: |
+          $prefix = (& .\scripts\install-qt.ps1 -Version $env:QT_VERSION -AqtVersion $env:AQTINSTALL_VERSION |
+            Select-Object -Last 1).ToString().Trim()
+          if (-not (Test-Path (Join-Path $prefix "lib\cmake\Qt6\Qt6Config.cmake"))) {
+            throw "install-qt.ps1 did not return a Qt prefix (got '$prefix')"
+          }
+          "CMAKE_PREFIX_PATH=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PATH=$prefix\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure Debug
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --preset windows-debug
+
+      - name: Build Debug
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --build --preset windows-debug
+
+      - name: CTest Debug
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          ctest --preset windows-debug
+
+      - name: Logical tests Debug
+        shell: pwsh
+        run: .\build-debug\tests\spacelens_tests.exe
+
+  full-release:
+    name: Windows / Full Release
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        shell: pwsh
+        run: |
+          $prefix = (& .\scripts\install-qt.ps1 -Version $env:QT_VERSION -AqtVersion $env:AQTINSTALL_VERSION |
+            Select-Object -Last 1).ToString().Trim()
+          if (-not (Test-Path (Join-Path $prefix "lib\cmake\Qt6\Qt6Config.cmake"))) {
+            throw "install-qt.ps1 did not return a Qt prefix (got '$prefix')"
+          }
+          "CMAKE_PREFIX_PATH=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PATH=$prefix\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure Release
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --preset windows-release
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --build --preset windows-release
+
+      - name: CTest Release
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          ctest --preset windows-release
+
+      - name: Logical tests Release
+        shell: pwsh
+        run: .\build-release\tests\spacelens_tests.exe
+
+      - name: CLI safety gate
+        shell: pwsh
+        run: .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
+
+      - name: Package staging (no publish)
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          .\scripts\package-release.ps1 -BuildDir .\build-release -OutDir .\dist
+
+      - name: Upload staged archives
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-x64-release-archives
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  cli-only:
+    name: Windows / CLI-only Latest
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure CLI-only Release
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          if ($env:CMAKE_PREFIX_PATH) {
+            Write-Host "Clearing CMAKE_PREFIX_PATH so CLI-only does not require Qt"
+            Remove-Item Env:CMAKE_PREFIX_PATH
+          }
+          cmake --preset windows-cli-release
+
+      - name: Build CLI-only Release
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --build --preset windows-cli-release
+
+      - name: CTest CLI-only
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          ctest --preset windows-cli-release
+
+      - name: Logical tests CLI-only
+        shell: pwsh
+        run: .\build-cli-release\tests\spacelens_tests.exe
+
+      - name: CLI safety gate
+        shell: pwsh
+        run: .\scripts\verify-cli-safety.ps1 -CliPath .\build-cli-release\cli\spacelens.exe
+
+      - name: Stress smoke (2k entries)
+        shell: pwsh
+        run: |
+          .\scripts\stress-v01.ps1 -Entries 2000 -CliPath .\build-cli-release\cli\spacelens.exe -QueryRepeats 3 -ReportPath .\stress-smoke.json
+
+      - name: Upload stress smoke report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stress-smoke
+          path: stress-smoke.json
+          if-no-files-found: error
+          retention-days: 7
+
+  analyze:
+    name: Quality / MSVC Analyze
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure analyze
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --preset windows-analyze
+
+      - name: Build analyze (core + CLI)
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --build --preset windows-analyze --target spacelens 2>&1 |
+            Tee-Object -FilePath analyze.log
+
+      - name: First-party analyzer warnings
+        shell: pwsh
+        run: |
+          if (-not (Test-Path analyze.log)) { throw "analyze.log missing" }
+          $hits = Select-String -Path analyze.log -Pattern 'src\\(core|cli|platform)\\.*warning C'
+          if ($hits) {
+            $hits | ForEach-Object { Write-Host $_.Line }
+            throw "First-party MSVC /analyze warnings are not a clean baseline"
+          }
+          Write-Host "No first-party /analyze warnings"
+
+      - name: Upload analyze log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: msvc-analyze-log
+          path: analyze.log
+          if-no-files-found: warn
+          retention-days: 14

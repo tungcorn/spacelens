@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: "6.8.3"
+  AQTINSTALL_VERSION: "3.3.0"
+
+jobs:
+  package:
+    name: Build test and package
+    runs-on: windows-2022
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      license_present: ${{ steps.gates.outputs.license_present }}
+      qt_redist_reviewed: ${{ steps.gates.outputs.qt_redist_reviewed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        shell: pwsh
+        run: |
+          $prefix = (& .\scripts\install-qt.ps1 -Version $env:QT_VERSION -AqtVersion $env:AQTINSTALL_VERSION |
+            Select-Object -Last 1).ToString().Trim()
+          if (-not (Test-Path (Join-Path $prefix "lib\cmake\Qt6\Qt6Config.cmake"))) {
+            throw "install-qt.ps1 did not return a Qt prefix (got '$prefix')"
+          }
+          "CMAKE_PREFIX_PATH=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PATH=$prefix\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure Release
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --preset windows-release
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --build --preset windows-release
+
+      - name: Full tests
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          ctest --preset windows-release
+          .\build-release\tests\spacelens_tests.exe
+
+      - name: CLI safety gate
+        shell: pwsh
+        run: .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
+
+      - name: Verify tag matches project version
+        id: meta
+        shell: pwsh
+        run: |
+          $cache = Get-Content .\build-release\CMakeCache.txt
+          $version = $null
+          foreach ($line in $cache) {
+            if ($line -match '^CMAKE_PROJECT_VERSION:STATIC=(.+)$') { $version = $Matches[1]; break }
+          }
+          if (-not $version) { throw "CMAKE_PROJECT_VERSION missing" }
+          $cli = & .\build-release\cli\spacelens.exe version
+          if ($cli -notmatch [regex]::Escape($version)) {
+            throw "CLI version '$cli' does not contain CMake version $version"
+          }
+          $tag = "${{ github.ref_name }}"
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            if ($tag -ne "v$version") {
+              throw "Tag $tag does not match project version v$version"
+            }
+          }
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append
+          "tag=v$version" | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "version=$version"
+
+      - name: Stage archives
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          .\scripts\package-release.ps1 -BuildDir .\build-release -OutDir .\dist
+
+      - name: Distribution gates
+        id: gates
+        shell: pwsh
+        run: |
+          $hasLicense = Test-Path LICENSE
+          $qtReviewed = Test-Path docs/QT_REDIST_REVIEWED.md
+          if ($hasLicense) { "license_present=true" | Out-File $env:GITHUB_OUTPUT -Append }
+          else { "license_present=false" | Out-File $env:GITHUB_OUTPUT -Append }
+          if ($qtReviewed) { "qt_redist_reviewed=true" | Out-File $env:GITHUB_OUTPUT -Append }
+          else { "qt_redist_reviewed=false" | Out-File $env:GITHUB_OUTPUT -Append }
+          if (-not $hasLicense) {
+            Write-Host "LICENSE_DECISION_REQUIRED — GitHub Release publish will be skipped"
+          }
+          if (-not $qtReviewed) {
+            Write-Host "RELEASE_DISTRIBUTION_BLOCKED — Qt redistribution is not maintainer-reviewed"
+          }
+
+      - name: Upload release archives
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spacelens-${{ steps.meta.outputs.tag }}-windows-x64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub prerelease
+    needs: package
+    if: >
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.package.outputs.license_present == 'true' &&
+      needs.package.outputs.qt_redist_reviewed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: spacelens-${{ needs.package.outputs.tag }}-windows-x64
+          path: dist
+
+      - name: Create prerelease (CLI only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # GUI zip is never attached until Qt redistribution is reviewed.
+          # This job only runs when docs/QT_REDIST_REVIEWED.md exists; still
+          # attach CLI + checksums only so a review marker cannot silently
+          # publish an unreviewed Qt runtime.
+          mapfile -t assets < <(ls -1 dist/spacelens-cli-*.zip dist/SHA256SUMS.txt)
+          gh release create "${{ needs.package.outputs.tag }}" \
+            "${assets[@]}" \
+            --repo "${{ github.repository }}" \
+            --prerelease \
+            --title "SpaceLens ${{ needs.package.outputs.tag }} (prerelease)" \
+            --notes "Unsigned prerelease. See docs/RELEASING.md. GUI archive is a workflow artifact only."
+
+  blocked:
+    name: Distribution blocked notice
+    needs: package
+    if: >
+      startsWith(github.ref, 'refs/tags/v') &&
+      (needs.package.outputs.license_present != 'true' ||
+       needs.package.outputs.qt_redist_reviewed != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Explain why no GitHub Release was published
+        run: |
+          echo "LICENSE present: ${{ needs.package.outputs.license_present }}"
+          echo "Qt redistribution reviewed: ${{ needs.package.outputs.qt_redist_reviewed }}"
+          echo "Archives remain available as workflow artifacts."
+          echo "No GitHub Release is created while LICENSE_DECISION_REQUIRED or RELEASE_DISTRIBUTION_BLOCKED."

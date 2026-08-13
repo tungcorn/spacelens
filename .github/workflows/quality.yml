@@ -1,0 +1,50 @@
+name: Quality
+
+on:
+  workflow_dispatch:
+    inputs:
+      entries:
+        description: Generated fixture entry count
+        required: false
+        default: "100000"
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: Quality / Stress 100k+
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure CLI-only Release
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --preset windows-cli-release
+
+      - name: Build CLI
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          cmake --build --preset windows-cli-release --target spacelens
+
+      - name: Run generated stress
+        shell: pwsh
+        run: |
+          $n = [int]"${{ github.event.inputs.entries }}"
+          if ($n -lt 1000) { $n = 100000 }
+          .\scripts\stress-v01.ps1 -Entries $n -CliPath .\build-cli-release\cli\spacelens.exe -ReportPath .\stress-v01.json
+
+      - name: Upload stress report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stress-v01
+          path: stress-v01.json
+          if-no-files-found: error
+          retention-days: 30
