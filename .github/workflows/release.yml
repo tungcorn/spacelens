@@ -135,7 +135,7 @@ jobs:
           else { "gui_eligible=false" | Out-File $env:GITHUB_OUTPUT -Append }
 
           if (-not $hasLicense) {
-            Write-Host "LICENSE_DECISION_REQUIRED — GitHub Release publish will be skipped"
+            Write-Host "LICENSE missing or empty — GitHub Release publish will be skipped"
           }
           if (-not $qtPass) {
             Write-Host "Qt structured review is not PASS — GUI zip stays a workflow artifact"
@@ -235,4 +235,4 @@ jobs:
           echo "GUI eligible: ${{ needs.package.outputs.gui_eligible }}"
           echo "Qt structured review PASS: ${{ needs.package.outputs.qt_redist_reviewed }}"
           echo "Archives remain available as workflow artifacts."
-          echo "No GitHub Release is created while LICENSE_DECISION_REQUIRED."
+          echo "No GitHub Release is created without a non-empty root LICENSE."

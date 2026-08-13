@@ -166,6 +166,10 @@ jobs:
         shell: pwsh
         run: .\scripts\verify-cli-safety.ps1 -CliPath .\build-cli-release\cli\spacelens.exe
 
+      - name: Distribution gate selftest
+        shell: pwsh
+        run: .\scripts\verify-distribution-selftest.ps1
+
       - name: Stress smoke (2k entries)
         shell: pwsh
         run: |
