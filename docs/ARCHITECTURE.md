@@ -35,8 +35,10 @@ than claiming a shipped feature.
 - Deterministic, explainable **classification**: what an item appears to be,
   with category, confidence, rule identifier, and reason.
 - Deterministic **location safety policy**: whether a path is Protected,
-  Sensitive, Ordinary, or Unknown. Location policy is independent of
-  classification and reclaimability.
+  Sensitive, Ordinary, or Unknown. Built-in `classifyLocation` is path-only.
+  Effective safety may also use a human-declared ordinary root. Location
+  policy is independent of classification and reclaimability. See
+  [`docs/LOCATION_SAFETY.md`](LOCATION_SAFETY.md).
 - Write-based **activity summaries** for files and directories, including
   descendant activity for directories and bounded age/count/byte summaries.
 - **Read-only reclaim analysis** that combines size, activity evidence,
@@ -198,8 +200,12 @@ classification. The intended policy classes are:
 |-------|------------------|----------------|
 | **Protected** | Windows, Program Files, recovery/system volumes, drive roots | Do not manage deletion |
 | **Sensitive** | User profile roots, AppData, critical application configuration | Extra warnings and conservative review |
-| **Ordinary** | Typical project folders and downloaded content under user trees | Eligible for review workflows |
-| **Unknown** | Unrecognized layouts | Conservative treatment |
+| **Ordinary** | Typical project folders and downloaded content under user trees; also a specific user-declared root | Eligible for review workflows |
+| **Unknown** | Unrecognized layouts, including many data-volume trees until declared | Conservative treatment |
+
+Built-in classification never treats an arbitrary drive-letter path as Ordinary.
+A GUI-only declaration may mark one specific root ordinary. That is not
+permission to delete. Protected and Sensitive cannot be overridden.
 
 `AppData` needs nuanced treatment; it is not a blanket deletion area or a blanket
 bulk-protected area. This milestone uses location policy for warnings, filtering,
@@ -288,6 +294,9 @@ Building the CLI must not require a running GUI. Qt is required only when
   by CLI and GUI.
 - **`Classification`** — deterministic category/confidence/rule/reason value.
 - **`LocationSafety`** — deterministic location-policy value.
+- **`OrdinaryLocationPolicy` / `OrdinaryLocationDeclaration`** — effective
+  location snapshot and persisted user-declared ordinary roots. Built-in
+  `classifyLocation` stays unchanged.
 - **`ReclaimCandidate` / `ReclaimQuery`** — read-only analysis values; neither
   carries mutation authority.
 - **`CleanupReview` / `CleanupCandidate`** — value-owned planning records

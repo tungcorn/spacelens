@@ -37,7 +37,9 @@ spacelens_maintenance  →  GUI Recycle Bin adapter only
 - Fast native recursive scan using logical file sizes
 - Largest files and largest directories with bounded Top-K queries
 - Deterministic, explainable storage classification and confidence
-- Protected/Sensitive/Ordinary/Unknown location safety policy
+- Protected/Sensitive/Ordinary/Unknown location safety policy, including
+  GUI-only user-declared ordinary roots (classification only — not safe to
+  delete)
 - Write-based file and descendant-based directory activity summaries
 - Read-only reclaim analysis for human review prioritization
 - Durable Cleanup Review V2: captured evidence, strong object identity,
@@ -71,6 +73,7 @@ spacelens_maintenance  →  GUI Recycle Bin adapter only
 Cleanup Review: [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md).
 Duplicates: [`docs/DUPLICATES.md`](docs/DUPLICATES.md).
 Maintenance: [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md).
+Location safety: [`docs/LOCATION_SAFETY.md`](docs/LOCATION_SAFETY.md).
 Measured baselines: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ## Build prerequisites

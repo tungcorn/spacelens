@@ -59,11 +59,12 @@ Startup **loads** review state. It does **not** revalidate automatically.
 
 | Table | Role |
 |-------|------|
-| `meta` | `review_schema_version`, `review_next_id`, `maintenance_schema_version` |
+| `meta` | `review_schema_version`, `review_next_id`, `maintenance_schema_version`, `location_schema_version`, `location_declaration_generation` |
 | `review_items` | Durable ID, original path, normalized path key, captured object evidence, historical directory aggregate, classification, reclaimability, strength, safety, source/root, index age/timestamp, `addedAt`, optional `lifecycle` |
 | `review_validation` | Current observation, current object/aggregate evidence, primary state, reason flags, diffs, identity/direct/recursive honesty flags, checked time |
 | `maintenance_operations` | Additive Recycle Bin operation receipts (see Maintenance V1) |
 | `maintenance_receipt_items` | Per-file Recycle Bin results |
+| `ordinary_location_declarations` | User-declared ordinary roots and volume binding (see Location Safety V2). Independent of review rows and of replaceable indexes. |
 
 Unsupported newer or malformed schemas fail closed. A valid database is never
 replaced to “fix” an unknown version.

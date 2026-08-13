@@ -155,6 +155,13 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Lifetime:** One probe at a time, `stop_token` between candidates, queued progress/completion on the GUI thread. Cancellation clears partial updates. Destruction requests stop and joins. Only a completed batch is applied through `replaceValidationBatch`.
 - **Bug prevented:** Callbacks into a destroyed dialog, committing cancelled probes, one thread per candidate, and treating a failed persist as an in-memory success.
 
+## User-declared ordinary locations
+
+- **Why used:** Built-in `classifyLocation` must stay path-only. Many legitimate user-managed trees on data volumes are `Unknown` and must not become Ordinary by drive letter.
+- **Ownership:** `OrdinaryLocationPolicy` is a value snapshot. `CleanupReviewStore` owns the additive `ordinary_location_declarations` table in the same `state.db` as review/maintenance. `WindowsVolumeIdentityReader` supplies serial plus optional GUID.
+- **Lifetime:** Add/remove increment `location_declaration_generation`. Refresh updates status only. Matching uses component-aware ancestry after stripping `\\?\` prefixes. Active declarations never override Protected or Sensitive. Serial `0` persists as `VolumeUnavailable` and cannot authorize maintenance.
+- **Bug prevented:** `D:\proj` matching `D:\project`; treating a remounted volume with the same letter as the declared volume; following a reparse root to validate a declaration; CLI/AI writing ordinary-root grants.
+
 ## Maintenance Recycle Bin adapter (GUI only)
 
 - **Why used:** Recycle-Bin-only mutation must not leak into the CLI or into core.

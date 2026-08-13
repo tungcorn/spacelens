@@ -59,7 +59,7 @@ A file is eligible only when every gate passes:
 | Gate | Rule |
 |------|------|
 | Type | Live kind is `File`. Directories and reparse directories are blocked. |
-| Location | Current `classifyLocation` must be `Ordinary`. Protected, Sensitive, and Unknown are blocked. |
+| Location | Current **effective** location safety must be `Ordinary`. Built-in Protected/Sensitive always win. An Active user-declared ordinary root may satisfy this gate for an otherwise Unknown path. Unknown remains blocked. |
 | Identity | Strong `FileId128` with a non-zero volume serial is required. Path equality is not enough. |
 | Match | Live identity must equal the captured review identity. |
 | Metadata | Live size, last-write, and attributes must match the planned values. |
@@ -79,9 +79,12 @@ System Volume Information, and `$Recycle.Bin` as Protected. A user-profile root
 and any AppData path are Sensitive. Typical project paths under
 `C:\Users\<name>\Projects\...` are Ordinary.
 
-Local non-user layouts such as `D:\Hoc\...` or `D:\proj\...` remain
-**Unknown** and are blocked. Maintenance V1 does not expand Ordinary to every
-drive-letter path.
+Local non-user layouts such as a project tree on a data volume remain
+**Unknown** until a human declares that specific root ordinary. Maintenance
+does not expand Ordinary to every drive-letter path. A declaration changes
+classification only; every other V1 gate still applies, and the final guard
+re-classifies with a refreshed policy immediately before recycle. See
+[`docs/LOCATION_SAFETY.md`](LOCATION_SAFETY.md).
 
 `%TEMP%` is usually under AppData, so it is Sensitive. Adapter tests may recycle
 a generated TEMP file **directly** to prove the Shell contract; the product

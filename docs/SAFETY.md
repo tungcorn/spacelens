@@ -39,7 +39,7 @@ It must **not** register commands such as:
 
 ```text
 delete  remove  rm  move  cleanup execute  purge  wipe  dedupe  keep-one
-recycle  maintenance
+recycle  maintenance  trust  allow-root  ordinary-root  safety --write
 ```
 
 There are no hidden aliases for destructive operations.
@@ -171,12 +171,18 @@ Rough classes:
 |-------|--------------------|---------------------------|
 | **Protected** | `Windows`, `Program Files`, recovery / system volumes, drive roots | Do not manage deletion |
 | **Sensitive** | User profile root, `AppData` (nuanced), critical app config areas | Extra warnings; never casual delete |
-| **Ordinary** | Typical project folders, downloads content under user trees | Eligible for review workflows |
-| **Unknown** | Unrecognized layouts | Conservative treatment |
+| **Ordinary** | Typical project folders, downloads content under user trees; also a human-declared user-managed root | Eligible for review workflows |
+| **Unknown** | Unrecognized layouts, including many data-volume project trees until declared | Conservative treatment |
 
 `AppData` is **not** bulk-marked deletable or fully protected; it is application
-data and needs nuanced treatment. This milestone uses the policy for
-**warnings and filtering only** — no override checkbox for protection.
+data and needs nuanced treatment. Built-in `classifyLocation` stays path-only
+and never treats an arbitrary drive-letter path as Ordinary.
+
+A human may declare a specific root ordinary from the GUI. That is a
+**location-class override**, not a safety decision: it does not mean safe to
+delete, safe to recycle, reclaimable, or trusted. Built-in Protected and
+Sensitive always win. Whole-volume roots cannot be declared. See
+[`docs/LOCATION_SAFETY.md`](LOCATION_SAFETY.md).
 
 ## Reparse points
 
