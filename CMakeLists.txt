@@ -190,6 +190,8 @@ if(SPACELENS_BUILD_GUI)
         src/app/IndexSession.cpp
         src/app/CleanupRevalidationSession.hpp
         src/app/CleanupRevalidationSession.cpp
+        src/app/DuplicateDetectionSession.hpp
+        src/app/DuplicateDetectionSession.cpp
         src/ui/MainWindow.hpp
         src/ui/MainWindow.cpp
         src/ui/IndexBrowserPage.hpp
@@ -198,6 +200,8 @@ if(SPACELENS_BUILD_GUI)
         src/ui/TreemapWidget.cpp
         src/ui/CleanupReviewDialog.hpp
         src/ui/CleanupReviewDialog.cpp
+        src/ui/DuplicateFilesDialog.hpp
+        src/ui/DuplicateFilesDialog.cpp
     )
 
     target_link_libraries(SpaceLens

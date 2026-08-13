@@ -9,6 +9,7 @@
 #include "core/index/IndexOverview.hpp"
 #include "platform/windows/CleanupMetadataReader.hpp"
 #include "platform/windows/ExplorerIntegration.hpp"
+#include "ui/DuplicateFilesDialog.hpp"
 
 #include <QAbstractItemView>
 #include <QApplication>
@@ -597,10 +598,12 @@ void IndexBrowserPage::buildUi()
     m_addReviewButton =
         new QPushButton(QStringLiteral("Add to Cleanup Review"), this);
     m_showReviewButton = new QPushButton(QStringLiteral("Cleanup Review"), this);
+    m_findDuplicatesButton = new QPushButton(QStringLiteral("Find Duplicates"), this);
     actionRow->addWidget(m_openButton);
     actionRow->addWidget(m_revealButton);
     actionRow->addWidget(m_copyPathButton);
     actionRow->addStretch(1);
+    actionRow->addWidget(m_findDuplicatesButton);
     actionRow->addWidget(m_addReviewButton);
     actionRow->addWidget(m_showReviewButton);
     rootLayout->addLayout(actionRow);
@@ -621,6 +624,8 @@ void IndexBrowserPage::buildUi()
             &IndexBrowserPage::onAddToReview);
     connect(m_showReviewButton, &QPushButton::clicked, this,
             &IndexBrowserPage::onShowReview);
+    connect(m_findDuplicatesButton, &QPushButton::clicked, this,
+            &IndexBrowserPage::onFindDuplicates);
     connect(m_openButton, &QPushButton::clicked, this,
             &IndexBrowserPage::onOpenSelected);
     connect(m_revealButton, &QPushButton::clicked, this,
@@ -791,6 +796,7 @@ void IndexBrowserPage::updateActionState()
     const bool single = selectedRows().size() == 1;
     m_addReviewButton->setEnabled(hasSel && !busy);
     m_showReviewButton->setEnabled(true);
+    m_findDuplicatesButton->setEnabled(hasRoot && !busy);
     m_openButton->setEnabled(single && !busy);
     m_revealButton->setEnabled(single && !busy);
     m_copyPathButton->setEnabled(hasSel && !busy);
@@ -1840,6 +1846,8 @@ void IndexBrowserPage::onHitsContextMenu(const QPoint& pos)
     menu.addAction(QStringLiteral("Copy Details"), this,
                    &IndexBrowserPage::onCopyDetails);
     menu.addSeparator();
+    menu.addAction(QStringLiteral("Find Duplicates"), this,
+                   &IndexBrowserPage::onFindDuplicates);
     menu.addAction(QStringLiteral("Add to Cleanup Review"), this,
                    &IndexBrowserPage::onAddToReview);
     menu.addAction(QStringLiteral("Open Cleanup Review"), this,
@@ -1950,6 +1958,19 @@ void IndexBrowserPage::onCopyDetails()
 void IndexBrowserPage::onShowReview()
 {
     emit showReviewRequested();
+}
+
+void IndexBrowserPage::onFindDuplicates()
+{
+    const auto root = selectedRoot();
+    if (!root || !root->exists) {
+        emit statusMessage(
+            QStringLiteral("Select an indexed root to find duplicates."));
+        return;
+    }
+    DuplicateFilesDialog dialog(m_review, root->rootPath, root->ageMs,
+                                root->indexedAtIso, this);
+    dialog.exec();
 }
 
 void IndexBrowserPage::onAddToReview()

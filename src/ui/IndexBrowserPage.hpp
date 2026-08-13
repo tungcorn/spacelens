@@ -104,6 +104,7 @@ private slots:
     void onHitsContextMenu(const QPoint& pos);
     void onAddToReview();
     void onShowReview();
+    void onFindDuplicates();
     void onOpenSelected();
     void onRevealSelected();
     void onOpenFolderSelected();
@@ -202,6 +203,7 @@ private:
     QPushButton* m_cancelButton = nullptr;
     QPushButton* m_addReviewButton = nullptr;
     QPushButton* m_showReviewButton = nullptr;
+    QPushButton* m_findDuplicatesButton = nullptr;
     QPushButton* m_openButton = nullptr;
     QPushButton* m_revealButton = nullptr;
     QPushButton* m_copyPathButton = nullptr;
