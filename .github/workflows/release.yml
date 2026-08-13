@@ -138,7 +138,7 @@ jobs:
             Write-Host "LICENSE missing or empty — GitHub Release publish will be skipped"
           }
           if (-not $qtPass) {
-            Write-Host "Qt structured review is not PASS — GUI zip stays a workflow artifact"
+            Write-Host "Qt structured review is not PASS — unified zip stays a workflow artifact"
           }
           if ($cliEligible -and -not $guiEligible) {
             Write-Host "CLI-only publish is eligible; GUI is withheld (independent gates)"
@@ -183,39 +183,42 @@ jobs:
           TAG: ${{ needs.package.outputs.tag }}
         run: |
           set -euo pipefail
-          # Independent gates: LICENSE unlocks CLI. Structured Qt review
-          # PASS+READY unlocks attaching the GUI zip. This job never writes
-          # LICENSE, qt-redist-review.env, or QT_REDIST_REVIEWED.md.
-          # Checksums attached to the Release must name only uploaded zips.
-          # The workflow artifact may still list both archives.
+          # Independent gates: LICENSE unlocks the CLI-only zip. Structured
+          # Qt review PASS+READY unlocks the unified GUI+CLI zip. This job
+          # never writes LICENSE, qt-redist-review.env, or
+          # QT_REDIST_REVIEWED.md. Checksums attached to the Release must
+          # name only uploaded zips. The workflow artifact may still list
+          # both archives.
           shopt -s nullglob
-          cli_zips=(dist/spacelens-cli-*.zip)
-          gui_zips=(dist/spacelens-gui-*.zip)
-          if [ "${#cli_zips[@]}" -ne 1 ]; then
-            echo "expected exactly one CLI zip, found ${#cli_zips[@]}" >&2
+          cli_zip="dist/spacelens-cli-${TAG}-windows-x64.zip"
+          main_zip="dist/spacelens-${TAG}-windows-x64.zip"
+          if [ ! -f "$cli_zip" ]; then
+            echo "expected CLI zip $cli_zip" >&2
+            ls -la dist >&2
             exit 1
           fi
-          attached=("${cli_zips[0]}")
+          attached=("$cli_zip")
           notes_file="docs/release-notes/${TAG}.md"
           fallback="dist/RELEASE_NOTES.md"
           if [ "$GUI_ELIGIBLE" = "true" ]; then
-            if [ "${#gui_zips[@]}" -ne 1 ]; then
-              echo "gui_eligible but found ${#gui_zips[@]} GUI zip(s)" >&2
+            if [ ! -f "$main_zip" ]; then
+              echo "gui_eligible but missing unified zip $main_zip" >&2
+              ls -la dist >&2
               exit 1
             fi
-            attached+=("${gui_zips[0]}")
+            attached+=("$main_zip")
           fi
           if [ -s "$notes_file" ]; then
             cp "$notes_file" "$fallback"
           elif [ "$GUI_ELIGIBLE" = "true" ]; then
             printf '%s\n' \
               "Unsigned prerelease of SpaceLens ${TAG}." \
-              "CLI and GUI archives attached. See docs/RELEASING.md." \
+              "Unified (GUI + CLI) and CLI-only archives attached. See docs/RELEASING.md." \
               > "$fallback"
           else
             printf '%s\n' \
               "Unsigned prerelease of SpaceLens ${TAG}." \
-              "CLI archive only. GUI zip remains a workflow artifact until the structured Qt review is PASS with source_availability=READY." \
+              "CLI archive only. The unified GUI+CLI zip remains a workflow artifact until the structured Qt review is PASS with source_availability=READY." \
               > "$fallback"
           fi
           : > dist/SHA256SUMS-release.txt

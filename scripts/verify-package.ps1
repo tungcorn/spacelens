@@ -1,4 +1,4 @@
-# Category checks for staged CLI / GUI portable trees.
+# Category checks for staged CLI-only and unified main portable trees.
 # Does not hardcode every Qt plugin DLL. Fails on missing runtime,
 # developer leftovers, CLI Qt/maintenance contamination, and
 # Windows SDK D3D/DXC compilers.
@@ -6,13 +6,14 @@
 [CmdletBinding()]
 param(
     [string]$CliStage = "",
-    [string]$GuiStage = ""
+    [Alias("GuiStage")]
+    [string]$MainStage = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-if (-not $CliStage -and -not $GuiStage) {
-    Write-Error "Specify -CliStage and/or -GuiStage"
+if (-not $CliStage -and -not $MainStage) {
+    Write-Error "Specify -CliStage and/or -MainStage"
 }
 
 $failures = New-Object System.Collections.Generic.List[string]
@@ -92,6 +93,7 @@ if ($CliStage) {
 
         Test-ForbiddenName $cliRoot @(
             "spacelens-gui.exe",
+            "spacelens_tests.exe",
             "Qt6*.dll",
             "opengl32sw.dll",
             "d3dcompiler_47.dll",
@@ -119,12 +121,13 @@ if ($CliStage) {
     }
 }
 
-if ($GuiStage) {
-    if (-not (Test-Path $GuiStage)) {
-        Add-Fail "GUI stage not found: $GuiStage"
+if ($MainStage) {
+    if (-not (Test-Path $MainStage)) {
+        Add-Fail "main stage not found: $MainStage"
     } else {
-        $guiRoot = (Resolve-Path $GuiStage).Path
-        Write-Host "Verifying GUI stage: $guiRoot"
+        $guiRoot = (Resolve-Path $MainStage).Path
+        Write-Host "Verifying unified main stage: $guiRoot"
+        Test-RequiredFile $guiRoot "spacelens.exe" | Out-Null
         Test-RequiredFile $guiRoot "spacelens-gui.exe" | Out-Null
         Test-RequiredFile $guiRoot "README.txt" | Out-Null
         Test-RequiredFile $guiRoot "THIRD_PARTY_NOTICES.txt" | Out-Null
@@ -135,7 +138,7 @@ if ($GuiStage) {
         Test-RequiredFile $guiRoot "LICENSE" | Out-Null
         $guiLicense = Join-Path $guiRoot "LICENSE"
         if ((Test-Path $guiLicense) -and [string]::IsNullOrWhiteSpace((Get-Content $guiLicense -Raw -ErrorAction SilentlyContinue))) {
-            Add-Fail "GUI LICENSE is empty"
+            Add-Fail "main LICENSE is empty"
         }
         Test-RequiredFile $guiRoot "licenses\LGPL-3.0.txt" | Out-Null
         Test-RequiredFile $guiRoot "licenses\GPL-3.0.txt" | Out-Null
@@ -153,7 +156,7 @@ if ($GuiStage) {
         }
 
         Test-ForbiddenName $guiRoot @(
-            "spacelens.exe",
+            "spacelens_tests.exe",
             "dxcompiler.dll",
             "dxil.dll",
             "vcruntime*.dll",

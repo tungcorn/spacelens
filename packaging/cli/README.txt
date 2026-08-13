@@ -1,7 +1,10 @@
-SpaceLens CLI (read-only)
+SpaceLens CLI (optional, read-only)
 
-This archive is the agent/script surface. It can scan, index, query, and
-report. It cannot delete, recycle, restore, move, or declare locations.
+This archive is the minimal/headless SpaceLens profile. It is not
+required if you already installed the complete SpaceLens archive.
+
+It can scan, index, query, and report. It cannot delete, recycle,
+restore, move, or declare locations.
 
   spacelens version
   spacelens capabilities --json
@@ -10,10 +13,12 @@ report. It cannot delete, recycle, restore, move, or declare locations.
 `capabilities --json` must report filesystem_mutation: false.
 
 This CLI does not include the Qt GUI or Recycle Bin maintenance.
+Do not install this package at the same time as the complete
+SpaceLens archive; both expose the `spacelens` command.
 
 Runtime: Windows x64. The official Microsoft Visual C++ Redistributable
 (x64) is required if the machine does not already have a compatible
-MSVC runtime. Binaries in the v0.1.0 prerelease are unsigned.
+MSVC runtime. Binaries in the v0.1.1 prerelease are unsigned.
 
 This archive does not include Qt.
 

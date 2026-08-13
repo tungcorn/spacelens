@@ -1,4 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.12.0.schema.json
+# SUPERSEDED: v0.1.0 GUI-only model. Do not submit. Unified 0.1.1 manifests
+# replace this after the v0.1.1 GitHub Release exists.
 
 PackageIdentifier: tungcorn.SpaceLens
 PackageVersion: 0.1.0

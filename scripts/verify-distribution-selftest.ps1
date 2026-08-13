@@ -82,38 +82,38 @@ try {
         }
     }
 
-    $cliZip = Join-Path $scratch "spacelens-cli-v0.1.0-windows-x64.zip"
-    $guiZip = Join-Path $scratch "spacelens-gui-v0.1.0-windows-x64.zip"
+    $cliZip = Join-Path $scratch "spacelens-cli-v0.1.1-windows-x64.zip"
+    $mainZip = Join-Path $scratch "spacelens-v0.1.1-windows-x64.zip"
     Set-Content -Path $cliZip -Value "cli-bytes" -NoNewline
-    Set-Content -Path $guiZip -Value "gui-bytes" -NoNewline
+    Set-Content -Path $mainZip -Value "main-bytes" -NoNewline
     $cliHash = (Get-FileHash -Algorithm SHA256 $cliZip).Hash.ToLowerInvariant()
-    $guiHash = (Get-FileHash -Algorithm SHA256 $guiZip).Hash.ToLowerInvariant()
+    $mainHash = (Get-FileHash -Algorithm SHA256 $mainZip).Hash.ToLowerInvariant()
     $fullSums = Join-Path $scratch "SHA256SUMS-full.txt"
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllLines($fullSums, @(
-        "$cliHash  spacelens-cli-v0.1.0-windows-x64.zip",
-        "$guiHash  spacelens-gui-v0.1.0-windows-x64.zip"
+        "$cliHash  spacelens-cli-v0.1.1-windows-x64.zip",
+        "$mainHash  spacelens-v0.1.1-windows-x64.zip"
     ), $utf8)
 
     & $verifySums -SumsPath $fullSums -ZipDir $scratch -AttachedNames @(
-        "spacelens-cli-v0.1.0-windows-x64.zip",
-        "spacelens-gui-v0.1.0-windows-x64.zip"
+        "spacelens-cli-v0.1.1-windows-x64.zip",
+        "spacelens-v0.1.1-windows-x64.zip"
     )
-    if ($LASTEXITCODE -ne 0) { Add-Fail "CLI+GUI checksum set should PASS" }
+    if ($LASTEXITCODE -ne 0) { Add-Fail "CLI+unified checksum set should PASS" }
 
     $cliOnlySums = Join-Path $scratch "SHA256SUMS-cli.txt"
     [System.IO.File]::WriteAllLines($cliOnlySums, @(
-        "$cliHash  spacelens-cli-v0.1.0-windows-x64.zip"
+        "$cliHash  spacelens-cli-v0.1.1-windows-x64.zip"
     ), $utf8)
     & $verifySums -SumsPath $cliOnlySums -ZipDir $scratch -AttachedNames @(
-        "spacelens-cli-v0.1.0-windows-x64.zip"
+        "spacelens-cli-v0.1.1-windows-x64.zip"
     )
     if ($LASTEXITCODE -ne 0) { Add-Fail "CLI-only filtered checksums should PASS" }
 
     $cliOnlyAgainstFull = 0
     try {
         & $verifySums -SumsPath $fullSums -ZipDir $scratch -AttachedNames @(
-            "spacelens-cli-v0.1.0-windows-x64.zip"
+            "spacelens-cli-v0.1.1-windows-x64.zip"
         )
         $cliOnlyAgainstFull = $LASTEXITCODE
     } catch {

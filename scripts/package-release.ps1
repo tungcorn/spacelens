@@ -1,5 +1,7 @@
-# Stage portable Windows x64 CLI and GUI zip archives from a Release build.
-# Uses cmake --install components, then windeployqt for the GUI.
+# Stage portable Windows x64 zip archives from a Release build.
+# Primary archive: unified GUI + read-only CLI + Qt runtime.
+# Optional archive: CLI-only (no Qt, no GUI).
+# Uses cmake --install components, then windeployqt for the unified tree.
 
 [CmdletBinding()]
 param(
@@ -62,12 +64,16 @@ function Get-Windeployqt {
     Write-Error "windeployqt.exe not found. Set CMAKE_PREFIX_PATH to the Qt prefix."
 }
 
-function New-Sha256Sums([string]$Directory) {
+function New-Sha256Sums([string]$Directory, [string[]]$ZipNames) {
     $out = Join-Path $Directory "SHA256SUMS.txt"
     $lines = @()
-    Get-ChildItem $Directory -File -Filter "*.zip" | Sort-Object Name | ForEach-Object {
-        $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
-        $lines += "$hash  $($_.Name)"
+    foreach ($name in ($ZipNames | Sort-Object)) {
+        $path = Join-Path $Directory $name
+        if (-not (Test-Path $path)) {
+            Write-Error "checksum zip not found: $path"
+        }
+        $hash = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant()
+        $lines += "$hash  $name"
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllLines($out, $lines, $utf8)
@@ -89,13 +95,13 @@ function Copy-ProjectLicense([string]$Destination) {
 
 $version = Get-ProjectVersion (Join-Path $BuildDir "CMakeCache.txt")
 $cliName = "spacelens-cli-v$version-windows-x64"
-$guiName = "spacelens-gui-v$version-windows-x64"
+$mainName = "spacelens-v$version-windows-x64"
 
 $stage = Join-Path $root "stage"
 $cliStage = Join-Path $stage $cliName
-$guiStage = Join-Path $stage $guiName
+$mainStage = Join-Path $stage $mainName
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $cliStage, $guiStage, $OutDir | Out-Null
+New-Item -ItemType Directory -Force -Path $cliStage, $mainStage, $OutDir | Out-Null
 
 Write-Host "Checking Qt review record (well-formed, not RequirePass)"
 & (Join-Path $root "scripts\verify-qt-redist-review.ps1")
@@ -113,49 +119,55 @@ if (-not (Test-Path $cliExe)) {
     Write-Error "CLI install did not produce spacelens.exe"
 }
 
-Write-Host "Installing GUI component -> $guiStage"
-cmake --install $BuildDir --prefix $guiStage --component SpaceLensGui
+Write-Host "Installing unified main components -> $mainStage"
+cmake --install $BuildDir --prefix $mainStage --component SpaceLensGui
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Copy-Item (Join-Path $root "packaging\gui\README.txt") (Join-Path $guiStage "README.txt")
-Copy-Item (Join-Path $root "packaging\gui\THIRD_PARTY_NOTICES.txt") (Join-Path $guiStage "THIRD_PARTY_NOTICES.txt")
-$guiLicenses = Join-Path $guiStage "licenses"
-New-Item -ItemType Directory -Force -Path $guiLicenses | Out-Null
-Copy-Item (Join-Path $root "packaging\gui\licenses\*") $guiLicenses -Force
-Copy-Item (Join-Path $root "packaging\qt-source\SOURCE_IDENTITY.txt") (Join-Path $guiLicenses "QT_SOURCE_IDENTITY.txt")
-Copy-Item (Join-Path $root "docs\QT_SOURCE_OFFER.md") (Join-Path $guiLicenses "QT_SOURCE_OFFER.md")
-Copy-ProjectLicense $guiStage
+cmake --install $BuildDir --prefix $mainStage --component SpaceLensCli
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Copy-Item (Join-Path $root "packaging\gui\README.txt") (Join-Path $mainStage "README.txt")
+Copy-Item (Join-Path $root "packaging\gui\THIRD_PARTY_NOTICES.txt") (Join-Path $mainStage "THIRD_PARTY_NOTICES.txt")
+$mainLicenses = Join-Path $mainStage "licenses"
+New-Item -ItemType Directory -Force -Path $mainLicenses | Out-Null
+Copy-Item (Join-Path $root "packaging\gui\licenses\*") $mainLicenses -Force
+Copy-Item (Join-Path $root "packaging\qt-source\SOURCE_IDENTITY.txt") (Join-Path $mainLicenses "QT_SOURCE_IDENTITY.txt")
+Copy-Item (Join-Path $root "docs\QT_SOURCE_OFFER.md") (Join-Path $mainLicenses "QT_SOURCE_OFFER.md")
+Copy-ProjectLicense $mainStage
 
-$guiExe = Join-Path $guiStage "spacelens-gui.exe"
+$guiExe = Join-Path $mainStage "spacelens-gui.exe"
+$mainCliExe = Join-Path $mainStage "spacelens.exe"
 if (-not (Test-Path $guiExe)) {
-    Write-Error "GUI install did not produce spacelens-gui.exe"
+    Write-Error "unified install did not produce spacelens-gui.exe"
+}
+if (-not (Test-Path $mainCliExe)) {
+    Write-Error "unified install did not produce spacelens.exe"
 }
 
 $windeploy = Get-Windeployqt
 Write-Host "Deploying Qt runtime with $windeploy"
-& $windeploy --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --release --dir $guiStage $guiExe
+& $windeploy --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --release --dir $mainStage $guiExe
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # Inventory deployed Qt modules for the third-party audit.
-$qtDlls = Get-ChildItem $guiStage -Filter "Qt6*.dll" | Sort-Object Name | ForEach-Object { $_.Name }
+$qtDlls = Get-ChildItem $mainStage -Filter "Qt6*.dll" | Sort-Object Name | ForEach-Object { $_.Name }
 Write-Host "Deployed Qt DLLs: $($qtDlls -join ', ')"
 
-& (Join-Path $root "scripts\verify-package.ps1") -CliStage $cliStage -GuiStage $guiStage
+& (Join-Path $root "scripts\verify-package.ps1") -CliStage $cliStage -MainStage $mainStage
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $cliZip = Join-Path $OutDir "$cliName.zip"
-$guiZip = Join-Path $OutDir "$guiName.zip"
+$mainZip = Join-Path $OutDir "$mainName.zip"
 if (Test-Path $cliZip) { Remove-Item -Force $cliZip }
-if (Test-Path $guiZip) { Remove-Item -Force $guiZip }
+if (Test-Path $mainZip) { Remove-Item -Force $mainZip }
 
 Compress-Archive -Path (Join-Path $cliStage "*") -DestinationPath $cliZip
-Compress-Archive -Path (Join-Path $guiStage "*") -DestinationPath $guiZip
-$sums = New-Sha256Sums $OutDir
+Compress-Archive -Path (Join-Path $mainStage "*") -DestinationPath $mainZip
 $cliZipName = Split-Path $cliZip -Leaf
-$guiZipName = Split-Path $guiZip -Leaf
+$mainZipName = Split-Path $mainZip -Leaf
+$sums = New-Sha256Sums $OutDir @($cliZipName, $mainZipName)
 & (Join-Path $root "scripts\verify-release-checksums.ps1") `
     -SumsPath $sums `
     -ZipDir $OutDir `
-    -AttachedNames @($cliZipName, $guiZipName)
+    -AttachedNames @($cliZipName, $mainZipName)
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # Simulate a CLI-only publish set: checksums must name only the CLI zip.
@@ -172,22 +184,47 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Remove-Item -Force $cliOnlySums
 
 if (-not $SkipSmoke) {
-    $extract = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-pkg-" + [guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Path $extract | Out-Null
+    $extractCli = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-pkg-cli-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $extractCli | Out-Null
     try {
-        Expand-Archive -Path $cliZip -DestinationPath $extract
-        $smoke = Join-Path $extract "spacelens.exe"
+        Expand-Archive -Path $cliZip -DestinationPath $extractCli
+        $smoke = Join-Path $extractCli "spacelens.exe"
         $verOut = & $smoke version
         if ($verOut -notmatch [regex]::Escape($version)) {
-            Write-Error "Extracted CLI version '$verOut' does not contain $version"
+            Write-Error "Extracted CLI-only version '$verOut' does not contain $version"
+        }
+        if (Test-Path (Join-Path $extractCli "spacelens-gui.exe")) {
+            Write-Error "CLI-only zip must not contain spacelens-gui.exe"
         }
         & (Join-Path $root "scripts\verify-cli-safety.ps1") -CliPath $smoke
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     } finally {
-        Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $extractCli -ErrorAction SilentlyContinue
+    }
+
+    $extractMain = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-pkg-main-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $extractMain | Out-Null
+    try {
+        Expand-Archive -Path $mainZip -DestinationPath $extractMain
+        $mainSmoke = Join-Path $extractMain "spacelens.exe"
+        $mainGui = Join-Path $extractMain "spacelens-gui.exe"
+        if (-not (Test-Path $mainGui)) {
+            Write-Error "unified zip missing spacelens-gui.exe"
+        }
+        if (-not (Test-Path (Join-Path $extractMain "platforms\qwindows.dll"))) {
+            Write-Error "unified zip missing platforms\qwindows.dll"
+        }
+        $mainVer = & $mainSmoke version
+        if ($mainVer -notmatch [regex]::Escape($version)) {
+            Write-Error "Extracted unified CLI version '$mainVer' does not contain $version"
+        }
+        & (Join-Path $root "scripts\verify-cli-safety.ps1") -CliPath $mainSmoke
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally {
+        Remove-Item -Recurse -Force $extractMain -ErrorAction SilentlyContinue
     }
 }
 
 Write-Host "CLI archive: $cliZip"
-Write-Host "GUI archive: $guiZip"
+Write-Host "Main archive: $mainZip"
 Write-Host "Version: $version"

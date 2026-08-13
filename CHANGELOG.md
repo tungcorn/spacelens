@@ -5,18 +5,28 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
-### Added
+## [0.1.1] — 2026-08-14
 
-- `docs/release-notes/` — versioned GitHub Release notes. The publish job
-  uses `--notes-file` instead of a one-line body.
-- `packaging/winget/` — staged WinGet 1.12.0 manifests for
-  `tungcorn.SpaceLens` and `tungcorn.SpaceLens.CLI`. Public `winget install`
-  is not advertised until the community source resolves those identifiers.
+Packaging/distribution patch. No scanner, index, or maintenance behavior
+change.
+
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.1
 
 ### Changed
 
-- Existing `v0.1.0` GitHub Release title is `SpaceLens v0.1.0` (the
-  Pre-release badge is separate). Published zip binaries are not replaced.
+- The primary Windows archive is `spacelens-v0.1.1-windows-x64.zip` and
+  contains both `spacelens-gui.exe` and the read-only `spacelens.exe`
+  plus the existing Qt 6.8.3 runtime and license/source-offer files.
+- `spacelens-cli-v0.1.1-windows-x64.zip` remains the optional
+  CLI-only profile. Do not install it alongside the complete archive.
+- No new GUI-only zip. The published v0.1.0 GUI-only asset is unchanged.
+- Release publish attaches the unified zip (not `spacelens-gui-*.zip`)
+  when the Qt review gate passes. SHA256SUMS still lists only attached
+  archives.
+- `docs/release-notes/` is the GitHub Release body source. Staged
+  WinGet 1.12.0 manifests describe the unified main package plus
+  optional CLI-only package. Public `winget install` is not advertised
+  until the community source resolves those identifiers.
 
 ## [0.1.0] — 2026-08-13
 
@@ -92,8 +102,3 @@ https://github.com/tungcorn/spacelens/releases/tag/v0.1.0
   `spacelens_maintenance` link.
 - CI does not weaken location policy, Recycle Bin gates, or the read-only CLI
   contract.
-
-## [0.1.0] — unreleased
-
-Current `project(VERSION)` is `0.1.0`. No git tag and no GitHub Release has
-been published for this version.

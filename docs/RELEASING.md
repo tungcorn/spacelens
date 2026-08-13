@@ -2,7 +2,7 @@
 
 ## Version
 
-`project(VERSION 0.1.0)` in the root `CMakeLists.txt` is the source of truth.
+`project(VERSION …)` in the root `CMakeLists.txt` is the source of truth.
 The CLI `version` command and zip names must contain that string.
 
 Do not invent a marketing version that disagrees with CMake.
@@ -15,17 +15,24 @@ Copyright: `Copyright (c) 2026 tungcorn`.
 The maintainer selected MIT. An assistant did not choose this license.
 MIT does not relicense Qt or SQLite.
 
-Both staged zip archives must contain `LICENSE`.
+Both staged zip archives must contain `LICENSE`. The unified archive
+must also contain the Qt license texts, source identity, and written
+offer.
 
 ## What a release candidate is
 
 A local or CI-produced pair of unsigned zip archives plus `SHA256SUMS.txt`:
 
 ```text
+spacelens-v<version>-windows-x64.zip
 spacelens-cli-v<version>-windows-x64.zip
-spacelens-gui-v<version>-windows-x64.zip
 SHA256SUMS.txt
 ```
+
+The first archive is the complete product (GUI + read-only CLI + Qt
+runtime). The second is the optional CLI-only profile. There is no
+GUI-only zip for v0.1.1 and later. Historical `spacelens-gui-v0.1.0-*.zip`
+on the v0.1.0 Release is immutable.
 
 These are verification artifacts. They are not a public GitHub Release
 until a maintainer pushes a matching `v*` tag.
@@ -37,8 +44,8 @@ distribute a Qt-free CLI.
 
 | Gate | Unlocks | Check |
 |------|---------|--------|
-| Maintainer-chosen root `LICENSE` (non-empty) | CLI zip may be attached to a GitHub Release | File exists and is not whitespace |
-| Structured Qt review PASS | GUI zip may be attached | `scripts/verify-qt-redist-review.ps1 -RequirePass` |
+| Maintainer-chosen root `LICENSE` (non-empty) | CLI-only zip may be attached to a GitHub Release | File exists and is not whitespace |
+| Structured Qt review PASS | Unified GUI+CLI zip may be attached | `scripts/verify-qt-redist-review.ps1 -RequirePass` |
 
 `RequirePass` succeeds only when `packaging/qt-redist-review.env` has
 **all** of:
@@ -71,19 +78,20 @@ ctest --preset windows-release
 .\scripts\package-release.ps1
 ```
 
-`package-release.ps1` runs `cmake --install` per component, deploys Qt
-with `windeployqt --no-compiler-runtime --no-system-d3d-compiler
+`package-release.ps1` installs the CLI component into the CLI-only
+stage and both `SpaceLensGui` and `SpaceLensCli` into the unified
+stage, deploys Qt onto the unified tree with `windeployqt
+--no-compiler-runtime --no-system-d3d-compiler
 --no-system-dxc-compiler --release`, copies package notices, the MIT
 `LICENSE`, and the Qt source offer/identity, then runs
-`scripts/verify-package.ps1`. The validator requires
-`platforms\qwindows.dll` and the Qt DLLs that `dumpbin /dependents`
-reports on `spacelens-gui.exe` (`Qt6Core.dll`, `Qt6Gui.dll`,
-`Qt6Widgets.dll`), forbids Qt in the CLI stage, forbids the CLI
-executable and MSVC CRT DLLs in either zip, forbids Windows SDK
-`dxcompiler.dll` / `dxil.dll` and the SDK-sized `d3dcompiler_47.dll`,
-writes SHA-256 sums, verifies a full CLI+GUI checksum set and a
-CLI-only filtered set, extracts the CLI zip, and re-runs the safety
-script.
+`scripts/verify-package.ps1`. The validator requires both
+`spacelens.exe` and `spacelens-gui.exe` plus `platforms\qwindows.dll`
+and `Qt6Core.dll` / `Qt6Gui.dll` / `Qt6Widgets.dll` in the unified
+stage, forbids Qt and the GUI in the CLI-only stage, forbids MSVC CRT
+DLLs in either zip, forbids Windows SDK `dxcompiler.dll` / `dxil.dll`
+and the SDK-sized `d3dcompiler_47.dll`, writes SHA-256 sums, verifies
+a full unified+CLI checksum set and a CLI-only filtered set, extracts
+both zips, and re-runs the safety script on each `spacelens.exe`.
 
 The Visual C++ Redistributable (x64) is a runtime prerequisite. Do not
 copy compiler-runtime DLLs from a developer machine into the zip.
@@ -121,10 +129,11 @@ A GitHub Release is created only when **all** of the following are true:
 1. the ref is a `v*.*.*` tag matching `v` + `CMAKE_PROJECT_VERSION`
 2. a non-empty root `LICENSE` file exists (`cli_eligible`)
 
-The GUI zip is attached only when `cli_eligible` **and** the structured
-Qt review is PASS (`gui_eligible`). Otherwise the GUI zip stays on the
-workflow run. The `SHA256SUMS.txt` attached to the GitHub Release lists
-only the uploaded zips. The workflow artifact may still list both.
+The unified zip is attached only when `cli_eligible` **and** the
+structured Qt review is PASS (`gui_eligible`). Otherwise that zip stays
+on the workflow run. The `SHA256SUMS.txt` attached to the GitHub
+Release lists only the uploaded zips. The workflow artifact may still
+list both.
 
 Releases are prerelease. Do not mark v0.1.0 as latest/production from this
 workflow. Do not move or recreate an already-published `v*` tag.
@@ -140,12 +149,14 @@ renders the Pre-release badge; do not add `(prerelease)` to the title.
 
 Staged manifests live in `packaging/winget/`. Public identifiers:
 
-- `tungcorn.SpaceLens` — desktop GUI
-- `tungcorn.SpaceLens.CLI` — read-only CLI
+- `tungcorn.SpaceLens` — complete product (GUI + read-only CLI)
+- `tungcorn.SpaceLens.CLI` — optional CLI-only profile
 
-Do not document `winget install --id …` in the README until
+Do not install both at once; both expose `spacelens`. Do not document
+`winget install --id …` in the README until
 `winget show --id <id> --source winget` resolves. One package per
-`microsoft/winget-pkgs` pull request.
+`microsoft/winget-pkgs` pull request. Do not submit installer URLs
+until the matching GitHub Release assets exist.
 
 ## Do not do from an assistant session
 
