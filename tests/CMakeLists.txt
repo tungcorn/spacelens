@@ -13,6 +13,7 @@ set(SPACELENS_TEST_SOURCES
     test_cleanup_review_store.cpp
     test_cleanup_plan.cpp
     test_cleanup_revalidation.cpp
+    test_duplicates.cpp
     test_reclaim.cpp
     test_index.cpp
     test_index_refresh.cpp
