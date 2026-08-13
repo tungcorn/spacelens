@@ -1,10 +1,13 @@
 #include "ui/IndexBrowserPage.hpp"
 
 #include "core/Classification.hpp"
+#include "core/CleanupRevalidation.hpp"
+#include "core/CleanupReview.hpp"
 #include "core/FileTime.hpp"
 #include "core/SizeFormatter.hpp"
 #include "core/SizeParse.hpp"
 #include "core/index/IndexOverview.hpp"
+#include "platform/windows/CleanupMetadataReader.hpp"
 #include "platform/windows/ExplorerIntegration.hpp"
 
 #include <QAbstractItemView>
@@ -113,6 +116,34 @@ Confidence parseConfidence(std::string_view text)
         return Confidence::Medium;
     }
     return Confidence::Low;
+}
+
+Reclaimability parseReclaimabilityLabel(std::string_view text)
+{
+    if (text == "LikelyRegenerable") {
+        return Reclaimability::LikelyRegenerable;
+    }
+    if (text == "PossiblyRegenerable") {
+        return Reclaimability::PossiblyRegenerable;
+    }
+    if (text == "NotApplicable") {
+        return Reclaimability::NotApplicable;
+    }
+    return Reclaimability::Unknown;
+}
+
+CandidateStrength parseCandidateStrengthLabel(std::string_view text)
+{
+    if (text == "Strong") {
+        return CandidateStrength::Strong;
+    }
+    if (text == "Moderate") {
+        return CandidateStrength::Moderate;
+    }
+    if (text == "ReviewOnly") {
+        return CandidateStrength::ReviewOnly;
+    }
+    return CandidateStrength::None;
 }
 
 QString freshnessIndicator(IndexFreshness f)
@@ -290,7 +321,7 @@ int IndexHitTableModel::findRowByPath(const std::wstring& path) const
 // IndexBrowserPage
 // ---------------------------------------------------------------------------
 
-IndexBrowserPage::IndexBrowserPage(CleanupReview& review, QWidget* parent)
+IndexBrowserPage::IndexBrowserPage(CleanupReviewController& review, QWidget* parent)
     : QWidget(parent)
     , m_review(review)
     , m_session(new IndexSession(this))
@@ -565,11 +596,13 @@ void IndexBrowserPage::buildUi()
     m_copyPathButton = new QPushButton(QStringLiteral("Copy Path"), this);
     m_addReviewButton =
         new QPushButton(QStringLiteral("Add to Cleanup Review"), this);
+    m_showReviewButton = new QPushButton(QStringLiteral("Cleanup Review"), this);
     actionRow->addWidget(m_openButton);
     actionRow->addWidget(m_revealButton);
     actionRow->addWidget(m_copyPathButton);
     actionRow->addStretch(1);
     actionRow->addWidget(m_addReviewButton);
+    actionRow->addWidget(m_showReviewButton);
     rootLayout->addLayout(actionRow);
 
     connect(m_reloadButton, &QPushButton::clicked, this,
@@ -586,6 +619,8 @@ void IndexBrowserPage::buildUi()
             &IndexBrowserPage::onQuery);
     connect(m_addReviewButton, &QPushButton::clicked, this,
             &IndexBrowserPage::onAddToReview);
+    connect(m_showReviewButton, &QPushButton::clicked, this,
+            &IndexBrowserPage::onShowReview);
     connect(m_openButton, &QPushButton::clicked, this,
             &IndexBrowserPage::onOpenSelected);
     connect(m_revealButton, &QPushButton::clicked, this,
@@ -755,6 +790,7 @@ void IndexBrowserPage::updateActionState()
     const bool hasSel = !selectedRows().empty();
     const bool single = selectedRows().size() == 1;
     m_addReviewButton->setEnabled(hasSel && !busy);
+    m_showReviewButton->setEnabled(true);
     m_openButton->setEnabled(single && !busy);
     m_revealButton->setEnabled(single && !busy);
     m_copyPathButton->setEnabled(hasSel && !busy);
@@ -1806,6 +1842,8 @@ void IndexBrowserPage::onHitsContextMenu(const QPoint& pos)
     menu.addSeparator();
     menu.addAction(QStringLiteral("Add to Cleanup Review"), this,
                    &IndexBrowserPage::onAddToReview);
+    menu.addAction(QStringLiteral("Open Cleanup Review"), this,
+                   &IndexBrowserPage::onShowReview);
     if (rows.size() == 1) {
         if (const auto* h = m_hitModel->hitAt(rows.front());
             h && h->kind == IndexEntryKind::Directory) {
@@ -1909,6 +1947,11 @@ void IndexBrowserPage::onCopyDetails()
                            .arg(hits.size()));
 }
 
+void IndexBrowserPage::onShowReview()
+{
+    emit showReviewRequested();
+}
+
 void IndexBrowserPage::onAddToReview()
 {
     const auto selected = selectedHits();
@@ -1919,6 +1962,17 @@ void IndexBrowserPage::onAddToReview()
     // with a note — review is planning-only.
     int missing = 0;
     int added = 0;
+    int already = 0;
+    int conflicts = 0;
+    WindowsCleanupMetadataReader reader;
+    FILETIME ft{};
+    ::GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER now{};
+    now.LowPart = ft.dwLowDateTime;
+    now.HighPart = ft.dwHighDateTime;
+    const FileTimeTicks addedAt = now.QuadPart;
+    const auto root = selectedRoot();
+
     for (const auto& hit : selected) {
         QString msg;
         if (!ensurePathExists(hit.path, &msg)) {
@@ -1938,16 +1992,35 @@ void IndexBrowserPage::onAddToReview()
                                 : ("rule:" + hit.rule_id);
         c.reasonAdded = "Added from Index Browser V2";
         c.source = "persistent_index";
+        c.sourceRoot = root ? root->rootPath : std::wstring{};
         c.indexAgeMs = m_hitModel->indexAgeMs();
         c.indexIndexedAtIso = m_hitModel->indexedAtIso();
-        if (m_review.add(std::move(c)) != 0) {
+        c.capturedSafety = classifyLocation(c.path);
+        c.capturedReclaimability = parseReclaimabilityLabel(hit.reclaimability);
+        c.capturedCandidateStrength =
+            parseCandidateStrengthLabel(hit.candidate_strength);
+        prepareCleanupCandidateForAdd(c, reader, addedAt);
+
+        const auto status = m_review.add(std::move(c));
+        if (!status.ok) {
+            emit statusMessage(QString::fromStdString(status.message));
+            return;
+        }
+        if (status.add.result == CleanupAddResult::Added) {
             ++added;
+        } else if (status.add.result == CleanupAddResult::DuplicateUpdated) {
+            ++already;
+        } else if (status.add.result == CleanupAddResult::IdentityConflict) {
+            ++conflicts;
         }
     }
     QString status =
-        QStringLiteral("Cleanup Review: %1 item(s) (added %2 from index)")
-            .arg(m_review.size())
-            .arg(added);
+        QStringLiteral("Cleanup Review: %1 item(s) (added %2 from index, "
+                       "already %3, identity conflicts %4)")
+            .arg(m_review.review().size())
+            .arg(added)
+            .arg(already)
+            .arg(conflicts);
     if (missing > 0) {
         status += QStringLiteral(" — %1 path(s) missing on disk (snapshot may "
                                  "be stale)")

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/IndexSession.hpp"
-#include "core/CleanupReview.hpp"
+#include "core/CleanupReviewStore.hpp"
 #include "core/index/IndexCatalog.hpp"
 #include "core/index/IndexOverview.hpp"
 #include "core/index/IndexQuery.hpp"
@@ -81,7 +81,8 @@ class IndexBrowserPage final : public QWidget {
     Q_OBJECT
 
 public:
-    explicit IndexBrowserPage(CleanupReview& review, QWidget* parent = nullptr);
+    explicit IndexBrowserPage(CleanupReviewController& review,
+                              QWidget* parent = nullptr);
     ~IndexBrowserPage() override;
 
 public slots:
@@ -89,6 +90,7 @@ public slots:
 
 signals:
     void statusMessage(const QString& message);
+    void showReviewRequested();
 
 private slots:
     void onRootSelectionChanged();
@@ -101,6 +103,7 @@ private slots:
     void onHitDoubleClicked(const QModelIndex& index);
     void onHitsContextMenu(const QPoint& pos);
     void onAddToReview();
+    void onShowReview();
     void onOpenSelected();
     void onRevealSelected();
     void onOpenFolderSelected();
@@ -143,7 +146,7 @@ private:
     void selectTablePath(const std::wstring& path);
     void showOtherInspector(const TreemapDisplayItem& item);
 
-    CleanupReview& m_review;
+    CleanupReviewController& m_review;
     IndexSession* m_session = nullptr;
 
     std::vector<IndexRootSummary> m_roots;
@@ -198,6 +201,7 @@ private:
     QPushButton* m_indexNewButton = nullptr;
     QPushButton* m_cancelButton = nullptr;
     QPushButton* m_addReviewButton = nullptr;
+    QPushButton* m_showReviewButton = nullptr;
     QPushButton* m_openButton = nullptr;
     QPushButton* m_revealButton = nullptr;
     QPushButton* m_copyPathButton = nullptr;

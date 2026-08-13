@@ -4,11 +4,13 @@
 #include "ui/IndexBrowserPage.hpp"
 
 #include "core/Classification.hpp"
+#include "core/CleanupRevalidation.hpp"
 #include "core/FileTime.hpp"
 #include "core/ReclaimAnalysis.hpp"
 #include "core/SafetyPolicy.hpp"
 #include "core/SizeFormatter.hpp"
 #include "core/SizeParse.hpp"
+#include "platform/windows/CleanupMetadataReader.hpp"
 #include "platform/windows/ExplorerIntegration.hpp"
 
 #include <QAbstractItemView>
@@ -66,9 +68,19 @@ MainWindow::MainWindow(QWidget* parent)
 {
     setWindowTitle(QStringLiteral("SpaceLens"));
     resize(1280, 800);
+
+    const auto reviewStatus = m_reviewController.openDefault();
+    m_revalidationSession = std::make_unique<CleanupRevalidationSession>(
+        m_reviewController, this);
+
     buildUi();
     updateActionState();
-    setStatusMessage(QStringLiteral("Select a folder to scan."));
+    if (!reviewStatus.ok) {
+        setStatusMessage(QStringLiteral("Cleanup Review state unavailable: %1")
+                             .arg(QString::fromStdString(reviewStatus.message)));
+    } else {
+        setStatusMessage(QStringLiteral("Select a folder to scan."));
+    }
 
     connect(m_session.get(), &ScanSession::progressUpdated, this,
             &MainWindow::onProgress);
@@ -93,10 +105,12 @@ void MainWindow::buildUi()
     m_tabs = new QTabWidget(central);
     m_tabs->addTab(buildLiveScanPage(), QStringLiteral("Live Scan"));
 
-    m_indexPage = new IndexBrowserPage(m_review, m_tabs);
+    m_indexPage = new IndexBrowserPage(m_reviewController, m_tabs);
     m_tabs->addTab(m_indexPage, QStringLiteral("Indexed"));
     connect(m_indexPage, &IndexBrowserPage::statusMessage, this,
             &MainWindow::onIndexStatusMessage);
+    connect(m_indexPage, &IndexBrowserPage::showReviewRequested, this,
+            &MainWindow::onShowReview);
 
     outer->addWidget(m_tabs, 1);
 
@@ -280,7 +294,7 @@ void MainWindow::updateActionState()
     m_explorerButton->setEnabled(one && !running);
     m_copyPathButton->setEnabled(any && !running);
     m_addReviewButton->setEnabled(any && hasResult && !running);
-    m_showReviewButton->setEnabled(!running);
+    m_showReviewButton->setEnabled(true);
     m_rescanButton->setEnabled(hasResult && !running);
 }
 
@@ -903,6 +917,16 @@ void MainWindow::onAddToReview()
     }
     const auto rows = selectedRows();
     int added = 0;
+    int already = 0;
+    int conflicts = 0;
+    WindowsCleanupMetadataReader reader;
+    FILETIME ft{};
+    ::GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER now{};
+    now.LowPart = ft.dwLowDateTime;
+    now.HighPart = ft.dwHighDateTime;
+    const FileTimeTicks addedAt = now.QuadPart;
+
     for (const auto& row : rows) {
         CleanupCandidate c;
         c.path = toWide(row.path);
@@ -912,6 +936,7 @@ void MainWindow::onAddToReview()
         c.classification = classifyRow(row);
         c.reasonAdded = "Added from GUI live scan selection";
         c.source = "live_scan";
+        c.sourceRoot = toWide(m_rootPath);
         if (row.kind == RowKind::File && row.file != InvalidFileIndex) {
             c.lastWriteTime = m_lastResult->tree.file(row.file).lastWriteTime;
             c.attributes = m_lastResult->tree.file(row.file).attributes;
@@ -919,21 +944,45 @@ void MainWindow::onAddToReview()
             c.lastWriteTime =
                 m_lastResult->tree.dir(row.dir).newestDescendantWrite;
         }
-        if (m_review.add(std::move(c)) != 0) {
+        c.capturedSafety = classifyLocation(c.path);
+        const auto analysis =
+            analyzeItem(c.path, c.kind, c.sizeAtSelection, c.lastWriteTime,
+                        c.classification, c.capturedSafety, addedAt);
+        c.capturedReclaimability = analysis.reclaimability;
+        c.capturedCandidateStrength = analysis.strength;
+        prepareCleanupCandidateForAdd(c, reader, addedAt);
+
+        const auto status = m_reviewController.add(std::move(c));
+        if (!status.ok) {
+            setStatusMessage(QString::fromStdString(status.message));
+            return;
+        }
+        if (status.add.result == CleanupAddResult::Added) {
             ++added;
+        } else if (status.add.result == CleanupAddResult::DuplicateUpdated) {
+            ++already;
+        } else if (status.add.result == CleanupAddResult::IdentityConflict) {
+            ++conflicts;
         }
     }
-    setStatusMessage(QStringLiteral("Cleanup Review: %1 item(s) in queue (added %2)")
-                         .arg(m_review.size())
-                         .arg(added));
+    setStatusMessage(
+        QStringLiteral("Cleanup Review: %1 item(s) (added %2, already %3, "
+                       "identity conflicts %4)")
+            .arg(m_reviewController.review().size())
+            .arg(added)
+            .arg(already)
+            .arg(conflicts));
 }
 
 void MainWindow::onShowReview()
 {
-    CleanupReviewDialog dialog(m_review, this);
+    if (!m_revalidationSession) {
+        return;
+    }
+    CleanupReviewDialog dialog(m_reviewController, *m_revalidationSession, this);
     dialog.exec();
-    setStatusMessage(
-        QStringLiteral("Cleanup Review: %1 item(s)").arg(m_review.size()));
+    setStatusMessage(QStringLiteral("Cleanup Review: %1 item(s)")
+                         .arg(m_reviewController.review().size()));
 }
 
 void MainWindow::onIndexStatusMessage(const QString& message)

@@ -182,6 +182,8 @@ if(SPACELENS_BUILD_GUI)
         src/app/ScanSession.cpp
         src/app/IndexSession.hpp
         src/app/IndexSession.cpp
+        src/app/CleanupRevalidationSession.hpp
+        src/app/CleanupRevalidationSession.cpp
         src/ui/MainWindow.hpp
         src/ui/MainWindow.cpp
         src/ui/IndexBrowserPage.hpp
