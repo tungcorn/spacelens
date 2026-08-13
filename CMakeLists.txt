@@ -137,6 +137,22 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
+# Maintenance — Recycle Bin adapter. GUI + adapter tests only; never CLI.
+# ---------------------------------------------------------------------------
+add_library(spacelens_maintenance STATIC
+    src/platform/windows/RecycleAdapter.hpp
+    src/platform/windows/RecycleAdapter.cpp
+)
+target_include_directories(spacelens_maintenance
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(spacelens_maintenance PUBLIC spacelens_core)
+if(WIN32)
+    target_link_libraries(spacelens_maintenance PUBLIC ole32 uuid shell32)
+endif()
+
+# ---------------------------------------------------------------------------
 # CLI — console subsystem, core only
 # ---------------------------------------------------------------------------
 if(SPACELENS_BUILD_CLI)
