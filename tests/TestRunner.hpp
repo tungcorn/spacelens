@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -40,7 +42,12 @@ struct Registrar {
 inline int runAll()
 {
     int failed = 0;
+    const char* only = std::getenv("SPACELENS_TEST_ONLY");
     for (const auto& [name, fn] : registry()) {
+        if (only != nullptr && std::string_view{name}.find(only) ==
+                                  std::string_view::npos) {
+            continue;
+        }
         try {
             fn();
             std::cout << "[ PASS ] " << name << '\n';
@@ -57,8 +64,16 @@ inline int runAll()
         }
     }
 
-    std::cout << registry().size() - failed << " passed, " << failed
-              << " failed\n";
+    const std::size_t selected = only == nullptr
+                                     ? registry().size()
+                                     : static_cast<std::size_t>(std::count_if(
+                                           registry().begin(), registry().end(),
+                                           [only](const auto& item) {
+                                               return std::string_view{item.first}.find(
+                                                          only) !=
+                                                      std::string_view::npos;
+                                           }));
+    std::cout << selected - failed << " passed, " << failed << " failed\n";
     return failed == 0 ? 0 : 1;
 }
 
