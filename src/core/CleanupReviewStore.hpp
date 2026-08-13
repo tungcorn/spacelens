@@ -2,6 +2,7 @@
 
 #include "core/CleanupPlan.hpp"
 #include "core/CleanupReview.hpp"
+#include "core/Maintenance.hpp"
 #include "core/index/Sqlite.hpp"
 
 #include <string>
@@ -59,12 +60,16 @@ public:
 
     [[nodiscard]] CleanupReviewStatus load(CleanupReview& out);
     [[nodiscard]] CleanupReviewStatus save(const CleanupReview& review);
+    [[nodiscard]] CleanupReviewStatus saveMaintenanceReceipt(
+        MaintenanceReceipt& receipt);
+    [[nodiscard]] std::vector<MaintenanceReceipt> loadMaintenanceReceipts();
 
     /// Test hook: next save() fails and rolls back without writing.
     void failNextWrite() noexcept { m_failNextWrite = true; }
 
 private:
     [[nodiscard]] CleanupReviewStatus ensureSchema();
+    [[nodiscard]] CleanupReviewStatus ensureMaintenanceSchema();
 
     SqliteDb m_db;
     std::wstring m_path;
@@ -109,6 +114,9 @@ public:
         FileTimeTicks checkedAt = 0);
     [[nodiscard]] CleanupReviewStatus replaceValidationBatch(
         const std::vector<CleanupValidationReplacement>& updates);
+    [[nodiscard]] CleanupReviewStatus recordMaintenance(
+        MaintenanceReceipt receipt);
+    [[nodiscard]] std::vector<MaintenanceReceipt> maintenanceReceipts();
 
     /// Blocks add/remove/clear/refresh while a revalidation pass is in flight.
     /// Validation batch apply stays allowed so the pass can commit.
