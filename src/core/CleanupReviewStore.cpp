@@ -1,0 +1,1291 @@
+#include "core/CleanupReviewStore.hpp"
+
+#include "core/Classification.hpp"
+#include "core/Json.hpp"
+#include "core/index/IndexPaths.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <optional>
+#include <sstream>
+#include <utility>
+
+namespace spacelens {
+namespace {
+
+constexpr const char* kSchemaSql = R"SQL(
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS review_items (
+  id INTEGER PRIMARY KEY NOT NULL,
+  path TEXT NOT NULL,
+  path_key TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  identity_source TEXT NOT NULL,
+  identity_volume INTEGER NOT NULL DEFAULT 0,
+  identity_file_id_128 TEXT NOT NULL DEFAULT '',
+  identity_file_index_64 INTEGER NOT NULL DEFAULT 0,
+  object_available INTEGER NOT NULL DEFAULT 0,
+  object_kind TEXT NOT NULL,
+  size_scope TEXT NOT NULL,
+  logical_size INTEGER NOT NULL DEFAULT 0,
+  last_write_ticks INTEGER NOT NULL DEFAULT 0,
+  last_access_ticks INTEGER NOT NULL DEFAULT 0,
+  attributes INTEGER NOT NULL DEFAULT 0,
+  hist_agg_available INTEGER NOT NULL DEFAULT 0,
+  hist_agg_revalidated INTEGER NOT NULL DEFAULT 0,
+  hist_agg_recursive_size INTEGER NOT NULL DEFAULT 0,
+  hist_agg_newest_descendant_write INTEGER NOT NULL DEFAULT 0,
+  captured_safety TEXT NOT NULL,
+  captured_reclaimability TEXT NOT NULL,
+  captured_candidate_strength TEXT NOT NULL,
+  class_category TEXT NOT NULL DEFAULT 'Unknown',
+  class_confidence TEXT NOT NULL DEFAULT 'Low',
+  class_rule_id TEXT NOT NULL DEFAULT '',
+  class_reason TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'live_scan',
+  source_root TEXT NOT NULL DEFAULT '',
+  index_age_ms INTEGER NOT NULL DEFAULT 0,
+  index_indexed_at_iso TEXT NOT NULL DEFAULT '',
+  added_at INTEGER NOT NULL DEFAULT 0,
+  reason_added TEXT NOT NULL DEFAULT '',
+  size_at_selection INTEGER NOT NULL DEFAULT 0,
+  last_write_time INTEGER NOT NULL DEFAULT 0,
+  legacy_attributes INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS review_validation (
+  review_item_id INTEGER PRIMARY KEY NOT NULL,
+  current_available INTEGER NOT NULL DEFAULT 0,
+  current_exists INTEGER NOT NULL DEFAULT 1,
+  current_object_available INTEGER NOT NULL DEFAULT 0,
+  current_identity_source TEXT NOT NULL DEFAULT 'Unavailable',
+  current_identity_volume INTEGER NOT NULL DEFAULT 0,
+  current_identity_file_id_128 TEXT NOT NULL DEFAULT '',
+  current_identity_file_index_64 INTEGER NOT NULL DEFAULT 0,
+  current_object_kind TEXT NOT NULL DEFAULT 'File',
+  current_size_scope TEXT NOT NULL DEFAULT 'Direct',
+  current_logical_size INTEGER NOT NULL DEFAULT 0,
+  current_last_write_ticks INTEGER NOT NULL DEFAULT 0,
+  current_last_access_ticks INTEGER NOT NULL DEFAULT 0,
+  current_attributes INTEGER NOT NULL DEFAULT 0,
+  current_agg_available INTEGER NOT NULL DEFAULT 0,
+  current_agg_revalidated INTEGER NOT NULL DEFAULT 0,
+  current_agg_recursive_size INTEGER NOT NULL DEFAULT 0,
+  current_agg_newest_descendant_write INTEGER NOT NULL DEFAULT 0,
+  current_safety TEXT NOT NULL DEFAULT 'Unknown',
+  primary_state TEXT NOT NULL DEFAULT 'NotValidated',
+  reason_flags INTEGER NOT NULL DEFAULT 0,
+  diffs_json TEXT NOT NULL DEFAULT '[]',
+  object_identity_matched INTEGER NOT NULL DEFAULT 0,
+  direct_metadata_unchanged INTEGER NOT NULL DEFAULT 0,
+  recursive_evidence_revalidated INTEGER NOT NULL DEFAULT 0,
+  checked_at INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY(review_item_id) REFERENCES review_items(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_items_path_key
+  ON review_items(path_key);
+)SQL";
+
+struct ColumnSpec {
+    const char* table;
+    const char* column;
+};
+
+constexpr ColumnSpec kRequiredColumns[] = {
+    {"meta", "key"},
+    {"meta", "value"},
+    {"review_items", "id"},
+    {"review_items", "path"},
+    {"review_items", "path_key"},
+    {"review_items", "kind"},
+    {"review_items", "identity_source"},
+    {"review_items", "identity_volume"},
+    {"review_items", "identity_file_id_128"},
+    {"review_items", "identity_file_index_64"},
+    {"review_items", "object_available"},
+    {"review_items", "object_kind"},
+    {"review_items", "size_scope"},
+    {"review_items", "logical_size"},
+    {"review_items", "last_write_ticks"},
+    {"review_items", "last_access_ticks"},
+    {"review_items", "attributes"},
+    {"review_items", "hist_agg_available"},
+    {"review_items", "hist_agg_revalidated"},
+    {"review_items", "hist_agg_recursive_size"},
+    {"review_items", "hist_agg_newest_descendant_write"},
+    {"review_items", "captured_safety"},
+    {"review_items", "captured_reclaimability"},
+    {"review_items", "captured_candidate_strength"},
+    {"review_items", "class_category"},
+    {"review_items", "class_confidence"},
+    {"review_items", "class_rule_id"},
+    {"review_items", "class_reason"},
+    {"review_items", "source"},
+    {"review_items", "source_root"},
+    {"review_items", "index_age_ms"},
+    {"review_items", "index_indexed_at_iso"},
+    {"review_items", "added_at"},
+    {"review_items", "reason_added"},
+    {"review_items", "size_at_selection"},
+    {"review_items", "last_write_time"},
+    {"review_items", "legacy_attributes"},
+    {"review_validation", "review_item_id"},
+    {"review_validation", "current_available"},
+    {"review_validation", "current_exists"},
+    {"review_validation", "current_object_available"},
+    {"review_validation", "current_identity_source"},
+    {"review_validation", "current_identity_volume"},
+    {"review_validation", "current_identity_file_id_128"},
+    {"review_validation", "current_identity_file_index_64"},
+    {"review_validation", "current_object_kind"},
+    {"review_validation", "current_size_scope"},
+    {"review_validation", "current_logical_size"},
+    {"review_validation", "current_last_write_ticks"},
+    {"review_validation", "current_last_access_ticks"},
+    {"review_validation", "current_attributes"},
+    {"review_validation", "current_agg_available"},
+    {"review_validation", "current_agg_revalidated"},
+    {"review_validation", "current_agg_recursive_size"},
+    {"review_validation", "current_agg_newest_descendant_write"},
+    {"review_validation", "current_safety"},
+    {"review_validation", "primary_state"},
+    {"review_validation", "reason_flags"},
+    {"review_validation", "diffs_json"},
+    {"review_validation", "object_identity_matched"},
+    {"review_validation", "direct_metadata_unchanged"},
+    {"review_validation", "recursive_evidence_revalidated"},
+    {"review_validation", "checked_at"},
+};
+
+enum class SchemaState {
+    Empty,
+    Ready,
+    Newer,
+    Malformed
+};
+
+CleanupReviewStatus makeStatus(CleanupReviewError error, std::string message)
+{
+    CleanupReviewStatus status;
+    status.ok = error == CleanupReviewError::None;
+    status.error = error;
+    status.message = std::move(message);
+    return status;
+}
+
+std::wstring parentDirectory(const std::wstring& path)
+{
+    const auto pos = path.find_last_of(L"\\/");
+    if (pos == std::wstring::npos) {
+        return {};
+    }
+    return path.substr(0, pos);
+}
+
+bool tableExists(SqliteDb& db, const char* name)
+{
+    SqliteStmt stmt(
+        db,
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1;");
+    stmt.bindText(1, name);
+    return stmt.step();
+}
+
+bool columnExists(SqliteDb& db, const char* table, const char* column)
+{
+    const std::string sql = std::string("PRAGMA table_info(") + table + ");";
+    SqliteStmt stmt(db, sql);
+    while (stmt.step()) {
+        if (stmt.columnText(1) == column) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<std::string> userTables(SqliteDb& db)
+{
+    std::vector<std::string> names;
+    SqliteStmt stmt(db,
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name NOT LIKE 'sqlite_%' ORDER BY name;");
+    while (stmt.step()) {
+        names.push_back(stmt.columnText(0));
+    }
+    return names;
+}
+
+std::optional<int> readReviewSchemaVersion(SqliteDb& db)
+{
+    if (!tableExists(db, "meta")) {
+        return std::nullopt;
+    }
+    SqliteStmt stmt(db, "SELECT value FROM meta WHERE key = ?1;");
+    stmt.bindText(1, "review_schema_version");
+    if (!stmt.step()) {
+        return std::nullopt;
+    }
+    try {
+        return std::stoi(stmt.columnText(0));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+void upsertMeta(SqliteDb& db, std::string_view key, std::string_view value)
+{
+    SqliteStmt stmt(db,
+                    "INSERT INTO meta(key, value) VALUES(?1, ?2) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value;");
+    stmt.bindText(1, key);
+    stmt.bindText(2, value);
+    stmt.stepDone();
+}
+
+std::uint64_t readNextId(SqliteDb& db)
+{
+    if (!tableExists(db, "meta")) {
+        return 1;
+    }
+    SqliteStmt stmt(db, "SELECT value FROM meta WHERE key = ?1;");
+    stmt.bindText(1, "review_next_id");
+    if (!stmt.step()) {
+        return 1;
+    }
+    try {
+        const auto value = std::stoull(stmt.columnText(0));
+        return value == 0 ? 1 : static_cast<std::uint64_t>(value);
+    } catch (...) {
+        return 1;
+    }
+}
+
+SchemaState inspectSchema(SqliteDb& db)
+{
+    const auto tables = userTables(db);
+    const bool hasMeta = tableExists(db, "meta");
+    const bool hasItems = tableExists(db, "review_items");
+    const bool hasValidation = tableExists(db, "review_validation");
+
+    if (!hasMeta && !hasItems && !hasValidation) {
+        return tables.empty() ? SchemaState::Empty : SchemaState::Malformed;
+    }
+
+    const auto version = readReviewSchemaVersion(db);
+    if (!version.has_value()) {
+        return SchemaState::Malformed;
+    }
+    if (*version > kReviewSchemaVersion) {
+        return SchemaState::Newer;
+    }
+    if (*version < 1) {
+        return SchemaState::Malformed;
+    }
+    if (!hasItems || !hasValidation) {
+        return SchemaState::Malformed;
+    }
+    for (const auto& spec : kRequiredColumns) {
+        if (!columnExists(db, spec.table, spec.column)) {
+            return SchemaState::Malformed;
+        }
+    }
+    return SchemaState::Ready;
+}
+
+std::string fileIdToHex(const std::array<std::uint8_t, 16>& id)
+{
+    std::string out;
+    out.reserve(id.size() * 2);
+    for (const auto byte : id) {
+        char buffer[3]{};
+        std::snprintf(buffer, sizeof(buffer), "%02x", byte);
+        out += buffer;
+    }
+    return out;
+}
+
+std::array<std::uint8_t, 16> hexToFileId(std::string_view text)
+{
+    std::array<std::uint8_t, 16> id{};
+    if (text.size() != 32) {
+        return id;
+    }
+    auto nibble = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') {
+            return ch - '0';
+        }
+        if (ch >= 'a' && ch <= 'f') {
+            return ch - 'a' + 10;
+        }
+        if (ch >= 'A' && ch <= 'F') {
+            return ch - 'A' + 10;
+        }
+        return -1;
+    };
+    for (std::size_t i = 0; i < 16; ++i) {
+        const int hi = nibble(text[i * 2]);
+        const int lo = nibble(text[i * 2 + 1]);
+        if (hi < 0 || lo < 0) {
+            return {};
+        }
+        id[i] = static_cast<std::uint8_t>((hi << 4) | lo);
+    }
+    return id;
+}
+
+int hexDigit(char ch)
+{
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return ch - 'a' + 10;
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return ch - 'A' + 10;
+    }
+    return -1;
+}
+
+std::string unescapeJsonString(std::string_view text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (ch != '\\' || i + 1 >= text.size()) {
+            out.push_back(ch);
+            continue;
+        }
+        const char next = text[++i];
+        switch (next) {
+        case '"':
+        case '\\':
+        case '/':
+            out.push_back(next);
+            break;
+        case 'b':
+            out.push_back('\b');
+            break;
+        case 'f':
+            out.push_back('\f');
+            break;
+        case 'n':
+            out.push_back('\n');
+            break;
+        case 'r':
+            out.push_back('\r');
+            break;
+        case 't':
+            out.push_back('\t');
+            break;
+        case 'u':
+            if (i + 4 < text.size()) {
+                int value = 0;
+                bool ok = true;
+                for (int n = 0; n < 4; ++n) {
+                    const int digit = hexDigit(text[i + 1 + static_cast<std::size_t>(n)]);
+                    if (digit < 0) {
+                        ok = false;
+                        break;
+                    }
+                    value = (value << 4) | digit;
+                }
+                if (ok) {
+                    i += 4;
+                    if (value < 0x80) {
+                        out.push_back(static_cast<char>(value));
+                    } else if (value < 0x800) {
+                        out.push_back(static_cast<char>(0xc0 | (value >> 6)));
+                        out.push_back(static_cast<char>(0x80 | (value & 0x3f)));
+                    } else {
+                        out.push_back(static_cast<char>(0xe0 | (value >> 12)));
+                        out.push_back(static_cast<char>(0x80 | ((value >> 6) & 0x3f)));
+                        out.push_back(static_cast<char>(0x80 | (value & 0x3f)));
+                    }
+                    break;
+                }
+            }
+            out.push_back('u');
+            break;
+        default:
+            out.push_back(next);
+            break;
+        }
+    }
+    return out;
+}
+
+void skipWs(std::string_view text, std::size_t& i)
+{
+    while (i < text.size() &&
+           (text[i] == ' ' || text[i] == '\n' || text[i] == '\r' ||
+            text[i] == '\t')) {
+        ++i;
+    }
+}
+
+bool parseJsonString(std::string_view text, std::size_t& i, std::string& out)
+{
+    skipWs(text, i);
+    if (i >= text.size() || text[i] != '"') {
+        return false;
+    }
+    ++i;
+    std::string raw;
+    while (i < text.size()) {
+        const char ch = text[i++];
+        if (ch == '"') {
+            out = unescapeJsonString(raw);
+            return true;
+        }
+        raw.push_back(ch);
+        if (ch == '\\' && i < text.size()) {
+            raw.push_back(text[i++]);
+        }
+    }
+    return false;
+}
+
+ItemKind parseItemKind(std::string_view text)
+{
+    if (text == "Directory") {
+        return ItemKind::Directory;
+    }
+    if (text == "ReparseDirectory") {
+        return ItemKind::ReparseDirectory;
+    }
+    return ItemKind::File;
+}
+
+CleanupIdentitySource parseIdentitySource(std::string_view text)
+{
+    if (text == "FileId128") {
+        return CleanupIdentitySource::FileId128;
+    }
+    if (text == "FileIndex64Fallback") {
+        return CleanupIdentitySource::FileIndex64Fallback;
+    }
+    return CleanupIdentitySource::Unavailable;
+}
+
+CleanupEvidenceScope parseScope(std::string_view text)
+{
+    return text == "Recursive" ? CleanupEvidenceScope::Recursive
+                               : CleanupEvidenceScope::Direct;
+}
+
+LocationSafety parseSafety(std::string_view text)
+{
+    if (text == "Protected") {
+        return LocationSafety::Protected;
+    }
+    if (text == "Sensitive") {
+        return LocationSafety::Sensitive;
+    }
+    if (text == "Ordinary") {
+        return LocationSafety::Ordinary;
+    }
+    return LocationSafety::Unknown;
+}
+
+Reclaimability parseReclaimability(std::string_view text)
+{
+    if (text == "LikelyRegenerable") {
+        return Reclaimability::LikelyRegenerable;
+    }
+    if (text == "PossiblyRegenerable") {
+        return Reclaimability::PossiblyRegenerable;
+    }
+    if (text == "NotApplicable") {
+        return Reclaimability::NotApplicable;
+    }
+    return Reclaimability::Unknown;
+}
+
+CandidateStrength parseStrength(std::string_view text)
+{
+    if (text == "ReviewOnly") {
+        return CandidateStrength::ReviewOnly;
+    }
+    if (text == "Moderate") {
+        return CandidateStrength::Moderate;
+    }
+    if (text == "Strong") {
+        return CandidateStrength::Strong;
+    }
+    return CandidateStrength::None;
+}
+
+Confidence parseConfidence(std::string_view text)
+{
+    if (text == "High") {
+        return Confidence::High;
+    }
+    if (text == "Medium") {
+        return Confidence::Medium;
+    }
+    return Confidence::Low;
+}
+
+CleanupValidationState parseValidationState(std::string_view text)
+{
+    if (text == "Unchanged") {
+        return CleanupValidationState::Unchanged;
+    }
+    if (text == "Missing") {
+        return CleanupValidationState::Missing;
+    }
+    if (text == "TypeChanged") {
+        return CleanupValidationState::TypeChanged;
+    }
+    if (text == "IdentityChanged") {
+        return CleanupValidationState::IdentityChanged;
+    }
+    if (text == "IdentityUnavailable") {
+        return CleanupValidationState::IdentityUnavailable;
+    }
+    if (text == "Protected") {
+        return CleanupValidationState::Protected;
+    }
+    if (text == "Changed") {
+        return CleanupValidationState::Changed;
+    }
+    if (text == "DirectUnchangedRecursiveNotRevalidated") {
+        return CleanupValidationState::DirectUnchangedRecursiveNotRevalidated;
+    }
+    if (text == "AccessDenied") {
+        return CleanupValidationState::AccessDenied;
+    }
+    if (text == "ProbeError") {
+        return CleanupValidationState::ProbeError;
+    }
+    return CleanupValidationState::NotValidated;
+}
+
+CleanupValidationDiffKind parseDiffKind(std::string_view text)
+{
+    if (text == "Type") {
+        return CleanupValidationDiffKind::Type;
+    }
+    if (text == "Identity") {
+        return CleanupValidationDiffKind::Identity;
+    }
+    if (text == "LastWriteTime") {
+        return CleanupValidationDiffKind::LastWriteTime;
+    }
+    if (text == "LastAccessTime") {
+        return CleanupValidationDiffKind::LastAccessTime;
+    }
+    if (text == "Attributes") {
+        return CleanupValidationDiffKind::Attributes;
+    }
+    if (text == "Safety") {
+        return CleanupValidationDiffKind::Safety;
+    }
+    if (text == "RecursiveLogicalSize") {
+        return CleanupValidationDiffKind::RecursiveLogicalSize;
+    }
+    if (text == "RecursiveNewestDescendantWrite") {
+        return CleanupValidationDiffKind::RecursiveNewestDescendantWrite;
+    }
+    return CleanupValidationDiffKind::LogicalSize;
+}
+
+std::string diffsToJson(const std::vector<CleanupValidationDiff>& diffs)
+{
+    std::ostringstream os;
+    os << '[';
+    for (std::size_t i = 0; i < diffs.size(); ++i) {
+        if (i != 0) {
+            os << ',';
+        }
+        os << "{\"kind\":" << jsonString(toString(diffs[i].kind))
+           << ",\"captured\":" << jsonString(diffs[i].captured)
+           << ",\"current\":" << jsonString(diffs[i].current) << "}";
+    }
+    os << ']';
+    return os.str();
+}
+
+std::vector<CleanupValidationDiff> diffsFromJson(std::string_view text)
+{
+    std::vector<CleanupValidationDiff> out;
+    std::size_t i = 0;
+    skipWs(text, i);
+    if (i >= text.size() || text[i] != '[') {
+        return out;
+    }
+    ++i;
+    skipWs(text, i);
+    if (i < text.size() && text[i] == ']') {
+        return out;
+    }
+    while (i < text.size()) {
+        skipWs(text, i);
+        if (i >= text.size() || text[i] != '{') {
+            break;
+        }
+        ++i;
+        CleanupValidationDiff diff;
+        while (i < text.size() && text[i] != '}') {
+            std::string key;
+            if (!parseJsonString(text, i, key)) {
+                return out;
+            }
+            skipWs(text, i);
+            if (i >= text.size() || text[i] != ':') {
+                return out;
+            }
+            ++i;
+            std::string value;
+            if (!parseJsonString(text, i, value)) {
+                return out;
+            }
+            if (key == "kind") {
+                diff.kind = parseDiffKind(value);
+            } else if (key == "captured") {
+                diff.captured = std::move(value);
+            } else if (key == "current") {
+                diff.current = std::move(value);
+            }
+            skipWs(text, i);
+            if (i < text.size() && text[i] == ',') {
+                ++i;
+            }
+        }
+        if (i < text.size() && text[i] == '}') {
+            ++i;
+        }
+        out.push_back(std::move(diff));
+        skipWs(text, i);
+        if (i < text.size() && text[i] == ',') {
+            ++i;
+            continue;
+        }
+        break;
+    }
+    return out;
+}
+
+CleanupIdentity readIdentity(std::string_view source,
+                             std::uint64_t volume,
+                             std::string_view fileIdHex,
+                             std::uint64_t fileIndex)
+{
+    CleanupIdentity identity;
+    identity.source = parseIdentitySource(source);
+    identity.volumeSerial = volume;
+    identity.fileId128 = hexToFileId(fileIdHex);
+    identity.fileIndex64 = fileIndex;
+    return identity;
+}
+
+void bindIdentity(SqliteStmt& stmt,
+                  int sourceIndex,
+                  const CleanupIdentity& identity)
+{
+    stmt.bindText(sourceIndex, toString(identity.source));
+    stmt.bindInt64(sourceIndex + 1, static_cast<std::int64_t>(identity.volumeSerial));
+    stmt.bindText(sourceIndex + 2, fileIdToHex(identity.fileId128));
+    stmt.bindInt64(sourceIndex + 3, static_cast<std::int64_t>(identity.fileIndex64));
+}
+
+void insertItem(SqliteDb& db, const CleanupCandidate& item)
+{
+    SqliteStmt stmt(
+        db,
+        "INSERT INTO review_items("
+        "id, path, path_key, kind, identity_source, identity_volume, "
+        "identity_file_id_128, identity_file_index_64, object_available, "
+        "object_kind, size_scope, logical_size, last_write_ticks, "
+        "last_access_ticks, attributes, hist_agg_available, "
+        "hist_agg_revalidated, hist_agg_recursive_size, "
+        "hist_agg_newest_descendant_write, captured_safety, "
+        "captured_reclaimability, captured_candidate_strength, "
+        "class_category, class_confidence, class_rule_id, class_reason, "
+        "source, source_root, index_age_ms, index_indexed_at_iso, added_at, "
+        "reason_added, size_at_selection, last_write_time, legacy_attributes) "
+        "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,"
+        "?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32,?33,"
+        "?34,?35);");
+    stmt.bindInt64(1, static_cast<std::int64_t>(item.id));
+    stmt.bindText16(2, item.path);
+    stmt.bindText16(3, normalizeCleanupPath(item.path));
+    stmt.bindText(4, toString(item.kind));
+    bindIdentity(stmt, 5, item.objectEvidence.identity);
+    stmt.bindInt64(9, item.objectEvidence.available ? 1 : 0);
+    stmt.bindText(10, toString(item.objectEvidence.kind));
+    stmt.bindText(11, toString(item.objectEvidence.sizeScope));
+    stmt.bindInt64(12, static_cast<std::int64_t>(item.objectEvidence.logicalSize));
+    stmt.bindInt64(13, static_cast<std::int64_t>(item.objectEvidence.lastWriteTime));
+    stmt.bindInt64(14, static_cast<std::int64_t>(item.objectEvidence.lastAccessTime));
+    stmt.bindInt64(15, static_cast<std::int64_t>(item.objectEvidence.attributes));
+    stmt.bindInt64(16, item.historicalDirectoryAggregate.available ? 1 : 0);
+    stmt.bindInt64(17, item.historicalDirectoryAggregate.revalidated ? 1 : 0);
+    stmt.bindInt64(
+        18,
+        static_cast<std::int64_t>(
+            item.historicalDirectoryAggregate.recursiveLogicalSize));
+    stmt.bindInt64(
+        19,
+        static_cast<std::int64_t>(
+            item.historicalDirectoryAggregate.newestDescendantWrite));
+    stmt.bindText(20, toString(item.capturedSafety));
+    stmt.bindText(21, toString(item.capturedReclaimability));
+    stmt.bindText(22, toString(item.capturedCandidateStrength));
+    stmt.bindText(23, toString(item.classification.category));
+    stmt.bindText(24, toString(item.classification.confidence));
+    stmt.bindText(25, item.classification.ruleId);
+    stmt.bindText(26, item.classification.reason);
+    stmt.bindText(27, item.source);
+    stmt.bindText16(28, item.sourceRoot);
+    stmt.bindInt64(29, static_cast<std::int64_t>(item.indexAgeMs));
+    stmt.bindText(30, item.indexIndexedAtIso);
+    stmt.bindInt64(31, static_cast<std::int64_t>(item.addedAt));
+    stmt.bindText(32, item.reasonAdded);
+    stmt.bindInt64(33, static_cast<std::int64_t>(item.sizeAtSelection));
+    stmt.bindInt64(34, static_cast<std::int64_t>(item.lastWriteTime));
+    stmt.bindInt64(35, static_cast<std::int64_t>(item.attributes));
+    stmt.stepDone();
+}
+
+void insertValidation(SqliteDb& db, const CleanupCandidate& item)
+{
+    const auto& current = item.currentEvidence;
+    SqliteStmt stmt(
+        db,
+        "INSERT INTO review_validation("
+        "review_item_id, current_available, current_exists, "
+        "current_object_available, current_identity_source, "
+        "current_identity_volume, current_identity_file_id_128, "
+        "current_identity_file_index_64, current_object_kind, "
+        "current_size_scope, current_logical_size, current_last_write_ticks, "
+        "current_last_access_ticks, current_attributes, current_agg_available, "
+        "current_agg_revalidated, current_agg_recursive_size, "
+        "current_agg_newest_descendant_write, current_safety, primary_state, "
+        "reason_flags, diffs_json, object_identity_matched, "
+        "direct_metadata_unchanged, recursive_evidence_revalidated, "
+        "checked_at) "
+        "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,"
+        "?18,?19,?20,?21,?22,?23,?24,?25,?26);");
+    stmt.bindInt64(1, static_cast<std::int64_t>(item.id));
+    stmt.bindInt64(2, current.available ? 1 : 0);
+    stmt.bindInt64(3, current.exists ? 1 : 0);
+    stmt.bindInt64(4, current.objectEvidence.available ? 1 : 0);
+    bindIdentity(stmt, 5, current.objectEvidence.identity);
+    stmt.bindText(9, toString(current.objectEvidence.kind));
+    stmt.bindText(10, toString(current.objectEvidence.sizeScope));
+    stmt.bindInt64(11, static_cast<std::int64_t>(current.objectEvidence.logicalSize));
+    stmt.bindInt64(12, static_cast<std::int64_t>(current.objectEvidence.lastWriteTime));
+    stmt.bindInt64(13, static_cast<std::int64_t>(current.objectEvidence.lastAccessTime));
+    stmt.bindInt64(14, static_cast<std::int64_t>(current.objectEvidence.attributes));
+    stmt.bindInt64(15, current.directoryAggregate.available ? 1 : 0);
+    stmt.bindInt64(16, current.directoryAggregate.revalidated ? 1 : 0);
+    stmt.bindInt64(
+        17,
+        static_cast<std::int64_t>(current.directoryAggregate.recursiveLogicalSize));
+    stmt.bindInt64(
+        18,
+        static_cast<std::int64_t>(current.directoryAggregate.newestDescendantWrite));
+    stmt.bindText(19, toString(current.safety));
+    stmt.bindText(20, toString(item.validation.state));
+    stmt.bindInt64(21, static_cast<std::int64_t>(
+                           static_cast<std::uint32_t>(item.validation.reasons)));
+    stmt.bindText(22, diffsToJson(item.validation.diffs));
+    stmt.bindInt64(23, item.validation.objectIdentityMatched ? 1 : 0);
+    stmt.bindInt64(24, item.validation.directMetadataUnchanged ? 1 : 0);
+    stmt.bindInt64(25, item.validation.recursiveEvidenceRevalidated ? 1 : 0);
+    stmt.bindInt64(26, static_cast<std::int64_t>(item.validationCheckedAt));
+    stmt.stepDone();
+}
+
+CleanupCandidate readItem(SqliteStmt& stmt)
+{
+    CleanupCandidate item;
+    item.id = static_cast<std::uint64_t>(stmt.columnInt64(0));
+    item.path = stmt.columnText16(1);
+    item.kind = parseItemKind(stmt.columnText(3));
+    item.objectEvidence.identity =
+        readIdentity(stmt.columnText(4),
+                     static_cast<std::uint64_t>(stmt.columnInt64(5)),
+                     stmt.columnText(6),
+                     static_cast<std::uint64_t>(stmt.columnInt64(7)));
+    item.objectEvidence.available = stmt.columnInt64(8) != 0;
+    item.objectEvidence.kind = parseItemKind(stmt.columnText(9));
+    item.objectEvidence.sizeScope = parseScope(stmt.columnText(10));
+    item.objectEvidence.logicalSize =
+        static_cast<ByteSize>(stmt.columnInt64(11));
+    item.objectEvidence.lastWriteTime =
+        static_cast<FileTimeTicks>(stmt.columnInt64(12));
+    item.objectEvidence.lastAccessTime =
+        static_cast<FileTimeTicks>(stmt.columnInt64(13));
+    item.objectEvidence.attributes =
+        static_cast<std::uint32_t>(stmt.columnInt64(14));
+    item.historicalDirectoryAggregate.available = stmt.columnInt64(15) != 0;
+    item.historicalDirectoryAggregate.revalidated = stmt.columnInt64(16) != 0;
+    item.historicalDirectoryAggregate.recursiveLogicalSize =
+        static_cast<ByteSize>(stmt.columnInt64(17));
+    item.historicalDirectoryAggregate.newestDescendantWrite =
+        static_cast<FileTimeTicks>(stmt.columnInt64(18));
+    item.capturedSafety = parseSafety(stmt.columnText(19));
+    item.capturedReclaimability = parseReclaimability(stmt.columnText(20));
+    item.capturedCandidateStrength = parseStrength(stmt.columnText(21));
+    item.classification.category = parseStorageCategory(stmt.columnText(22));
+    item.classification.confidence = parseConfidence(stmt.columnText(23));
+    item.classification.ruleId = stmt.columnText(24);
+    item.classification.reason = stmt.columnText(25);
+    item.source = stmt.columnText(26);
+    item.sourceRoot = stmt.columnText16(27);
+    item.indexAgeMs = static_cast<std::uint64_t>(stmt.columnInt64(28));
+    item.indexIndexedAtIso = stmt.columnText(29);
+    item.addedAt = static_cast<FileTimeTicks>(stmt.columnInt64(30));
+    item.reasonAdded = stmt.columnText(31);
+    item.sizeAtSelection = static_cast<ByteSize>(stmt.columnInt64(32));
+    item.lastWriteTime = static_cast<std::uint64_t>(stmt.columnInt64(33));
+    item.attributes = static_cast<std::uint32_t>(stmt.columnInt64(34));
+    return item;
+}
+
+void applyValidationRow(CleanupCandidate& item, SqliteStmt& stmt)
+{
+    auto& current = item.currentEvidence;
+    current.available = stmt.columnInt64(1) != 0;
+    current.exists = stmt.columnInt64(2) != 0;
+    current.objectEvidence.available = stmt.columnInt64(3) != 0;
+    current.objectEvidence.identity =
+        readIdentity(stmt.columnText(4),
+                     static_cast<std::uint64_t>(stmt.columnInt64(5)),
+                     stmt.columnText(6),
+                     static_cast<std::uint64_t>(stmt.columnInt64(7)));
+    current.objectEvidence.kind = parseItemKind(stmt.columnText(8));
+    current.objectEvidence.sizeScope = parseScope(stmt.columnText(9));
+    current.objectEvidence.logicalSize =
+        static_cast<ByteSize>(stmt.columnInt64(10));
+    current.objectEvidence.lastWriteTime =
+        static_cast<FileTimeTicks>(stmt.columnInt64(11));
+    current.objectEvidence.lastAccessTime =
+        static_cast<FileTimeTicks>(stmt.columnInt64(12));
+    current.objectEvidence.attributes =
+        static_cast<std::uint32_t>(stmt.columnInt64(13));
+    current.directoryAggregate.available = stmt.columnInt64(14) != 0;
+    current.directoryAggregate.revalidated = stmt.columnInt64(15) != 0;
+    current.directoryAggregate.recursiveLogicalSize =
+        static_cast<ByteSize>(stmt.columnInt64(16));
+    current.directoryAggregate.newestDescendantWrite =
+        static_cast<FileTimeTicks>(stmt.columnInt64(17));
+    current.safety = parseSafety(stmt.columnText(18));
+    item.validation.state = parseValidationState(stmt.columnText(19));
+    if (item.validation.state == CleanupValidationState::AccessDenied) {
+        current.observation = CleanupObservation::AccessDenied;
+    } else if (item.validation.state == CleanupValidationState::ProbeError) {
+        current.observation = CleanupObservation::ProbeError;
+    } else if (current.available && !current.exists) {
+        current.observation = CleanupObservation::Missing;
+    } else if (current.available) {
+        current.observation = CleanupObservation::Present;
+    } else {
+        current.observation = CleanupObservation::Unobserved;
+    }
+    item.validation.reasons =
+        static_cast<CleanupValidationReason>(stmt.columnInt64(20));
+    item.validation.diffs = diffsFromJson(stmt.columnText(21));
+    item.validation.objectIdentityMatched = stmt.columnInt64(22) != 0;
+    item.validation.directMetadataUnchanged = stmt.columnInt64(23) != 0;
+    item.validation.recursiveEvidenceRevalidated = stmt.columnInt64(24) != 0;
+    item.validationCheckedAt = static_cast<FileTimeTicks>(stmt.columnInt64(25));
+}
+
+CleanupReviewStatus mapWriteError(const SqliteError& ex)
+{
+    const std::string what = ex.what();
+    const bool locked =
+        what.find("locked") != std::string::npos ||
+        what.find("busy") != std::string::npos ||
+        what.find("SQLITE_BUSY") != std::string::npos ||
+        what.find("SQLITE_LOCKED") != std::string::npos;
+    if (locked) {
+        return makeStatus(CleanupReviewError::LockFailed,
+                          "Cleanup review database is locked.");
+    }
+    return makeStatus(CleanupReviewError::WriteFailed,
+                      std::string("Failed to write cleanup review changes: ") +
+                          what);
+}
+
+}  // namespace
+
+const char* toString(CleanupReviewError error) noexcept
+{
+    switch (error) {
+    case CleanupReviewError::None:
+        return "None";
+    case CleanupReviewError::NotOpen:
+        return "NotOpen";
+    case CleanupReviewError::OpenFailed:
+        return "OpenFailed";
+    case CleanupReviewError::LockFailed:
+        return "LockFailed";
+    case CleanupReviewError::SchemaUnsupported:
+        return "SchemaUnsupported";
+    case CleanupReviewError::SchemaMalformed:
+        return "SchemaMalformed";
+    case CleanupReviewError::WriteFailed:
+        return "WriteFailed";
+    case CleanupReviewError::IoFailed:
+        return "IoFailed";
+    case CleanupReviewError::InvalidArgument:
+        return "InvalidArgument";
+    }
+    return "None";
+}
+
+CleanupReviewStore::~CleanupReviewStore()
+{
+    close();
+}
+
+CleanupReviewStore::CleanupReviewStore(CleanupReviewStore&& other) noexcept
+    : m_db(std::move(other.m_db))
+    , m_path(std::move(other.m_path))
+    , m_failNextWrite(other.m_failNextWrite)
+{
+    other.m_failNextWrite = false;
+}
+
+CleanupReviewStore& CleanupReviewStore::operator=(
+    CleanupReviewStore&& other) noexcept
+{
+    if (this != &other) {
+        close();
+        m_db = std::move(other.m_db);
+        m_path = std::move(other.m_path);
+        m_failNextWrite = other.m_failNextWrite;
+        other.m_failNextWrite = false;
+    }
+    return *this;
+}
+
+void CleanupReviewStore::close() noexcept
+{
+    m_db.close();
+    m_path.clear();
+    m_failNextWrite = false;
+}
+
+bool CleanupReviewStore::isOpen() const noexcept
+{
+    return m_db.isOpen();
+}
+
+CleanupReviewStatus CleanupReviewStore::ensureSchema()
+{
+    try {
+        const auto state = inspectSchema(m_db);
+        if (state == SchemaState::Newer) {
+            return makeStatus(
+                CleanupReviewError::SchemaUnsupported,
+                "Cleanup review database uses an unsupported newer schema.");
+        }
+        if (state == SchemaState::Malformed) {
+            return makeStatus(
+                CleanupReviewError::SchemaMalformed,
+                "Cleanup review database schema is incomplete or malformed.");
+        }
+        if (state == SchemaState::Ready) {
+            return {};
+        }
+
+        SqliteTxn txn(m_db);
+        m_db.exec(kSchemaSql);
+        upsertMeta(m_db, "review_schema_version",
+                   std::to_string(kReviewSchemaVersion));
+        upsertMeta(m_db, "review_next_id", "1");
+        txn.commit();
+        return {};
+    } catch (const SqliteError& ex) {
+        return makeStatus(
+            CleanupReviewError::OpenFailed,
+            std::string("Failed to open cleanup review database: ") + ex.what());
+    }
+}
+
+CleanupReviewStatus CleanupReviewStore::open(const std::wstring& dbPath)
+{
+    close();
+    if (dbPath.empty()) {
+        return makeStatus(CleanupReviewError::OpenFailed,
+                          "Cleanup review database path is empty.");
+    }
+    const auto parent = parentDirectory(dbPath);
+    if (!parent.empty() && !ensureDirectory(parent)) {
+        return makeStatus(CleanupReviewError::IoFailed,
+                          "Failed to create cleanup review database directory.");
+    }
+    try {
+        m_db = SqliteDb(dbPath, SqliteOpen::ReadWrite | SqliteOpen::Create);
+    } catch (const SqliteError& ex) {
+        return makeStatus(
+            CleanupReviewError::OpenFailed,
+            std::string("Failed to open cleanup review database: ") + ex.what());
+    }
+
+    auto schema = ensureSchema();
+    if (!schema.ok) {
+        m_db.close();
+        return schema;
+    }
+    m_path = dbPath;
+    return {};
+}
+
+CleanupReviewStatus CleanupReviewStore::load(CleanupReview& out)
+{
+    if (!isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    try {
+        // Deferred read transaction so items, validation, and nextId
+        // come from one snapshot if another process commits mid-load.
+        m_db.exec("BEGIN;");
+        std::vector<CleanupCandidate> items;
+        {
+            SqliteStmt stmt(
+                m_db,
+                "SELECT id, path, path_key, kind, identity_source, "
+                "identity_volume, identity_file_id_128, identity_file_index_64, "
+                "object_available, object_kind, size_scope, logical_size, "
+                "last_write_ticks, last_access_ticks, attributes, "
+                "hist_agg_available, hist_agg_revalidated, "
+                "hist_agg_recursive_size, hist_agg_newest_descendant_write, "
+                "captured_safety, captured_reclaimability, "
+                "captured_candidate_strength, class_category, class_confidence, "
+                "class_rule_id, class_reason, source, source_root, index_age_ms, "
+                "index_indexed_at_iso, added_at, reason_added, "
+                "size_at_selection, last_write_time, legacy_attributes "
+                "FROM review_items ORDER BY id;");
+            while (stmt.step()) {
+                items.push_back(readItem(stmt));
+            }
+        }
+        {
+            SqliteStmt stmt(
+                m_db,
+                "SELECT review_item_id, current_available, current_exists, "
+                "current_object_available, current_identity_source, "
+                "current_identity_volume, current_identity_file_id_128, "
+                "current_identity_file_index_64, current_object_kind, "
+                "current_size_scope, current_logical_size, "
+                "current_last_write_ticks, current_last_access_ticks, "
+                "current_attributes, current_agg_available, "
+                "current_agg_revalidated, current_agg_recursive_size, "
+                "current_agg_newest_descendant_write, current_safety, "
+                "primary_state, reason_flags, diffs_json, "
+                "object_identity_matched, direct_metadata_unchanged, "
+                "recursive_evidence_revalidated, checked_at "
+                "FROM review_validation;");
+            while (stmt.step()) {
+                const auto id = static_cast<std::uint64_t>(stmt.columnInt64(0));
+                for (auto& item : items) {
+                    if (item.id == id) {
+                        applyValidationRow(item, stmt);
+                        break;
+                    }
+                }
+            }
+        }
+        out.resetTo(std::move(items), readNextId(m_db));
+        m_db.exec("COMMIT;");
+        return {};
+    } catch (const SqliteError& ex) {
+        try {
+            m_db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        return makeStatus(
+            CleanupReviewError::OpenFailed,
+            std::string("Failed to load cleanup review database: ") + ex.what());
+    }
+}
+
+CleanupReviewStatus CleanupReviewStore::save(const CleanupReview& review)
+{
+    if (!isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    if (m_failNextWrite) {
+        m_failNextWrite = false;
+        return makeStatus(CleanupReviewError::WriteFailed,
+                          "Failed to write cleanup review changes.");
+    }
+    try {
+        SqliteTxn txn(m_db);
+        {
+            SqliteStmt delVal(m_db, "DELETE FROM review_validation;");
+            delVal.stepDone();
+            SqliteStmt delItems(m_db, "DELETE FROM review_items;");
+            delItems.stepDone();
+        }
+        for (const auto& item : review.items()) {
+            insertItem(m_db, item);
+            insertValidation(m_db, item);
+        }
+        upsertMeta(m_db, "review_next_id", std::to_string(review.nextId()));
+        upsertMeta(m_db, "review_schema_version",
+                   std::to_string(kReviewSchemaVersion));
+        txn.commit();
+        return {};
+    } catch (const SqliteError& ex) {
+        return mapWriteError(ex);
+    }
+}
+
+CleanupReviewStatus CleanupReviewController::open(const std::wstring& dbPath)
+{
+    CleanupReviewStore candidate;
+    auto status = candidate.open(dbPath);
+    if (!status.ok) {
+        return status;
+    }
+    CleanupReview loaded;
+    status = candidate.load(loaded);
+    if (!status.ok) {
+        return status;
+    }
+    m_store = std::move(candidate);
+    m_review = std::move(loaded);
+    return {};
+}
+
+CleanupReviewStatus CleanupReviewController::openDefault()
+{
+    return open(spaceLensReviewStatePath());
+}
+
+void CleanupReviewController::close() noexcept
+{
+    m_store.close();
+}
+
+template <typename Mutator>
+CleanupReviewStatus CleanupReviewController::commit(Mutator&& mutator)
+{
+    if (!m_store.isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    CleanupReview draft = m_review;
+    auto status = mutator(draft);
+    if (!status.ok || !status.changed) {
+        return status;
+    }
+    const auto saved = m_store.save(draft);
+    if (!saved.ok) {
+        return saved;
+    }
+    m_review = std::move(draft);
+    return status;
+}
+
+CleanupReviewStatus CleanupReviewController::add(CleanupCandidate candidate)
+{
+    return addDetailed(std::move(candidate));
+}
+
+CleanupReviewStatus CleanupReviewController::addDetailed(
+    CleanupCandidate candidate)
+{
+    return commit([&](CleanupReview& draft) {
+        CleanupReviewStatus status;
+        status.add = draft.addDetailed(std::move(candidate));
+        status.id = status.add.id;
+        status.changed = status.add.accepted();
+        return status;
+    });
+}
+
+CleanupReviewStatus CleanupReviewController::removeById(std::uint64_t id)
+{
+    return commit([&](CleanupReview& draft) {
+        CleanupReviewStatus status;
+        status.changed = draft.removeById(id);
+        status.id = id;
+        return status;
+    });
+}
+
+CleanupReviewStatus CleanupReviewController::removeByPath(std::wstring_view path)
+{
+    return commit([&](CleanupReview& draft) {
+        CleanupReviewStatus status;
+        status.changed = draft.removeByPath(path);
+        return status;
+    });
+}
+
+CleanupReviewStatus CleanupReviewController::clear()
+{
+    return commit([](CleanupReview& draft) {
+        CleanupReviewStatus status;
+        status.changed = !draft.empty();
+        draft.clear();
+        return status;
+    });
+}
+
+CleanupReviewStatus CleanupReviewController::refreshEvidence(std::uint64_t id)
+{
+    return commit([&](CleanupReview& draft) {
+        CleanupReviewStatus status;
+        status.id = id;
+        if (!draft.findById(id)) {
+            status.ok = false;
+            status.error = CleanupReviewError::InvalidArgument;
+            status.message = "Cleanup review item was not found.";
+            return status;
+        }
+        status.changed = draft.refreshEvidence(id);
+        return status;
+    });
+}
+
+CleanupReviewStatus CleanupReviewController::replaceValidation(
+    std::uint64_t id,
+    CleanupCurrentEvidence current,
+    FileTimeTicks checkedAt)
+{
+    CleanupValidationReplacement update;
+    update.id = id;
+    update.current = std::move(current);
+    update.checkedAt = checkedAt;
+    return replaceValidationBatch({std::move(update)});
+}
+
+CleanupReviewStatus CleanupReviewController::replaceValidationBatch(
+    const std::vector<CleanupValidationReplacement>& updates)
+{
+    return commit([&](CleanupReview& draft) {
+        CleanupReviewStatus status;
+        if (updates.empty()) {
+            return status;
+        }
+        if (!draft.replaceValidationBatch(updates)) {
+            status.ok = false;
+            status.error = CleanupReviewError::InvalidArgument;
+            status.message = "Cleanup review item was not found.";
+            return status;
+        }
+        status.changed = true;
+        return status;
+    });
+}
+
+}  // namespace spacelens

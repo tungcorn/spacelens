@@ -88,6 +88,11 @@ std::wstring spaceLensIndexesRoot()
     return joinPath(spaceLensDataRoot(), L"indexes");
 }
 
+std::wstring spaceLensReviewStatePath()
+{
+    return joinPath(spaceLensDataRoot(), L"state.db");
+}
+
 std::wstring normalizeIndexRoot(std::wstring_view path)
 {
     // Reuse policy normalizer (drive roots, trailing slash strip).

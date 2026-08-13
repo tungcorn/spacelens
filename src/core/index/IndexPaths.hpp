@@ -27,6 +27,10 @@ struct IndexLocation {
 /// %LOCALAPPDATA%\SpaceLens\indexes
 [[nodiscard]] std::wstring spaceLensIndexesRoot();
 
+/// %LOCALAPPDATA%\SpaceLens\state.db — durable Cleanup Review database.
+/// Independent of replaceable per-root indexes/*/index.db files.
+[[nodiscard]] std::wstring spaceLensReviewStatePath();
+
 /// Normalize a root path for indexing (native separators, strip trailing slash
 /// except drive roots). Does not touch the filesystem.
 [[nodiscard]] std::wstring normalizeIndexRoot(std::wstring_view path);

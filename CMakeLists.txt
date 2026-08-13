@@ -71,6 +71,8 @@ add_library(spacelens_core STATIC
     src/core/SafetyPolicy.cpp
     src/core/CleanupReview.hpp
     src/core/CleanupReview.cpp
+    src/core/CleanupReviewStore.hpp
+    src/core/CleanupReviewStore.cpp
     src/core/CleanupPlan.hpp
     src/core/CleanupPlan.cpp
     src/core/ReclaimAnalysis.hpp
