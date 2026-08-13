@@ -951,6 +951,21 @@ CREATE TABLE IF NOT EXISTS maintenance_receipt_items (
 );
 )SQL";
 
+constexpr const char* kLocationSql = R"SQL(
+CREATE TABLE IF NOT EXISTS ordinary_location_declarations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  configured_path TEXT NOT NULL,
+  path_key TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL DEFAULT 0,
+  volume_serial INTEGER NOT NULL DEFAULT 0,
+  volume_guid TEXT NOT NULL DEFAULT '',
+  volume_root TEXT NOT NULL DEFAULT '',
+  volume_available INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'Invalid',
+  detail TEXT NOT NULL DEFAULT ''
+);
+)SQL";
+
 CleanupItemLifecycle parseLifecycle(std::string_view text)
 {
     return text == "Recycled" ? CleanupItemLifecycle::Recycled
@@ -1127,6 +1142,11 @@ CleanupReviewStatus CleanupReviewStore::open(const std::wstring& dbPath)
     if (!maintenance.ok) {
         m_db.close();
         return maintenance;
+    }
+    auto locations = ensureLocationSchema();
+    if (!locations.ok) {
+        m_db.close();
+        return locations;
     }
     m_path = dbPath;
     return {};
@@ -1649,6 +1669,323 @@ CleanupReviewStatus CleanupReviewController::recordMaintenance(
 std::vector<MaintenanceReceipt> CleanupReviewController::maintenanceReceipts()
 {
     return m_store.loadMaintenanceReceipts();
+}
+
+OrdinaryLocationStatus parseLocationStatus(std::string_view text)
+{
+    if (text == "Active") {
+        return OrdinaryLocationStatus::Active;
+    }
+    if (text == "VolumeMismatch") {
+        return OrdinaryLocationStatus::VolumeMismatch;
+    }
+    if (text == "VolumeUnavailable") {
+        return OrdinaryLocationStatus::VolumeUnavailable;
+    }
+    if (text == "PathUnavailable") {
+        return OrdinaryLocationStatus::PathUnavailable;
+    }
+    return OrdinaryLocationStatus::Invalid;
+}
+
+OrdinaryLocationDeclaration readLocationRow(SqliteStmt& stmt)
+{
+    OrdinaryLocationDeclaration row;
+    row.id = static_cast<std::uint64_t>(stmt.columnInt64(0));
+    row.configuredPath = stmt.columnText16(1);
+    row.normalizedPathKey = stmt.columnText16(2);
+    row.createdAt = static_cast<FileTimeTicks>(stmt.columnInt64(3));
+    row.volume.serial = static_cast<std::uint32_t>(stmt.columnInt64(4));
+    row.volume.guid = stmt.columnText16(5);
+    row.volume.rootPath = stmt.columnText16(6);
+    row.volume.available = stmt.columnInt64(7) != 0;
+    row.status = parseLocationStatus(stmt.columnText(8));
+    row.detail = stmt.columnText(9);
+    return row;
+}
+
+std::uint64_t readLocationGeneration(SqliteDb& db)
+{
+    SqliteStmt stmt(db, "SELECT value FROM meta WHERE key = ?1;");
+    stmt.bindText(1, "location_declaration_generation");
+    if (!stmt.step()) {
+        return 0;
+    }
+    try {
+        return std::stoull(stmt.columnText(0));
+    } catch (...) {
+        return 0;
+    }
+}
+
+CleanupReviewStatus CleanupReviewStore::ensureLocationSchema()
+{
+    try {
+        SqliteTxn txn(m_db);
+        m_db.exec(kLocationSql);
+        upsertMeta(m_db, "location_schema_version",
+                   std::to_string(kLocationSchemaVersion));
+        SqliteStmt existing(m_db,
+                            "SELECT value FROM meta WHERE key = ?1;");
+        existing.bindText(1, "location_declaration_generation");
+        if (!existing.step()) {
+            upsertMeta(m_db, "location_declaration_generation", "0");
+        }
+        txn.commit();
+        return {};
+    } catch (const SqliteError& ex) {
+        return makeStatus(
+            CleanupReviewError::OpenFailed,
+            std::string("Failed to prepare location declaration tables: ") +
+                ex.what());
+    }
+}
+
+OrdinaryLocationAddOutcome CleanupReviewStore::addOrdinaryLocation(
+    OrdinaryLocationDeclaration declaration)
+{
+    OrdinaryLocationAddOutcome out;
+    if (!isOpen()) {
+        out.result = OrdinaryLocationAddResult::Error;
+        out.message = "Cleanup review database is not open.";
+        return out;
+    }
+    if (declaration.normalizedPathKey.empty()) {
+        out.result = OrdinaryLocationAddResult::InvalidPath;
+        out.message = "Declaration path key is empty.";
+        return out;
+    }
+    try {
+        {
+            SqliteStmt existing(
+                m_db,
+                "SELECT id FROM ordinary_location_declarations "
+                "WHERE path_key = ?1;");
+            existing.bindText16(1, declaration.normalizedPathKey);
+            if (existing.step()) {
+                out.result = OrdinaryLocationAddResult::AlreadyExists;
+                out.declaration = declaration;
+                out.declaration.id =
+                    static_cast<std::uint64_t>(existing.columnInt64(0));
+                out.message = "This ordinary location is already declared.";
+                return out;
+            }
+        }
+        SqliteTxn txn(m_db);
+        {
+            SqliteStmt stmt(
+                m_db,
+                "INSERT INTO ordinary_location_declarations("
+                "configured_path, path_key, created_at, volume_serial, "
+                "volume_guid, volume_root, volume_available, status, detail) "
+                "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9);");
+            stmt.bindText16(1, declaration.configuredPath);
+            stmt.bindText16(2, declaration.normalizedPathKey);
+            stmt.bindInt64(3, static_cast<std::int64_t>(declaration.createdAt));
+            stmt.bindInt64(4, static_cast<std::int64_t>(declaration.volume.serial));
+            stmt.bindText16(5, declaration.volume.guid);
+            stmt.bindText16(6, declaration.volume.rootPath);
+            stmt.bindInt64(7, declaration.volume.available ? 1 : 0);
+            stmt.bindText(8, toString(declaration.status));
+            stmt.bindText(9, declaration.detail);
+            stmt.stepDone();
+        }
+        declaration.id =
+            static_cast<std::uint64_t>(m_db.lastInsertRowId());
+        const auto nextGen = readLocationGeneration(m_db) + 1;
+        upsertMeta(m_db, "location_declaration_generation",
+                   std::to_string(nextGen));
+        txn.commit();
+        out.result = OrdinaryLocationAddResult::Added;
+        out.declaration = std::move(declaration);
+        return out;
+    } catch (const SqliteError& ex) {
+        out.result = OrdinaryLocationAddResult::Error;
+        out.message = ex.what();
+        return out;
+    }
+}
+
+CleanupReviewStatus CleanupReviewStore::removeOrdinaryLocation(std::uint64_t id)
+{
+    if (!isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    try {
+        SqliteTxn txn(m_db);
+        SqliteStmt stmt(
+            m_db, "DELETE FROM ordinary_location_declarations WHERE id = ?1;");
+        stmt.bindInt64(1, static_cast<std::int64_t>(id));
+        stmt.stepDone();
+        if (m_db.changes() == 0) {
+            txn.rollback();
+            return makeStatus(CleanupReviewError::InvalidArgument,
+                              "Ordinary location declaration was not found.");
+        }
+        const auto nextGen = readLocationGeneration(m_db) + 1;
+        upsertMeta(m_db, "location_declaration_generation",
+                   std::to_string(nextGen));
+        txn.commit();
+        CleanupReviewStatus status;
+        status.changed = true;
+        status.id = id;
+        return status;
+    } catch (const SqliteError& ex) {
+        return mapWriteError(ex);
+    }
+}
+
+std::vector<OrdinaryLocationDeclaration>
+CleanupReviewStore::loadOrdinaryLocations()
+{
+    std::vector<OrdinaryLocationDeclaration> out;
+    if (!isOpen() || !tableExists(m_db, "ordinary_location_declarations")) {
+        return out;
+    }
+    try {
+        SqliteStmt stmt(
+            m_db,
+            "SELECT id, configured_path, path_key, created_at, volume_serial, "
+            "volume_guid, volume_root, volume_available, status, detail "
+            "FROM ordinary_location_declarations ORDER BY id;");
+        while (stmt.step()) {
+            out.push_back(readLocationRow(stmt));
+        }
+    } catch (const SqliteError&) {
+        return {};
+    }
+    return out;
+}
+
+OrdinaryLocationPolicy CleanupReviewStore::loadOrdinaryLocationPolicy()
+{
+    OrdinaryLocationPolicy policy;
+    if (!isOpen()) {
+        return policy;
+    }
+    try {
+        policy.generation = readLocationGeneration(m_db);
+    } catch (const SqliteError&) {
+        policy.generation = 0;
+    }
+    policy.declarations = loadOrdinaryLocations();
+    return policy;
+}
+
+CleanupReviewStatus CleanupReviewStore::saveOrdinaryLocationStatuses(
+    const std::vector<OrdinaryLocationDeclaration>& declarations)
+{
+    if (!isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    try {
+        SqliteTxn txn(m_db);
+        for (const auto& declaration : declarations) {
+            if (declaration.normalizedPathKey.empty()) {
+                txn.rollback();
+                return makeStatus(CleanupReviewError::InvalidArgument,
+                                  "Ordinary location path key is missing.");
+            }
+            SqliteStmt stmt(
+                m_db,
+                "UPDATE ordinary_location_declarations SET status = ?1, "
+                "detail = ?2 WHERE id = ?3 OR path_key = ?4;");
+            stmt.bindText(1, toString(declaration.status));
+            stmt.bindText(2, declaration.detail);
+            stmt.bindInt64(3, static_cast<std::int64_t>(declaration.id));
+            stmt.bindText16(4, declaration.normalizedPathKey);
+            stmt.stepDone();
+            if (m_db.changes() == 0) {
+                txn.rollback();
+                return makeStatus(
+                    CleanupReviewError::InvalidArgument,
+                    "Ordinary location declaration was not found.");
+            }
+        }
+        txn.commit();
+        return {};
+    } catch (const SqliteError& ex) {
+        return mapWriteError(ex);
+    }
+}
+
+OrdinaryLocationAddOutcome CleanupReviewController::addOrdinaryLocation(
+    std::wstring path,
+    ICleanupMetadataReader& rootProbe,
+    IVolumeIdentityReader& volumes,
+    FileTimeTicks createdAt)
+{
+    OrdinaryLocationAddOutcome out;
+    if (m_mutationsBlocked) {
+        out.result = OrdinaryLocationAddResult::Error;
+        out.message =
+            "Location declarations cannot change while review or "
+            "maintenance is running.";
+        return out;
+    }
+    if (!m_store.isOpen()) {
+        out.result = OrdinaryLocationAddResult::Error;
+        out.message = "Cleanup review database is not open.";
+        return out;
+    }
+    const auto key = normalizeOrdinaryLocationPath(path);
+    if (!key.empty()) {
+        for (const auto& existing : m_store.loadOrdinaryLocations()) {
+            if (existing.normalizedPathKey == key) {
+                out.result = OrdinaryLocationAddResult::AlreadyExists;
+                out.declaration = existing;
+                out.message = "This ordinary location is already declared.";
+                return out;
+            }
+        }
+    }
+    auto evaluated = evaluateOrdinaryLocationDeclaration(
+        path, rootProbe, volumes, createdAt);
+    if (evaluated.result != OrdinaryLocationAddResult::Added &&
+        evaluated.result != OrdinaryLocationAddResult::VolumeUnavailable) {
+        return evaluated;
+    }
+    auto persisted = m_store.addOrdinaryLocation(evaluated.declaration);
+    if (persisted.result == OrdinaryLocationAddResult::AlreadyExists ||
+        persisted.result == OrdinaryLocationAddResult::Error) {
+        return persisted;
+    }
+    persisted.result = evaluated.result;
+    persisted.message = evaluated.message;
+    return persisted;
+}
+
+CleanupReviewStatus CleanupReviewController::removeOrdinaryLocation(
+    std::uint64_t id)
+{
+    if (m_mutationsBlocked) {
+        return makeStatus(
+            CleanupReviewError::InvalidArgument,
+            "Location declarations cannot change while review or "
+            "maintenance is running.");
+    }
+    return m_store.removeOrdinaryLocation(id);
+}
+
+OrdinaryLocationPolicy CleanupReviewController::ordinaryLocationPolicy()
+{
+    return m_store.loadOrdinaryLocationPolicy();
+}
+
+OrdinaryLocationPolicy CleanupReviewController::refreshOrdinaryLocations(
+    ICleanupMetadataReader& rootProbe,
+    IVolumeIdentityReader& volumes)
+{
+    auto policy = m_store.loadOrdinaryLocationPolicy();
+    refreshOrdinaryLocationPolicy(policy, rootProbe, volumes);
+    if (const auto status =
+            m_store.saveOrdinaryLocationStatuses(policy.declarations);
+        !status.ok) {
+        // Live classification still uses the refreshed snapshot.
+    }
+    return policy;
 }
 
 }  // namespace spacelens

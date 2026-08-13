@@ -3,6 +3,7 @@
 #include "core/CleanupPlan.hpp"
 #include "core/CleanupReview.hpp"
 #include "core/Maintenance.hpp"
+#include "core/OrdinaryLocation.hpp"
 #include "core/index/Sqlite.hpp"
 
 #include <string>
@@ -64,12 +65,22 @@ public:
         MaintenanceReceipt& receipt);
     [[nodiscard]] std::vector<MaintenanceReceipt> loadMaintenanceReceipts();
 
+    [[nodiscard]] OrdinaryLocationAddOutcome addOrdinaryLocation(
+        OrdinaryLocationDeclaration declaration);
+    [[nodiscard]] CleanupReviewStatus removeOrdinaryLocation(std::uint64_t id);
+    [[nodiscard]] std::vector<OrdinaryLocationDeclaration>
+    loadOrdinaryLocations();
+    [[nodiscard]] OrdinaryLocationPolicy loadOrdinaryLocationPolicy();
+    [[nodiscard]] CleanupReviewStatus saveOrdinaryLocationStatuses(
+        const std::vector<OrdinaryLocationDeclaration>& declarations);
+
     /// Test hook: next save() fails and rolls back without writing.
     void failNextWrite() noexcept { m_failNextWrite = true; }
 
 private:
     [[nodiscard]] CleanupReviewStatus ensureSchema();
     [[nodiscard]] CleanupReviewStatus ensureMaintenanceSchema();
+    [[nodiscard]] CleanupReviewStatus ensureLocationSchema();
 
     SqliteDb m_db;
     std::wstring m_path;
@@ -117,6 +128,17 @@ public:
     [[nodiscard]] CleanupReviewStatus recordMaintenance(
         MaintenanceReceipt receipt);
     [[nodiscard]] std::vector<MaintenanceReceipt> maintenanceReceipts();
+
+    [[nodiscard]] OrdinaryLocationAddOutcome addOrdinaryLocation(
+        std::wstring path,
+        ICleanupMetadataReader& rootProbe,
+        IVolumeIdentityReader& volumes,
+        FileTimeTicks createdAt = 0);
+    [[nodiscard]] CleanupReviewStatus removeOrdinaryLocation(std::uint64_t id);
+    [[nodiscard]] OrdinaryLocationPolicy ordinaryLocationPolicy();
+    [[nodiscard]] OrdinaryLocationPolicy refreshOrdinaryLocations(
+        ICleanupMetadataReader& rootProbe,
+        IVolumeIdentityReader& volumes);
 
     /// Blocks add/remove/clear/refresh while a revalidation pass is in flight.
     /// Validation batch apply stays allowed so the pass can commit.
