@@ -29,6 +29,8 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       license_present: ${{ steps.gates.outputs.license_present }}
       qt_redist_reviewed: ${{ steps.gates.outputs.qt_redist_reviewed }}
+      cli_eligible: ${{ steps.gates.outputs.cli_eligible }}
+      gui_eligible: ${{ steps.gates.outputs.gui_eligible }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -105,17 +107,41 @@ jobs:
         id: gates
         shell: pwsh
         run: |
-          $hasLicense = Test-Path LICENSE
-          $qtReviewed = Test-Path docs/QT_REDIST_REVIEWED.md
+          # Structured review only. Test-Path of docs/QT_REDIST_REVIEWED.md
+          # is intentionally not a gate (empty sentinel must not unlock).
+          # This job never creates LICENSE or a review PASS record.
+          $licenseText = ""
+          if (Test-Path LICENSE) {
+            $licenseText = (Get-Content LICENSE -Raw -ErrorAction SilentlyContinue)
+          }
+          $hasLicense = -not [string]::IsNullOrWhiteSpace($licenseText)
+
+          & .\scripts\verify-qt-redist-review.ps1
+          if ($LASTEXITCODE -ne 0) { throw "qt-redist-review.env is malformed" }
+
+          & .\scripts\verify-qt-redist-review.ps1 -RequirePass
+          $qtPass = ($LASTEXITCODE -eq 0)
+
+          $cliEligible = $hasLicense
+          $guiEligible = $hasLicense -and $qtPass
+
           if ($hasLicense) { "license_present=true" | Out-File $env:GITHUB_OUTPUT -Append }
           else { "license_present=false" | Out-File $env:GITHUB_OUTPUT -Append }
-          if ($qtReviewed) { "qt_redist_reviewed=true" | Out-File $env:GITHUB_OUTPUT -Append }
+          if ($qtPass) { "qt_redist_reviewed=true" | Out-File $env:GITHUB_OUTPUT -Append }
           else { "qt_redist_reviewed=false" | Out-File $env:GITHUB_OUTPUT -Append }
+          if ($cliEligible) { "cli_eligible=true" | Out-File $env:GITHUB_OUTPUT -Append }
+          else { "cli_eligible=false" | Out-File $env:GITHUB_OUTPUT -Append }
+          if ($guiEligible) { "gui_eligible=true" | Out-File $env:GITHUB_OUTPUT -Append }
+          else { "gui_eligible=false" | Out-File $env:GITHUB_OUTPUT -Append }
+
           if (-not $hasLicense) {
             Write-Host "LICENSE_DECISION_REQUIRED — GitHub Release publish will be skipped"
           }
-          if (-not $qtReviewed) {
-            Write-Host "RELEASE_DISTRIBUTION_BLOCKED — Qt redistribution is not maintainer-reviewed"
+          if (-not $qtPass) {
+            Write-Host "Qt structured review is not PASS — GUI zip stays a workflow artifact"
+          }
+          if ($cliEligible -and -not $guiEligible) {
+            Write-Host "CLI-only publish is eligible; GUI is withheld (independent gates)"
           }
 
       - name: Upload release archives
@@ -131,8 +157,7 @@ jobs:
     needs: package
     if: >
       startsWith(github.ref, 'refs/tags/v') &&
-      needs.package.outputs.license_present == 'true' &&
-      needs.package.outputs.qt_redist_reviewed == 'true'
+      needs.package.outputs.cli_eligible == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -144,30 +169,36 @@ jobs:
           name: spacelens-${{ needs.package.outputs.tag }}-windows-x64
           path: dist
 
-      - name: Create prerelease (CLI only)
+      - name: Create prerelease
         env:
           GH_TOKEN: ${{ github.token }}
+          GUI_ELIGIBLE: ${{ needs.package.outputs.gui_eligible }}
         run: |
           set -euo pipefail
-          # GUI zip is never attached until Qt redistribution is reviewed.
-          # This job only runs when docs/QT_REDIST_REVIEWED.md exists; still
-          # attach CLI + checksums only so a review marker cannot silently
-          # publish an unreviewed Qt runtime.
-          mapfile -t assets < <(ls -1 dist/spacelens-cli-*.zip dist/SHA256SUMS.txt)
+          # Independent gates: LICENSE unlocks CLI. Structured Qt review
+          # PASS+READY unlocks attaching the GUI zip. This job never writes
+          # LICENSE, qt-redist-review.env, or QT_REDIST_REVIEWED.md.
+          assets=(dist/spacelens-cli-*.zip dist/SHA256SUMS.txt)
+          notes="Unsigned prerelease. See docs/RELEASING.md."
+          if [ "$GUI_ELIGIBLE" = "true" ]; then
+            assets+=(dist/spacelens-gui-*.zip)
+            notes="$notes CLI and GUI archives attached."
+          else
+            notes="$notes CLI archive only. GUI zip remains a workflow artifact until the structured Qt review is PASS with source_availability=READY."
+          fi
           gh release create "${{ needs.package.outputs.tag }}" \
             "${assets[@]}" \
             --repo "${{ github.repository }}" \
             --prerelease \
             --title "SpaceLens ${{ needs.package.outputs.tag }} (prerelease)" \
-            --notes "Unsigned prerelease. See docs/RELEASING.md. GUI archive is a workflow artifact only."
+            --notes "$notes"
 
   blocked:
     name: Distribution blocked notice
     needs: package
     if: >
       startsWith(github.ref, 'refs/tags/v') &&
-      (needs.package.outputs.license_present != 'true' ||
-       needs.package.outputs.qt_redist_reviewed != 'true')
+      needs.package.outputs.cli_eligible != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -176,6 +207,8 @@ jobs:
       - name: Explain why no GitHub Release was published
         run: |
           echo "LICENSE present: ${{ needs.package.outputs.license_present }}"
-          echo "Qt redistribution reviewed: ${{ needs.package.outputs.qt_redist_reviewed }}"
+          echo "CLI eligible: ${{ needs.package.outputs.cli_eligible }}"
+          echo "GUI eligible: ${{ needs.package.outputs.gui_eligible }}"
+          echo "Qt structured review PASS: ${{ needs.package.outputs.qt_redist_reviewed }}"
           echo "Archives remain available as workflow artifacts."
-          echo "No GitHub Release is created while LICENSE_DECISION_REQUIRED or RELEASE_DISTRIBUTION_BLOCKED."
+          echo "No GitHub Release is created while LICENSE_DECISION_REQUIRED."
