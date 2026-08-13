@@ -8,6 +8,15 @@ in-tree 0.1.0 line.
 
 ## [Unreleased]
 
+### Fixed
+
+- Incremental USN refresh treats 8.3 and long Win32 paths as the same root.
+  Hosted-runner TEMP (`C:\Users\RUNNER~1\...`) no longer drops in-root
+  records whose `GetFinalPathNameByHandle` form is `C:\Users\runneradmin\...`.
+- Debug GUI link no longer fails with `rc.exe` RC1109 (`manifest.res`).
+  `spacelens-gui` is non-incremental so CMake `vs_link_exe` does not pass
+  a mixed-slash `/fo .../manifest.res` to the resource compiler.
+
 ### Added
 
 - CMake presets `windows-debug`, `windows-release`, `windows-cli-release`, and

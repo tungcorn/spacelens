@@ -93,6 +93,12 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 - **Why used:** USN records identify objects by file reference number, not path. Refresh resolves paths via `OpenFileById` + `GetFinalPathNameByHandle` and filters with `pathIsUnderRoot`.
 - **Ownership:** Identity values are plain structs; no long-lived file handles from identity queries.
 - **Bug prevented:** Applying volume-wide USN noise outside the indexed subdirectory root; orphan inserts when a parent directory is missing under the root (force full rebuild instead).
+- **8.3 vs long path:** `GetFinalPathNameByHandle(..., FILE_NAME_NORMALIZED)` returns
+  long names (`C:\Users\runneradmin\...`). `GetTempPath` / `std::filesystem::temp_directory_path`
+  on some Windows Server images returns 8.3 (`C:\Users\RUNNER~1\...`).
+  `pathIsUnderRoot` must expand both sides with `GetLongPathNameW` before the
+  prefix compare; otherwise incremental refresh treats in-root creates as outside
+  and existing rows as moved-out (deleted from the index).
 
 ## Indexed discovery queries (Index Browser V2)
 

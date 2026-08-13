@@ -8,9 +8,18 @@
 #include "platform/windows/FileIdentity.hpp"
 #include "platform/windows/UsnJournal.hpp"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -317,4 +326,51 @@ SPACELENS_TEST(Refresh_path_under_root_filter)
     SPACELENS_REQUIRE(pathIsUnderRoot(L"D:\\Projects", L"D:\\Projects"));
     SPACELENS_REQUIRE(!pathIsUnderRoot(L"D:\\ProjectX", L"D:\\Projects"));
     SPACELENS_REQUIRE(!pathIsUnderRoot(L"C:\\Users", L"D:\\Projects"));
+}
+
+// Hosted runners expose TEMP as C:\Users\RUNNER~1\... while
+// GetFinalPathNameByHandle returns C:\Users\runneradmin\...
+SPACELENS_TEST(Refresh_path_under_root_expands_short_names)
+{
+    const auto base =
+        fs::temp_directory_path() / "spacelens_shortname_root_test" /
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    fs::create_directories(base / "child_dir");
+    std::ofstream(base / "child_dir" / "file.txt") << "x";
+
+    const std::wstring longRoot = base.wstring();
+    const std::wstring longChild = (base / "child_dir" / "file.txt").wstring();
+
+    wchar_t shortRootBuf[MAX_PATH]{};
+    wchar_t shortChildBuf[MAX_PATH]{};
+    const DWORD shortRootN =
+        ::GetShortPathNameW(longRoot.c_str(), shortRootBuf, MAX_PATH);
+    const DWORD shortChildN =
+        ::GetShortPathNameW(longChild.c_str(), shortChildBuf, MAX_PATH);
+
+    const std::wstring shortRoot =
+        (shortRootN > 0 && shortRootN < MAX_PATH) ? shortRootBuf : longRoot;
+    const std::wstring shortChild =
+        (shortChildN > 0 && shortChildN < MAX_PATH) ? shortChildBuf : longChild;
+
+    if (_wcsicmp(shortRoot.c_str(), longRoot.c_str()) == 0) {
+        std::cout << "  [short-name] volume did not shorten the fixture root; "
+                     "identity case only\n";
+    } else {
+        std::wcout << L"  [short-name] shortRoot=" << shortRoot
+                   << L" longRoot=" << longRoot << L'\n';
+    }
+
+    SPACELENS_REQUIRE(pathIsUnderRoot(longChild, longRoot));
+    SPACELENS_REQUIRE(pathIsUnderRoot(shortChild, shortRoot));
+    SPACELENS_REQUIRE(pathIsUnderRoot(longChild, shortRoot));
+    SPACELENS_REQUIRE(pathIsUnderRoot(shortChild, longRoot));
+    SPACELENS_REQUIRE(pathIsUnderRoot(shortRoot, longRoot));
+    SPACELENS_REQUIRE(pathIsUnderRoot(longRoot, shortRoot));
+    SPACELENS_REQUIRE(!pathIsUnderRoot(L"C:\\SpaceLensNotUnderShortRoot", shortRoot));
+
+    const std::wstring canonRoot = canonicalWin32Path(shortRoot);
+    const std::wstring canonChild = canonicalWin32Path(shortChild);
+    SPACELENS_REQUIRE(!canonRoot.empty());
+    SPACELENS_REQUIRE(pathIsUnderRoot(canonChild, canonRoot));
 }

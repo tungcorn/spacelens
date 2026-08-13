@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace spacelens {
 
@@ -27,10 +28,16 @@ struct FileIdentity {
 /// Resolve a full path for a file reference number on an open volume handle.
 /// volumeHandle must be a volume opened with GENERIC_READ.
 /// Returns empty string on failure (deleted, outside mount, access denied).
+/// The result is a canonical Win32 path (long names, no \\?\ prefix).
 [[nodiscard]] std::wstring pathFromFileId(void* volumeHandle,
                                           std::uint64_t fileReferenceNumber);
 
-/// True if `path` is equal to or under `root` (case-insensitive, policy-normalized).
+/// Expand 8.3 components and strip \\?\ so lexical comparison matches
+/// GetFinalPathNameByHandle. Falls back to GetFullPathName + policy
+/// normalize when the path does not exist (GetLongPathName requires it).
+[[nodiscard]] std::wstring canonicalWin32Path(std::wstring_view path);
+
+/// True if `path` is equal to or under `root` (case-insensitive, 8.3-aware).
 [[nodiscard]] bool pathIsUnderRoot(const std::wstring& path,
                                    const std::wstring& root);
 

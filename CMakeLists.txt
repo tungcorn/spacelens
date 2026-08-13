@@ -264,6 +264,11 @@ if(SPACELENS_BUILD_GUI)
     if(WIN32)
         set_target_properties(SpaceLens PROPERTIES WIN32_EXECUTABLE TRUE)
         target_link_options(SpaceLens PRIVATE "/SUBSYSTEM:WINDOWS")
+        # CMake vs_link_exe Debug incremental links run
+        #   rc.exe /fo CMakeFiles\SpaceLens.dir/manifest.res ...
+        # rc.exe treats "/manifest.res" as a switch (RC1109). Release is
+        # already /INCREMENTAL:NO. Keep the GUI non-incremental in Debug too.
+        target_link_options(SpaceLens PRIVATE "/INCREMENTAL:NO")
     endif()
     # Do not apply /WX or /analyze to the GUI: Qt headers and moc/uic are
     # outside the first-party warning gate.

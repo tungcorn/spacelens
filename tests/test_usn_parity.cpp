@@ -4,6 +4,7 @@
 #include "core/index/IndexPaths.hpp"
 #include "core/index/IndexQuery.hpp"
 #include "core/index/IndexRefresh.hpp"
+#include "platform/windows/FileIdentity.hpp"
 #include "platform/windows/UsnJournal.hpp"
 
 #include <algorithm>
@@ -197,8 +198,12 @@ SPACELENS_TEST(UsnParity_environment_probe)
     UsnJournalReader reader;
     const auto path = fs::temp_directory_path().wstring();
     const auto cap = UsnJournalReader::tryOpen(path, reader);
+    const auto longPath = canonicalWin32Path(path);
     std::cout << "  [usn-probe] path=" << narrow(path)
               << " capability=" << toString(cap) << '\n';
+    if (!longPath.empty()) {
+        std::cout << "  [usn-probe] longPath=" << narrow(longPath) << '\n';
+    }
     if (cap == UsnCapability::Supported) {
         UsnJournalState st{};
         SPACELENS_REQUIRE(reader.query(st) == UsnCapability::Supported);

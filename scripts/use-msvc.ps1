@@ -42,6 +42,15 @@ function Import-CmdEnvironment([string]$BatchFile) {
     }
 }
 
+function ConvertTo-LongPath([string]$Path) {
+    if (-not $Path) { return $Path }
+    try {
+        return (Get-Item -LiteralPath $Path -ErrorAction Stop).FullName
+    } catch {
+        return $Path
+    }
+}
+
 function Import-SpaceLensMsvc {
     $vcvars = Find-VcVars64
     if ($vcvars) {
@@ -52,6 +61,20 @@ function Import-SpaceLensMsvc {
             Write-Error "vcvars64 ran but cl.exe is not on PATH."
         }
         Write-Host "  cl: $($cl.Source)"
+        # vcvars often puts 8.3 kit paths on PATH (C:\PROGRA~2\WI3CF2~1\...).
+        # CMake then bakes those into vs_link_exe --rc/--mt. Prefer long paths.
+        foreach ($tool in @("rc.exe", "mt.exe")) {
+            $cmd = Get-Command $tool -ErrorAction SilentlyContinue
+            if (-not $cmd) { continue }
+            $long = ConvertTo-LongPath $cmd.Source
+            if ($tool -eq "rc.exe") {
+                # CMakeDetermineRCCompiler reads $env:RC, not CMAKE_RC_COMPILER.
+                $env:RC = $long
+                $env:CMAKE_RC_COMPILER = $long
+            }
+            if ($tool -eq "mt.exe") { $env:CMAKE_MT = $long }
+            Write-Host "  ${tool}: $long"
+        }
         return $true
     }
 

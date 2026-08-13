@@ -32,7 +32,73 @@ std::wstring toLowerCopy(std::wstring s)
     return s;
 }
 
+std::wstring stripExtendedPrefix(std::wstring p)
+{
+    if (p.rfind(L"\\\\?\\UNC\\", 0) == 0) {
+        p.replace(0, 8, L"\\\\");
+    } else if (p.rfind(L"\\\\?\\", 0) == 0) {
+        p.erase(0, 4);
+    }
+    return p;
+}
+
+std::wstring expandFullPath(std::wstring_view input)
+{
+    if (input.empty()) {
+        return {};
+    }
+    std::wstring in(input);
+    const DWORD need = ::GetFullPathNameW(in.c_str(), 0, nullptr, nullptr);
+    if (need == 0) {
+        return {};
+    }
+    std::wstring buf(need, L'\0');
+    const DWORD got = ::GetFullPathNameW(in.c_str(), need, buf.data(), nullptr);
+    if (got == 0 || got >= need) {
+        return {};
+    }
+    buf.resize(got);
+    return buf;
+}
+
+std::wstring expandLongPath(std::wstring_view input)
+{
+    if (input.empty()) {
+        return {};
+    }
+    std::wstring in(input);
+    const DWORD need = ::GetLongPathNameW(in.c_str(), nullptr, 0);
+    if (need == 0) {
+        return {};
+    }
+    std::wstring buf(need, L'\0');
+    const DWORD got = ::GetLongPathNameW(in.c_str(), buf.data(), need);
+    if (got == 0 || got >= need) {
+        return {};
+    }
+    buf.resize(got);
+    return buf;
+}
+
 }  // namespace
+
+std::wstring canonicalWin32Path(std::wstring_view path)
+{
+    if (path.empty()) {
+        return {};
+    }
+
+    std::wstring expanded = expandFullPath(path);
+    if (expanded.empty()) {
+        expanded.assign(path);
+    }
+
+    if (const std::wstring lng = expandLongPath(expanded); !lng.empty()) {
+        expanded = lng;
+    }
+
+    return normalizePathForPolicy(stripExtendedPrefix(std::move(expanded)));
+}
 
 std::optional<FileIdentity> queryFileIdentity(const std::wstring& path)
 {
@@ -107,14 +173,7 @@ std::wstring pathFromFileId(void* volumeHandle, std::uint64_t fileReferenceNumbe
         return {};
     }
     buf.resize(n);
-
-    // Strip \\?\ or \\?\UNC\ prefixes for consistency with scan paths.
-    if (buf.rfind(L"\\\\?\\UNC\\", 0) == 0) {
-        buf.replace(0, 8, L"\\\\");
-    } else if (buf.rfind(L"\\\\?\\", 0) == 0) {
-        buf.erase(0, 4);
-    }
-    return buf;
+    return canonicalWin32Path(buf);
 }
 
 bool pathIsUnderRoot(const std::wstring& path, const std::wstring& root)
@@ -122,8 +181,11 @@ bool pathIsUnderRoot(const std::wstring& path, const std::wstring& root)
     if (path.empty() || root.empty()) {
         return false;
     }
-    const std::wstring p = toLowerCopy(normalizePathForPolicy(path));
-    const std::wstring r = toLowerCopy(normalizePathForPolicy(root));
+    // GetFinalPathNameByHandle returns long names. Hosted TEMP and some
+    // user-supplied roots are 8.3 (C:\Users\RUNNER~1\...). Lexical prefix
+    // compare without expansion treats in-root USN records as outside.
+    const std::wstring p = toLowerCopy(canonicalWin32Path(path));
+    const std::wstring r = toLowerCopy(canonicalWin32Path(root));
     if (p == r) {
         return true;
     }
