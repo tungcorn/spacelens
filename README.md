@@ -30,15 +30,22 @@ GUI-only zip remains published and is not replaced.
 The official Microsoft Visual C++ Redistributable (x64) is required.
 Binaries are unsigned. Verify the zip hashes before use.
 
+Developer / terminal-friendly install (Windows x64):
+
+```text
+npm install -g @tungcorn/spacelens
+```
+
+That installs the same published unified archive: desktop GUI + read-only
+CLI + Qt 6.8.3 runtime. Then run `spacelens` or `spacelens-gui`. Node is
+required only to install and launch; SpaceLens remains native C++. The
+Visual C++ Redistributable (x64) is still required. Templates live in
+[`packaging/npm/`](packaging/npm/).
+
 WinGet identifiers are staged in [`packaging/winget/`](packaging/winget/):
 `tungcorn.SpaceLens` is the complete product; `tungcorn.SpaceLens.CLI` is
 the optional CLI-only profile. They are not advertised as public install
 commands until they resolve from the official WinGet source.
-
-npm packaging for the same unified v0.1.1 archive lives in
-[`packaging/npm/`](packaging/npm/). It is not advertised as
-`npm install -g` until `@tungcorn/spacelens` resolves from the public
-npm registry.
 
 ## Status
 

@@ -9,8 +9,9 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 - npm packaging for the existing published v0.1.1 unified Windows x64
   archive (`packaging/npm/`, `scripts/package-npm.ps1`). The tarball
-  embeds the native GUI + read-only CLI. Node is a launcher only. The
-  package is not advertised until it is on the public npm registry.
+  embeds the native GUI + read-only CLI. Node is a launcher only.
+  `@tungcorn/spacelens@0.1.1` is on the public registry and is
+  advertised as `npm install -g @tungcorn/spacelens`.
 
 ### Changed
 

@@ -171,11 +171,13 @@ the ref is `main`, after the same validation, using npm Trusted
 Publishing (OIDC, `id-token: write`). It does not publish on push to
 `main` or from other branches. Do not add an `NPM_TOKEN` secret.
 
-Trusted Publishing can be bound only after the package name exists on
-the registry. First publish of `@tungcorn/spacelens` is a one-time
-maintainer action (`npm login`, then `npm publish <tarball> --access public`).
-Do not advertise `npm install -g @tungcorn/spacelens` in the root README
-until `npm view @tungcorn/spacelens version` returns `0.1.1`.
+`@tungcorn/spacelens@0.1.1` is on the public npm registry. The root
+README advertises `npm install -g @tungcorn/spacelens`. Subsequent
+publishes use this workflow after the maintainer binds Trusted Publisher
+on npmjs.com (GitHub Actions, owner `tungcorn`, repository `spacelens`,
+workflow filename `npm-publish.yml`, allowed action `npm publish`).
+Saving that form is not a live OIDC test. Do not add an `NPM_TOKEN`
+secret.
 
 npm uninstall must not delete `%LOCALAPPDATA%\SpaceLens\`.
 
