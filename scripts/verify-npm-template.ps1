@@ -26,8 +26,16 @@ if ((Test-Path $pinPath) -and (Test-Path $pkgPath)) {
         $pin[$trim.Substring(0, $eq).Trim()] = $trim.Substring($eq + 1).Trim()
     }
     $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
+    $cmakeText = Get-Content (Join-Path $root "CMakeLists.txt") -Raw
+    $cmakeVersion = $null
+    if ($cmakeText -match 'project\(\s*SpaceLens\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+        $cmakeVersion = $Matches[1]
+    }
+    if (-not $cmakeVersion) { Add-Fail "CMake project VERSION not found" }
     if ($pkg.name -ne "@tungcorn/spacelens") { Add-Fail "package name" }
-    if ($pkg.version -ne "0.1.1") { Add-Fail "package version must be 0.1.1" }
+    if ($cmakeVersion -and $pkg.version -ne $cmakeVersion) {
+        Add-Fail "package.json version '$($pkg.version)' != CMake $cmakeVersion"
+    }
     if ($pkg.license -ne "MIT") { Add-Fail "package license must be MIT" }
     if ($pkg.os -notcontains "win32") { Add-Fail "os must be win32" }
     if ($pkg.cpu -notcontains "x64") { Add-Fail "cpu must be x64" }
@@ -39,12 +47,18 @@ if ((Test-Path $pinPath) -and (Test-Path $pkgPath)) {
     if ($pkg.repository.url -notmatch "github.com/tungcorn/spacelens") {
         Add-Fail "repository.url must identify github.com/tungcorn/spacelens"
     }
-    if ($pin.RELEASE_SHA256 -ne "b4d4cb993bb53e1414c9fc156d9c29a5dca1b8640ac8d3b1229e5ff5a345793d") {
-        Add-Fail "release pin hash is not the published v0.1.1 unified zip"
+    if ($pin.RELEASE_SHA256 -notmatch '^[0-9a-f]{64}$') {
+        Add-Fail "release pin hash must be 64-char lowercase hex"
     }
-    if ($pin.SPACELENS_VERSION -ne "0.1.1") { Add-Fail "pin version" }
-    if ($pin.RELEASE_ASSET -ne "spacelens-v0.1.1-windows-x64.zip") {
-        Add-Fail "pin asset name"
+    if ($pin.SPACELENS_VERSION -eq "0.1.1" -and $pin.RELEASE_SHA256 -ne "b4d4cb993bb53e1414c9fc156d9c29a5dca1b8640ac8d3b1229e5ff5a345793d") {
+        Add-Fail "v0.1.1 pin hash is not the published unified zip"
+    }
+    $expectedAsset = "spacelens-v$($pin.SPACELENS_VERSION)-windows-x64.zip"
+    if ($pin.RELEASE_ASSET -ne $expectedAsset) {
+        Add-Fail "pin asset name must be $expectedAsset"
+    }
+    if ($pin.SPACELENS_VERSION -eq $pkg.version -and $pin.RELEASE_TAG -ne "v$($pkg.version)") {
+        Add-Fail "pin tag must match current package version"
     }
 }
 

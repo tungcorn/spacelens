@@ -1,10 +1,16 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: SpaceLens version (must match CMake project VERSION)
+        required: true
+        default: "0.1.2"
+      publish:
+        description: Create annotated tag, GitHub Release, and trigger npm Trusted Publishing
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -18,15 +24,59 @@ env:
   AQTINSTALL_VERSION: "3.3.0"
 
 jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify version and publish gates
+        id: meta
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $publish = ($env:PUBLISH -eq "true")
+          .\scripts\verify-release-preflight.ps1 -Version $env:REQUESTED_VERSION -Publish:$publish
+          "version=$($env:REQUESTED_VERSION)" | Out-File $env:GITHUB_OUTPUT -Append
+          "tag=v$($env:REQUESTED_VERSION)" | Out-File $env:GITHUB_OUTPUT -Append
+
+  publish-refused:
+    name: Publish refused off main
+    if: ${{ inputs.publish && github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse
+        run: |
+          echo "GitHub/npm publication is allowed only from main."
+          echo "ref=${GITHUB_REF}"
+          exit 1
+
   package:
     name: Build test and package
+    needs: preflight
     runs-on: windows-2022
     timeout-minutes: 120
     permissions:
       contents: read
     outputs:
-      version: ${{ steps.meta.outputs.version }}
-      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ needs.preflight.outputs.version }}
+      tag: ${{ needs.preflight.outputs.tag }}
+      unified_sha256: ${{ steps.hash.outputs.unified_sha256 }}
+      cli_sha256: ${{ steps.hash.outputs.cli_sha256 }}
       license_present: ${{ steps.gates.outputs.license_present }}
       qt_redist_reviewed: ${{ steps.gates.outputs.qt_redist_reviewed }}
       cli_eligible: ${{ steps.gates.outputs.cli_eligible }}
@@ -72,8 +122,9 @@ jobs:
         shell: pwsh
         run: .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
 
-      - name: Verify tag matches project version
-        id: meta
+      - name: Verify built version
+        env:
+          EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
         shell: pwsh
         run: |
           $cache = Get-Content .\build-release\CMakeCache.txt
@@ -82,19 +133,17 @@ jobs:
             if ($line -match '^CMAKE_PROJECT_VERSION:STATIC=(.+)$') { $version = $Matches[1]; break }
           }
           if (-not $version) { throw "CMAKE_PROJECT_VERSION missing" }
+          if ($version -ne $env:EXPECTED_VERSION) {
+            throw "built CMake version $version != requested $($env:EXPECTED_VERSION)"
+          }
           $cli = & .\build-release\cli\spacelens.exe version
           if ($cli -notmatch [regex]::Escape($version)) {
             throw "CLI version '$cli' does not contain CMake version $version"
           }
-          $tag = "${{ github.ref_name }}"
-          if ($env:GITHUB_REF -like "refs/tags/v*") {
-            if ($tag -ne "v$version") {
-              throw "Tag $tag does not match project version v$version"
-            }
-          }
-          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append
-          "tag=v$version" | Out-File $env:GITHUB_OUTPUT -Append
-          Write-Host "version=$version"
+          $caps = & .\build-release\cli\spacelens.exe capabilities --json | ConvertFrom-Json
+          if ($caps.filesystem_mutation -ne $false) { throw "filesystem_mutation is not false" }
+          if ($caps.read_only -ne $true) { throw "read_only is not true" }
+          Write-Host "built version=$version"
 
       - name: Stage archives
         shell: pwsh
@@ -103,13 +152,45 @@ jobs:
           if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
           .\scripts\package-release.ps1 -BuildDir .\build-release -OutDir .\dist
 
+      - name: Record archive hashes
+        id: hash
+        env:
+          TAG: ${{ needs.preflight.outputs.tag }}
+        shell: pwsh
+        run: |
+          $main = Join-Path .\dist "spacelens-$($env:TAG)-windows-x64.zip"
+          $cli = Join-Path .\dist "spacelens-cli-$($env:TAG)-windows-x64.zip"
+          if (-not (Test-Path $main)) { throw "missing $main" }
+          if (-not (Test-Path $cli)) { throw "missing $cli" }
+          $mainHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $main).Hash.ToLowerInvariant()
+          $cliHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $cli).Hash.ToLowerInvariant()
+          $sums = Get-Content .\dist\SHA256SUMS.txt
+          if ($sums -notcontains "$mainHash  $(Split-Path $main -Leaf)") {
+            throw "SHA256SUMS.txt missing verified unified hash"
+          }
+          if ($sums -notcontains "$cliHash  $(Split-Path $cli -Leaf)") {
+            throw "SHA256SUMS.txt missing verified CLI hash"
+          }
+          "unified_sha256=$mainHash" | Out-File $env:GITHUB_OUTPUT -Append
+          "cli_sha256=$cliHash" | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "unified $mainHash"
+          Write-Host "cli $cliHash"
+
+      - name: Stage npm package from this run's unified zip
+        env:
+          TAG: ${{ needs.preflight.outputs.tag }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          UNIFIED_SHA256: ${{ steps.hash.outputs.unified_sha256 }}
+        shell: pwsh
+        run: |
+          $zip = Join-Path .\dist "spacelens-$($env:TAG)-windows-x64.zip"
+          .\scripts\package-npm.ps1 -Version $env:VERSION -ZipPath $zip -ExpectedSha256 $env:UNIFIED_SHA256
+          .\scripts\verify-npm-package.ps1
+
       - name: Distribution gates
         id: gates
         shell: pwsh
         run: |
-          # Structured review only. Test-Path of docs/QT_REDIST_REVIEWED.md
-          # is intentionally not a gate (empty sentinel must not unlock).
-          # This job never creates LICENSE or a review PASS record.
           $licenseText = ""
           if (Test-Path LICENSE) {
             $licenseText = (Get-Content LICENSE -Raw -ErrorAction SilentlyContinue)
@@ -140,35 +221,56 @@ jobs:
           if (-not $qtPass) {
             Write-Host "Qt structured review is not PASS — unified zip stays a workflow artifact"
           }
-          if ($cliEligible -and -not $guiEligible) {
-            Write-Host "CLI-only publish is eligible; GUI is withheld (independent gates)"
-          }
 
       - name: Upload release archives
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: spacelens-${{ steps.meta.outputs.tag }}-windows-x64
-          path: dist/*
+          name: spacelens-${{ needs.preflight.outputs.tag }}-windows-x64
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+            dist/*.tgz
           if-no-files-found: error
           retention-days: 30
 
-  publish:
-    name: Publish GitHub prerelease
+  publish-blocked:
+    name: Publish blocked by distribution gates
     needs: package
     if: >
-      startsWith(github.ref, 'refs/tags/v') &&
-      needs.package.outputs.cli_eligible == 'true'
+      inputs.publish &&
+      github.ref == 'refs/heads/main' &&
+      (needs.package.outputs.cli_eligible != 'true' ||
+       needs.package.outputs.gui_eligible != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse incomplete release
+        run: |
+          echo "CLI eligible: ${{ needs.package.outputs.cli_eligible }}"
+          echo "GUI eligible: ${{ needs.package.outputs.gui_eligible }}"
+          echo "Refusing to publish a partial v* GitHub Release."
+          exit 1
+
+  publish-github:
+    name: Publish GitHub Release
+    needs: package
+    if: >
+      inputs.publish &&
+      github.ref == 'refs/heads/main' &&
+      needs.package.outputs.cli_eligible == 'true' &&
+      needs.package.outputs.gui_eligible == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
+    outputs:
+      tag: ${{ needs.package.outputs.tag }}
+      created_at: ${{ steps.create.outputs.created_at }}
     steps:
-      - name: Checkout notes
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          sparse-checkout: |
-            docs/release-notes
-          sparse-checkout-cone-mode: false
 
       - name: Download archives
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -176,85 +278,140 @@ jobs:
           name: spacelens-${{ needs.package.outputs.tag }}-windows-x64
           path: dist
 
-      - name: Create prerelease
+      - name: Create annotated tag and latest release
+        id: create
         env:
           GH_TOKEN: ${{ github.token }}
-          GUI_ELIGIBLE: ${{ needs.package.outputs.gui_eligible }}
           TAG: ${{ needs.package.outputs.tag }}
+          VERSION: ${{ needs.package.outputs.version }}
         run: |
           set -euo pipefail
-          # Independent gates: LICENSE unlocks the CLI-only zip. Structured
-          # Qt review PASS+READY unlocks the unified GUI+CLI zip. This job
-          # never writes LICENSE, qt-redist-review.env, or
-          # QT_REDIST_REVIEWED.md. Checksums attached to the Release must
-          # name only uploaded zips. The workflow artifact may still list
-          # both archives.
-          shopt -s nullglob
+          if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "refusing to replace existing GitHub Release ${TAG}" >&2
+            exit 1
+          fi
+          peeled="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}')"
+          if [ -z "$peeled" ]; then
+            peeled="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}')"
+          fi
+          if [ -n "$peeled" ]; then
+            if [ "$peeled" != "${GITHUB_SHA}" ]; then
+              echo "refusing to move existing tag ${TAG} (points at ${peeled}, not ${GITHUB_SHA})" >&2
+              exit 1
+            fi
+            echo "tag ${TAG} already points at ${GITHUB_SHA}; creating Release only"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "SpaceLens ${TAG}" "${GITHUB_SHA}"
+            git push origin "refs/tags/${TAG}"
+          fi
+
           cli_zip="dist/spacelens-cli-${TAG}-windows-x64.zip"
           main_zip="dist/spacelens-${TAG}-windows-x64.zip"
-          if [ ! -f "$cli_zip" ]; then
-            echo "expected CLI zip $cli_zip" >&2
+          if [ ! -f "$cli_zip" ] || [ ! -f "$main_zip" ] || [ ! -f dist/SHA256SUMS.txt ]; then
+            echo "required release assets missing" >&2
             ls -la dist >&2
             exit 1
           fi
-          attached=("$cli_zip")
           notes_file="docs/release-notes/${TAG}.md"
           fallback="dist/RELEASE_NOTES.md"
-          if [ "$GUI_ELIGIBLE" = "true" ]; then
-            if [ ! -f "$main_zip" ]; then
-              echo "gui_eligible but missing unified zip $main_zip" >&2
-              ls -la dist >&2
-              exit 1
-            fi
-            attached+=("$main_zip")
-          fi
           if [ -s "$notes_file" ]; then
             cp "$notes_file" "$fallback"
-          elif [ "$GUI_ELIGIBLE" = "true" ]; then
-            printf '%s\n' \
-              "Unsigned prerelease of SpaceLens ${TAG}." \
-              "Unified (GUI + CLI) and CLI-only archives attached. See docs/RELEASING.md." \
-              > "$fallback"
           else
             printf '%s\n' \
-              "Unsigned prerelease of SpaceLens ${TAG}." \
-              "CLI archive only. The unified GUI+CLI zip remains a workflow artifact until the structured Qt review is PASS with source_availability=READY." \
+              "SpaceLens ${TAG}." \
+              "Unified (GUI + CLI) and CLI-only archives attached. See docs/RELEASING.md." \
               > "$fallback"
           fi
-          : > dist/SHA256SUMS-release.txt
-          for f in "${attached[@]}"; do
-            base=$(basename "$f")
-            grep -F "  ${base}" dist/SHA256SUMS.txt >> dist/SHA256SUMS-release.txt
-          done
-          if [ "$(wc -l < dist/SHA256SUMS-release.txt)" -ne "${#attached[@]}" ]; then
-            echo "filtered checksums do not match attached zip count" >&2
-            cat dist/SHA256SUMS-release.txt >&2
-            exit 1
-          fi
-          mv dist/SHA256SUMS-release.txt dist/SHA256SUMS.txt
           gh release create "${TAG}" \
-            "${attached[@]}" dist/SHA256SUMS.txt \
+            "$main_zip" "$cli_zip" dist/SHA256SUMS.txt \
             --repo "${{ github.repository }}" \
-            --prerelease \
+            --latest \
+            --verify-tag \
             --title "SpaceLens ${TAG}" \
             --notes-file "$fallback"
+          echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
-  blocked:
-    name: Distribution blocked notice
-    needs: package
-    if: >
-      startsWith(github.ref, 'refs/tags/v') &&
-      needs.package.outputs.cli_eligible != 'true'
+  wait-npm:
+    name: Dispatch npm Trusted Publishing
+    needs: [package, publish-github]
+    if: ${{ needs.publish-github.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 40
     permissions:
       contents: read
+      actions: write
     steps:
-      - name: Explain why no GitHub Release was published
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Dispatch npm-publish.yml and verify registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.package.outputs.version }}
+          UNIFIED_SHA256: ${{ needs.package.outputs.unified_sha256 }}
         run: |
-          echo "LICENSE present: ${{ needs.package.outputs.license_present }}"
-          echo "CLI eligible: ${{ needs.package.outputs.cli_eligible }}"
-          echo "GUI eligible: ${{ needs.package.outputs.gui_eligible }}"
-          echo "Qt structured review PASS: ${{ needs.package.outputs.qt_redist_reviewed }}"
-          echo "Archives remain available as workflow artifacts."
-          echo "No GitHub Release is created without a non-empty root LICENSE."
+          set -euo pipefail
+          if ! printf '%s' "${UNIFIED_SHA256}" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "unified_sha256 is not a 64-char hex digest: '${UNIFIED_SHA256}'" >&2
+            exit 1
+          fi
+          since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Dispatching npm-publish.yml version=${VERSION} sha256=${UNIFIED_SHA256}"
+          set +e
+          resp="$(gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/npm-publish.yml/dispatches" \
+            -f ref=main \
+            -f "inputs[version]=${VERSION}" \
+            -F "inputs[publish]=true" \
+            -f "inputs[sha256]=${UNIFIED_SHA256}")"
+          api_status=$?
+          set -e
+          run_id="$(printf '%s' "$resp" | jq -r '.workflow_run_id // empty' 2>/dev/null || true)"
+          if [ -z "$run_id" ]; then
+            echo "API did not return workflow_run_id (status=${api_status}); polling by SHA and created_at"
+            deadline=$((SECONDS + 180))
+            while (( SECONDS < deadline )); do
+              run_id="$(gh api \
+                "/repos/${GITHUB_REPOSITORY}/actions/workflows/npm-publish.yml/runs?event=workflow_dispatch&per_page=20" \
+                | jq -r --arg since "$since" --arg sha "$GITHUB_SHA" '
+                  [.workflow_runs[]
+                    | select(.head_sha == $sha)
+                    | select(.created_at >= $since)]
+                  | sort_by(.created_at)
+                  | reverse
+                  | .[0].id // empty')"
+              if [ -n "$run_id" ]; then
+                break
+              fi
+              sleep 5
+            done
+          fi
+          if [ -z "$run_id" ]; then
+            echo "failed to start npm-publish.yml" >&2
+            echo "GitHub Release is immutable. Fix npm separately; do not retag." >&2
+            exit 1
+          fi
+          head_sha="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq .head_sha)"
+          if [ "$head_sha" != "$GITHUB_SHA" ]; then
+            echo "npm-publish.yml run ${run_id} is on ${head_sha}, not ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+          echo "watching npm-publish run ${run_id}"
+          if ! gh run watch "$run_id" --repo "${{ github.repository }}" --exit-status; then
+            echo "npm-publish.yml failed. GitHub Release ${VERSION} is immutable. Do not retag." >&2
+            exit 1
+          fi
+          got="$(npm view "@tungcorn/spacelens@${VERSION}" version)"
+          if [ "$got" != "$VERSION" ]; then
+            echo "npm view returned '$got' wanted ${VERSION}" >&2
+            exit 1
+          fi
+          latest="$(npm view @tungcorn/spacelens version)"
+          echo "npm @tungcorn/spacelens@${VERSION} published; latest=${latest}"

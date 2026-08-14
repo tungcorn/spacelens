@@ -1,10 +1,13 @@
-# Stage the npm package from the published unified v0.1.1 zip.
-# Never rebuild or substitute a different binary set. Hash mismatch is STOP.
+# Stage the npm package from a verified unified Windows zip.
+# Prefer a caller-supplied zip + SHA-256 (release pipeline). Otherwise use
+# packaging/npm/release-pin.env, which names the last published unified zip.
+# Never substitute a different binary set. Hash mismatch is STOP.
 
 [CmdletBinding()]
 param(
     [string]$Version = "",
     [string]$ZipPath = "",
+    [string]$ExpectedSha256 = "",
     [string]$OutDir = "",
     [string]$StageDir = "",
     [string]$PinFile = ""
@@ -44,14 +47,7 @@ function Get-Sha256Lower([string]$Path) {
 }
 
 $pin = Read-PinFile $PinFile
-if ($Version -and $Version -ne $pin.SPACELENS_VERSION) {
-    Write-Error "requested version '$Version' does not match pin $($pin.SPACELENS_VERSION)"
-}
-$Version = $pin.SPACELENS_VERSION
-$expected = $pin.RELEASE_SHA256.ToLowerInvariant()
-if ($expected -ne "b4d4cb993bb53e1414c9fc156d9c29a5dca1b8640ac8d3b1229e5ff5a345793d") {
-    Write-Error "release pin SHA-256 is not the immutable published v0.1.1 hash"
-}
+$v011Hash = "b4d4cb993bb53e1414c9fc156d9c29a5dca1b8640ac8d3b1229e5ff5a345793d"
 
 $template = Join-Path $root "packaging\npm"
 $pkgJsonPath = Join-Path $template "package.json"
@@ -59,8 +55,25 @@ $pkgJson = Get-Content $pkgJsonPath -Raw | ConvertFrom-Json
 if ($pkgJson.name -ne $pin.NPM_PACKAGE_NAME) {
     Write-Error "package.json name '$($pkgJson.name)' does not match pin $($pin.NPM_PACKAGE_NAME)"
 }
+if (-not $Version) {
+    $Version = $pkgJson.version
+}
 if ($pkgJson.version -ne $Version) {
-    Write-Error "package.json version '$($pkgJson.version)' does not match pin $Version"
+    Write-Error "package.json version '$($pkgJson.version)' does not match requested $Version"
+}
+
+if ($ExpectedSha256) {
+    $expected = $ExpectedSha256.ToLowerInvariant()
+} elseif ($pin.SPACELENS_VERSION -eq $Version) {
+    $expected = $pin.RELEASE_SHA256.ToLowerInvariant()
+} else {
+    Write-Error "no SHA-256 for $Version (pin is $($pin.SPACELENS_VERSION)); pass -ExpectedSha256 and -ZipPath"
+}
+if ($expected -notmatch '^[0-9a-f]{64}$') {
+    Write-Error "expected SHA-256 is not a 64-char lowercase hex digest"
+}
+if ($Version -eq "0.1.1" -and $expected -ne $v011Hash) {
+    Write-Error "STOP: v0.1.1 unified zip hash is immutable ($v011Hash)"
 }
 if ($pkgJson.scripts -and $pkgJson.scripts.postinstall) {
     Write-Error "package.json must not declare postinstall"
@@ -109,7 +122,7 @@ $observed = Get-Sha256Lower $ZipPath
 Write-Host "expected SHA-256: $expected"
 Write-Host "observed SHA-256: $observed"
 if ($observed -ne $expected) {
-    Write-Error "STOP: public/local archive hash does not match the immutable v0.1.1 pin"
+    Write-Error "STOP: archive hash $observed does not match expected $expected"
 }
 
 $extract = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-npm-zip-" + [guid]::NewGuid().ToString("N"))

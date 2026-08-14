@@ -4,14 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: SpaceLens version (must match packaging/npm/release-pin.env)
+        description: SpaceLens version (must match packaging/npm/package.json)
         required: true
-        default: "0.1.1"
+        default: "0.1.2"
       publish:
         description: Publish the verified tarball to registry.npmjs.org
         type: boolean
         default: false
-
+      sha256:
+        description: Expected SHA-256 of the unified zip (required when pin is not this version)
+        required: false
+        default: ""
 concurrency:
   group: npm-publish-${{ github.ref }}
   cancel-in-progress: false
@@ -26,6 +29,9 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tarball: ${{ steps.meta.outputs.tarball }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,13 +42,96 @@ jobs:
           node-version: "22"
           package-manager-cache: false
 
+      - name: Resolve version and fetch verified zip
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_SHA256: ${{ inputs.sha256 }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "$env:INPUT_VERSION".Trim()
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "version '$version' is not X.Y.Z"
+          }
+          $tag = "v$version"
+          $pkg = Get-Content .\packaging\npm\package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne $version) {
+            throw "package.json $($pkg.version) != requested $version"
+          }
+          $cmake = Get-Content .\CMakeLists.txt -Raw
+          if ($cmake -notmatch 'project\(\s*SpaceLens\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+            throw "CMake project VERSION not found"
+          }
+          if ($Matches[1] -ne $version) {
+            throw "CMake $($Matches[1]) != requested $version"
+          }
+
+          $pin = @{}
+          foreach ($line in Get-Content .\packaging\npm\release-pin.env) {
+            $trim = $line.Trim()
+            if (-not $trim -or $trim.StartsWith("#")) { continue }
+            $eq = $trim.IndexOf("=")
+            if ($eq -lt 1) { continue }
+            $pin[$trim.Substring(0, $eq).Trim()] = $trim.Substring($eq + 1).Trim()
+          }
+
+          $inputSha = "$env:INPUT_SHA256".Trim().ToLowerInvariant()
+          $independent = $null
+          if ($inputSha) {
+            if ($inputSha -notmatch '^[0-9a-f]{64}$') {
+              throw "sha256 input is not a 64-char hex digest"
+            }
+            $independent = $inputSha
+          } elseif ($pin.SPACELENS_VERSION -eq $version -and $pin.RELEASE_SHA256 -match '^[0-9a-f]{64}$') {
+            $independent = $pin.RELEASE_SHA256.ToLowerInvariant()
+          } else {
+            throw "sha256 input is required when pin is $($pin.SPACELENS_VERSION) and requested $version"
+          }
+
+          $asset = "spacelens-$tag-windows-x64.zip"
+          $work = Join-Path $env:RUNNER_TEMP "npm-release-zip"
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          gh release download $tag --repo ${{ github.repository }} --pattern $asset --dir $work
+          if ($LASTEXITCODE -ne 0) { throw "failed to download $asset from $tag" }
+          gh release download $tag --repo ${{ github.repository }} --pattern SHA256SUMS.txt --dir $work
+          if ($LASTEXITCODE -ne 0) { throw "failed to download SHA256SUMS.txt from $tag" }
+
+          $zip = Join-Path $work $asset
+          $sums = Join-Path $work "SHA256SUMS.txt"
+          $observed = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          $sumLine = Get-Content $sums | Where-Object { $_ -match [regex]::Escape($asset) } | Select-Object -First 1
+          if (-not $sumLine) { throw "SHA256SUMS.txt does not list $asset" }
+          if ($sumLine -notmatch '^([0-9a-fA-F]{64})\s+') {
+            throw "unreadable SHA256SUMS line: $sumLine"
+          }
+          $fromSums = $Matches[1].ToLowerInvariant()
+          if ($observed -ne $fromSums) {
+            throw "STOP: downloaded $asset hash $observed != SHA256SUMS $fromSums"
+          }
+          if ($observed -ne $independent) {
+            throw "STOP: downloaded $asset hash $observed != expected $independent"
+          }
+          Write-Host "verified $asset sha256=$independent"
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append
+          "tag=$tag" | Out-File $env:GITHUB_OUTPUT -Append
+          "zip=$zip" | Out-File $env:GITHUB_OUTPUT -Append
+          "sha256=$independent" | Out-File $env:GITHUB_OUTPUT -Append
+          "tarball=tungcorn-spacelens-$version.tgz" | Out-File $env:GITHUB_OUTPUT -Append
+
       - name: Template and launcher tests
         shell: pwsh
         run: .\scripts\verify-npm-template.ps1
 
-      - name: Stage npm package from published release
+      - name: Stage npm package from verified release zip
+        env:
+          NPM_ZIP: ${{ steps.meta.outputs.zip }}
+          NPM_SHA256: ${{ steps.meta.outputs.sha256 }}
+          NPM_VERSION: ${{ steps.meta.outputs.version }}
         shell: pwsh
-        run: .\scripts\package-npm.ps1 -Version "${{ inputs.version }}"
+        run: |
+          .\scripts\package-npm.ps1 -Version $env:NPM_VERSION -ZipPath $env:NPM_ZIP -ExpectedSha256 $env:NPM_SHA256
 
       - name: Validate tarball and isolated install
         shell: pwsh
@@ -59,7 +148,7 @@ jobs:
   publish:
     name: Publish to npm
     needs: pack
-    if: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+    if: ${{ needs.pack.result == 'success' && inputs.publish && github.ref == 'refs/heads/main' }}
     runs-on: windows-2022
     timeout-minutes: 15
     permissions:
@@ -70,7 +159,6 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
       - name: Use npm CLI with Trusted Publishing support
@@ -93,7 +181,7 @@ jobs:
 
   publish-refused:
     name: Publish refused off main
-    if: ${{ inputs.publish && github.ref != 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -101,6 +189,6 @@ jobs:
     steps:
       - name: Refuse
         run: |
-          echo "npm publish is allowed only from main after pack validation."
+          echo "npm publish via workflow_dispatch is allowed only from main after pack validation."
           echo "ref=${GITHUB_REF}"
           exit 1

@@ -39,7 +39,15 @@ if (-not (Test-Path $StageDir)) {
 
 $pkg = Get-Content (Join-Path $StageDir "package.json") -Raw | ConvertFrom-Json
 if ($pkg.name -ne "@tungcorn/spacelens") { Add-Fail "package name is '$($pkg.name)'" }
-if ($pkg.version -ne "0.1.1") { Add-Fail "package version is '$($pkg.version)'" }
+$cmakeText = Get-Content (Join-Path $root "CMakeLists.txt") -Raw
+    $cmakeVersion = $null
+    if ($cmakeText -match 'project\(\s*SpaceLens\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+        $cmakeVersion = $Matches[1]
+    }
+    if (-not $cmakeVersion) { Add-Fail "CMake project VERSION not found" }
+    if ($cmakeVersion -and $pkg.version -ne $cmakeVersion) {
+        Add-Fail "package version is '$($pkg.version)' (CMake $cmakeVersion)"
+    }
 if ($pkg.license -ne "MIT") { Add-Fail "package license is '$($pkg.license)'" }
 if ($pkg.scripts -and $pkg.scripts.postinstall) { Add-Fail "postinstall is forbidden" }
 if ($pkg.dependencies) { Add-Fail "production dependencies are forbidden" }
@@ -132,7 +140,7 @@ if ($dry) {
 }
 
 if (-not $Tarball) {
-    $Tarball = Get-ChildItem (Join-Path $root "dist") -Filter "tungcorn-spacelens-0.1.1.tgz" -ErrorAction SilentlyContinue |
+    $Tarball = Get-ChildItem (Join-Path $root "dist") -Filter "tungcorn-spacelens-$($pkg.version).tgz" -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName
 }
 if (-not $Tarball -or -not (Test-Path $Tarball)) {
@@ -187,7 +195,7 @@ if (-not $SkipInstall) {
                 Assert-True ($codeNative -eq 0) "native version exit $codeNative"
                 Assert-True ($codeShim -eq $codeNative) "shim version exit $codeShim != native $codeNative"
                 Assert-True ($verShim.Trim() -eq $verNative.Trim()) "shim version stdout differs from native"
-                Assert-True ($verShim -match "0\.1\.1") "version output missing 0.1.1"
+                Assert-True ($verShim -match [regex]::Escape($pkg.version)) "version output missing $($pkg.version)"
 
                 $capsNative = & $installedCli capabilities --json 2>&1 | Out-String
                 $capsCodeNative = $LASTEXITCODE

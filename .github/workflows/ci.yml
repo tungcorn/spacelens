@@ -248,15 +248,35 @@ jobs:
         shell: pwsh
         run: .\scripts\verify-npm-template.ps1
 
-      - name: Stage npm package from published v0.1.1
+      - name: Stage npm package from last published pin
+        id: npm_pack
         shell: pwsh
-        run: .\scripts\package-npm.ps1
+        run: |
+          $pkg = Get-Content .\packaging\npm\package.json -Raw | ConvertFrom-Json
+          $pin = @{}
+          foreach ($line in Get-Content .\packaging\npm\release-pin.env) {
+            $trim = $line.Trim()
+            if (-not $trim -or $trim.StartsWith("#")) { continue }
+            $eq = $trim.IndexOf("=")
+            if ($eq -lt 1) { continue }
+            $pin[$trim.Substring(0, $eq).Trim()] = $trim.Substring($eq + 1).Trim()
+          }
+          if ($pkg.version -ne $pin.SPACELENS_VERSION) {
+            Write-Host "package $($pkg.version) is ahead of published pin $($pin.SPACELENS_VERSION); skip pack-from-release"
+            "packed=false" | Out-File $env:GITHUB_OUTPUT -Append
+            return
+          }
+          .\scripts\package-npm.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "packed=true" | Out-File $env:GITHUB_OUTPUT -Append
 
       - name: Validate tarball and isolated install
+        if: steps.npm_pack.outputs.packed == 'true'
         shell: pwsh
         run: .\scripts\verify-npm-package.ps1
 
       - name: Upload npm tarball
+        if: steps.npm_pack.outputs.packed == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-tarball
