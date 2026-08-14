@@ -1,5 +1,7 @@
 #include "ui/OrdinaryLocationsDialog.hpp"
 
+#include "ui/UiTheme.hpp"
+
 #include "platform/windows/CleanupMetadataReader.hpp"
 #include "platform/windows/LocationVolume.hpp"
 
@@ -62,12 +64,14 @@ OrdinaryLocationsDialog::OrdinaryLocationsDialog(
     resize(640, 420);
 
     auto* layout = new QVBoxLayout(this);
+    applyPageMargins(this);
     m_intro = new QLabel(
         QStringLiteral(
             "These locations are treated as ordinary user-managed storage.\n"
             "This does not mark their files as safe to remove.\n"
             "Built-in protected and sensitive rules always take precedence."),
         this);
+    m_intro->setObjectName(QStringLiteral("slHint"));
     m_intro->setWordWrap(true);
     layout->addWidget(m_intro);
 

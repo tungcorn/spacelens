@@ -52,6 +52,7 @@ signals:
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void changeEvent(QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;

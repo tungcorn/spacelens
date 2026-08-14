@@ -3,6 +3,7 @@
 #include "core/CleanupReviewStore.hpp"
 #include "core/Maintenance.hpp"
 #include "core/SizeFormatter.hpp"
+#include "ui/UiTheme.hpp"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -19,10 +20,7 @@ namespace {
 
 QString formatTicks(FileTimeTicks ticks)
 {
-    if (ticks == 0) {
-        return QStringLiteral("(none)");
-    }
-    return QString::number(ticks);
+    return formatFileTimeLocal(ticks);
 }
 
 QString operationSummary(const MaintenanceReceipt& receipt)
@@ -46,11 +44,11 @@ QString itemDetails(const MaintenanceReceipt& receipt)
     text += QStringLiteral("Operation ID: %1\n").arg(receipt.operationId);
     text += QStringLiteral("Status: %1\n")
                 .arg(QString::fromUtf8(toString(receipt.status)));
-    text += QStringLiteral("Requested (FILETIME ticks): %1\n")
+    text += QStringLiteral("Requested: %1\n")
                 .arg(formatTicks(receipt.requestedAt));
-    text += QStringLiteral("Confirmed (FILETIME ticks): %1\n")
+    text += QStringLiteral("Confirmed: %1\n")
                 .arg(formatTicks(receipt.confirmedAt));
-    text += QStringLiteral("Completed (FILETIME ticks): %1\n")
+    text += QStringLiteral("Completed: %1\n")
                 .arg(formatTicks(receipt.completedAt));
     text += QStringLiteral("Selected: %1    Eligible: %2\n")
                 .arg(receipt.selectedCount)
@@ -101,12 +99,14 @@ MaintenanceHistoryDialog::MaintenanceHistoryDialog(
     setWindowTitle(QStringLiteral("Maintenance History"));
     resize(760, 480);
     auto* root = new QVBoxLayout(this);
+    applyPageMargins(this);
     m_intro = new QLabel(
         QStringLiteral(
             "Recycle Bin operations recorded in this SpaceLens profile. "
             "History is evidence only — no Restore, Delete, Retry, or Empty."),
         this);
     m_intro->setWordWrap(true);
+    m_intro->setObjectName(QStringLiteral("slHint"));
     root->addWidget(m_intro);
     m_list = new QListWidget(this);
     m_details = new QTextEdit(this);

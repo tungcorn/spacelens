@@ -1,7 +1,12 @@
 #include "ui/MainWindow.hpp"
 
 #include "ui/CleanupReviewDialog.hpp"
+#include "ui/EmptyStateWidget.hpp"
+#include "ui/FilterPopup.hpp"
 #include "ui/IndexBrowserPage.hpp"
+#include "ui/MetricStrip.hpp"
+#include "ui/PageHeader.hpp"
+#include "ui/UiTheme.hpp"
 
 #include "core/Classification.hpp"
 #include "core/CleanupRevalidation.hpp"
@@ -23,18 +28,26 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
+#include <QFrame>
 #include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
+#include <QLocale>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QProgressBar>
 #include <QPushButton>
+#include <QSignalBlocker>
+#include <QShortcut>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStatusBar>
-#include <QTabWidget>
 #include <QTextEdit>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -137,42 +150,102 @@ void MainWindow::buildUi()
     setCentralWidget(central);
     auto* outer = new QVBoxLayout(central);
     outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
 
-    auto* safetyMenu = menuBar()->addMenu(QStringLiteral("Safety"));
-    auto* ordinaryAction = safetyMenu->addAction(
+    auto* toolsMenu = menuBar()->addMenu(QStringLiteral("Tools"));
+    auto* ordinaryAction = toolsMenu->addAction(
         QStringLiteral("User-declared ordinary locations…"));
     connect(ordinaryAction, &QAction::triggered, this,
             &MainWindow::onOrdinaryLocations);
 
-    m_tabs = new QTabWidget(central);
-    m_tabs->addTab(buildLiveScanPage(), QStringLiteral("Live Scan"));
+    auto* nav = new QWidget(central);
+    auto* navLayout = new QHBoxLayout(nav);
+    navLayout->setContentsMargins(kUiSpace20, kUiSpace8, kUiSpace20, kUiSpace8);
+    navLayout->setSpacing(kUiSpace4);
+    m_navLive = new QPushButton(QStringLiteral("Live Scan"), nav);
+    m_navIndexed = new QPushButton(QStringLiteral("Indexed"), nav);
+    m_navLive->setObjectName(QStringLiteral("slWorkspace"));
+    m_navIndexed->setObjectName(QStringLiteral("slWorkspace"));
+    m_navLive->setProperty("slId", QStringLiteral("live"));
+    m_navIndexed->setProperty("slId", QStringLiteral("indexed"));
+    m_navLive->setCheckable(true);
+    m_navIndexed->setCheckable(true);
+    m_navLive->setChecked(true);
+    m_navLive->setAutoExclusive(true);
+    m_navIndexed->setAutoExclusive(true);
+    m_navLive->setFocusPolicy(Qt::TabFocus);
+    m_navIndexed->setFocusPolicy(Qt::TabFocus);
+    navLayout->addWidget(m_navLive);
+    navLayout->addWidget(m_navIndexed);
+    navLayout->addStretch(1);
+    outer->addWidget(nav);
 
-    m_indexPage = new IndexBrowserPage(m_reviewController, m_tabs);
-    m_tabs->addTab(m_indexPage, QStringLiteral("Indexed"));
+    auto* rule = new QFrame(central);
+    rule->setObjectName(QStringLiteral("slHairline"));
+    rule->setFrameShape(QFrame::NoFrame);
+    outer->addWidget(rule);
+
+    m_pages = new QStackedWidget(central);
+    m_pages->setObjectName(QStringLiteral("slPages"));
+    m_pages->addWidget(buildLiveScanPage());
+
+    m_indexPage = new IndexBrowserPage(m_reviewController, m_pages);
+    m_pages->addWidget(m_indexPage);
     connect(m_indexPage, &IndexBrowserPage::statusMessage, this,
             &MainWindow::onIndexStatusMessage);
     connect(m_indexPage, &IndexBrowserPage::showReviewRequested, this,
             &MainWindow::onShowReview);
 
-    outer->addWidget(m_tabs, 1);
+    outer->addWidget(m_pages, 1);
+
+    connect(m_navLive, &QPushButton::clicked, this, &MainWindow::onLiveWorkspace);
+    connect(m_navIndexed, &QPushButton::clicked, this,
+            &MainWindow::onIndexedWorkspace);
+    auto* liveShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+1")), this);
+    auto* indexedShortcut =
+        new QShortcut(QKeySequence(QStringLiteral("Ctrl+2")), this);
+    connect(liveShortcut, &QShortcut::activated, this,
+            &MainWindow::onLiveWorkspace);
+    connect(indexedShortcut, &QShortcut::activated, this,
+            &MainWindow::onIndexedWorkspace);
 
     m_statusLabel = new QLabel(central);
+    m_trustLabel = new QLabel(QStringLiteral("Read-only analysis"), central);
+    m_trustLabel->setObjectName(QStringLiteral("slTrust"));
+    m_trustLabel->setToolTip(
+        QStringLiteral("CLI and analysis surfaces do not mutate analyzed files.\n"
+                       "Maintenance requires explicit GUI authorization."));
     statusBar()->addWidget(m_statusLabel, 1);
+    statusBar()->addPermanentWidget(m_trustLabel);
 }
 
 QWidget* MainWindow::buildLiveScanPage()
 {
     auto* page = new QWidget(this);
     auto* rootLayout = new QVBoxLayout(page);
+    applyPageMargins(page);
+
+    auto* header = new PageHeader(page);
+    header->setTitle(QStringLiteral("Live Scan"));
+    header->setSubtitle(
+        QStringLiteral("Analyze a folder and see where its storage goes."));
+    m_showReviewButton =
+        new QPushButton(QStringLiteral("Cleanup Review"), header);
+    header->commands()->addWidget(m_showReviewButton);
+    rootLayout->addWidget(header);
 
     auto* topRow = new QHBoxLayout();
+    topRow->setSpacing(kUiSpace8);
     m_pathEdit = new QLineEdit(page);
+    m_pathEdit->setObjectName(QStringLiteral("slLivePath"));
     m_pathEdit->setReadOnly(true);
     m_pathEdit->setPlaceholderText(QStringLiteral("No folder selected"));
-    m_selectButton = new QPushButton(QStringLiteral("Select Folder…"), page);
+    m_selectButton = new QPushButton(QStringLiteral("Choose Folder"), page);
     m_scanButton = new QPushButton(QStringLiteral("Scan"), page);
+    markPrimaryButton(m_scanButton);
     m_cancelButton = new QPushButton(QStringLiteral("Cancel"), page);
     m_upButton = new QPushButton(QStringLiteral("Up"), page);
+    m_upButton->setToolTip(QStringLiteral("Go to the parent folder"));
     topRow->addWidget(m_pathEdit, 1);
     topRow->addWidget(m_selectButton);
     topRow->addWidget(m_scanButton);
@@ -180,30 +253,37 @@ QWidget* MainWindow::buildLiveScanPage()
     topRow->addWidget(m_upButton);
     rootLayout->addLayout(topRow);
 
-    m_breadcrumbBar = new QWidget(page);
-    m_breadcrumbLayout = new QHBoxLayout(m_breadcrumbBar);
-    m_breadcrumbLayout->setContentsMargins(0, 0, 0, 0);
-    m_breadcrumbLayout->addStretch(1);
-    rootLayout->addWidget(m_breadcrumbBar);
+    m_scanProgress = new QProgressBar(page);
+    m_scanProgress->setTextVisible(false);
+    m_scanProgress->setFixedHeight(4);
+    m_scanProgress->setMaximum(0);
+    m_scanProgress->setVisible(false);
+    rootLayout->addWidget(m_scanProgress);
 
-    auto* filterRow = new QHBoxLayout();
-    filterRow->addWidget(new QLabel(QStringLiteral("Kind:"), page));
-    m_kindFilter = new QComboBox(page);
+    m_metrics = new MetricStrip(page);
+    rootLayout->addWidget(m_metrics);
+    updateLiveMetrics();
+
+    auto* findRow = new QHBoxLayout();
+    findRow->setSpacing(kUiSpace8);
+    m_searchEdit = new QLineEdit(page);
+    m_searchEdit->setPlaceholderText(QStringLiteral("Search results…"));
+    m_searchEdit->setClearButtonEnabled(true);
+    m_filterButton = new FilterButton(page);
+    m_filterButton->setObjectName(QStringLiteral("slLiveFilter"));
+    auto* panel = new FilterPanel(m_filterButton);
+    m_kindFilter = new QComboBox(panel);
+    m_kindFilter->setObjectName(QStringLiteral("slLiveKind"));
     m_kindFilter->addItems({QStringLiteral("All"), QStringLiteral("Folders"),
                             QStringLiteral("Files")});
-    filterRow->addWidget(m_kindFilter);
-    filterRow->addWidget(new QLabel(QStringLiteral("Min size:"), page));
-    m_minSizeFilter = new QLineEdit(page);
-    m_minSizeFilter->setPlaceholderText(QStringLiteral("e.g. 10MB"));
-    m_minSizeFilter->setMaximumWidth(100);
-    filterRow->addWidget(m_minSizeFilter);
-    filterRow->addWidget(new QLabel(QStringLiteral("Ext:"), page));
-    m_extFilter = new QLineEdit(page);
-    m_extFilter->setPlaceholderText(QStringLiteral("gguf"));
-    m_extFilter->setMaximumWidth(80);
-    filterRow->addWidget(m_extFilter);
-    filterRow->addWidget(new QLabel(QStringLiteral("Class:"), page));
-    m_classFilter = new QComboBox(page);
+    m_minSizeFilter = new QLineEdit(panel);
+    m_minSizeFilter->setObjectName(QStringLiteral("slLiveMinSize"));
+    m_minSizeFilter->setPlaceholderText(QStringLiteral("Any"));
+    m_extFilter = new QLineEdit(panel);
+    m_extFilter->setObjectName(QStringLiteral("slLiveExt"));
+    m_extFilter->setPlaceholderText(QStringLiteral("Any"));
+    m_classFilter = new QComboBox(panel);
+    m_classFilter->setObjectName(QStringLiteral("slLiveClass"));
     m_classFilter->addItem(QStringLiteral("Any"), QString());
     m_classFilter->addItem(QStringLiteral("BuildArtifact"),
                            QStringLiteral("BuildArtifact"));
@@ -213,74 +293,119 @@ QWidget* MainWindow::buildLiveScanPage()
                            QStringLiteral("DownloadedAiModel"));
     m_classFilter->addItem(QStringLiteral("UserData"), QStringLiteral("UserData"));
     m_classFilter->addItem(QStringLiteral("Unknown"), QStringLiteral("Unknown"));
-    filterRow->addWidget(m_classFilter);
-    filterRow->addStretch(1);
-    rootLayout->addLayout(filterRow);
+    panel->form()->addRow(QStringLiteral("Type"), m_kindFilter);
+    panel->form()->addRow(QStringLiteral("Minimum size"), m_minSizeFilter);
+    panel->form()->addRow(QStringLiteral("Extension"), m_extFilter);
+    panel->form()->addRow(QStringLiteral("Class"), m_classFilter);
+    m_filterButton->setPanel(panel);
+    m_sortFilter = new QComboBox(page);
+    m_sortFilter->addItem(QStringLiteral("Sort: Size"), 0);
+    m_sortFilter->addItem(QStringLiteral("Sort: Name"), 1);
+    findRow->addWidget(m_searchEdit, 1);
+    findRow->addWidget(m_filterButton);
+    findRow->addWidget(m_sortFilter);
+    rootLayout->addLayout(findRow);
 
-    auto* statsRow = new QHBoxLayout();
-    m_filesLabel = new QLabel(QStringLiteral("Files: 0"), page);
-    m_foldersLabel = new QLabel(QStringLiteral("Folders: 0"), page);
-    m_processedLabel = new QLabel(
-        QStringLiteral("Processed: %1")
-            .arg(QString::fromStdString(SizeFormatter::format(0))),
-        page);
-    m_elapsedLabel = new QLabel(QStringLiteral("Elapsed: 0.0 s"), page);
-    m_errorsLabel = new QLabel(QStringLiteral("Errors: 0"), page);
-    m_selectionLabel = new QLabel(QStringLiteral("Selected: 0 items"), page);
-    statsRow->addWidget(m_filesLabel);
-    statsRow->addWidget(m_foldersLabel);
-    statsRow->addWidget(m_processedLabel);
-    statsRow->addWidget(m_elapsedLabel);
-    statsRow->addWidget(m_errorsLabel);
-    statsRow->addStretch(1);
-    statsRow->addWidget(m_selectionLabel);
-    rootLayout->addLayout(statsRow);
+    m_breadcrumbBar = new QWidget(page);
+    m_breadcrumbLayout = new QHBoxLayout(m_breadcrumbBar);
+    m_breadcrumbLayout->setContentsMargins(0, 0, 0, 0);
+    m_breadcrumbLayout->setSpacing(kUiSpace4);
+    m_breadcrumbLayout->addStretch(1);
+    rootLayout->addWidget(m_breadcrumbBar);
 
-    auto* actionRow = new QHBoxLayout();
-    m_openButton = new QPushButton(QStringLiteral("Open"), page);
-    m_openFolderButton = new QPushButton(QStringLiteral("Open Folder"), page);
-    m_explorerButton = new QPushButton(QStringLiteral("Show in Explorer"), page);
-    m_copyPathButton = new QPushButton(QStringLiteral("Copy Path"), page);
-    m_addReviewButton =
-        new QPushButton(QStringLiteral("Add to Cleanup Review"), page);
-    m_showReviewButton =
-        new QPushButton(QStringLiteral("Cleanup Review…"), page);
-    m_rescanButton =
-        new QPushButton(QStringLiteral("Rescan This Location"), page);
-    actionRow->addWidget(m_openButton);
-    actionRow->addWidget(m_openFolderButton);
-    actionRow->addWidget(m_explorerButton);
-    actionRow->addWidget(m_copyPathButton);
-    actionRow->addWidget(m_addReviewButton);
-    actionRow->addWidget(m_showReviewButton);
-    actionRow->addWidget(m_rescanButton);
-    actionRow->addStretch(1);
-    rootLayout->addLayout(actionRow);
+    m_liveStack = new QStackedWidget(page);
+    m_liveEmpty = new EmptyStateWidget(m_liveStack);
+    m_liveEmpty->setTitle(QStringLiteral("Select a folder to analyze"));
+    m_liveEmpty->setBody(
+        QStringLiteral("SpaceLens scans it read-only and shows where storage "
+                       "is being used."));
+    m_liveEmpty->setActionText(QStringLiteral("Select folder"));
+    m_liveEmpty->setActionVisible(true);
 
-    auto* splitter = new QSplitter(Qt::Horizontal, page);
+    m_liveWork = new QWidget(m_liveStack);
+    auto* workLayout = new QVBoxLayout(m_liveWork);
+    workLayout->setContentsMargins(0, 0, 0, 0);
+    workLayout->setSpacing(kUiSpace8);
 
+    auto* splitter = new QSplitter(Qt::Horizontal, m_liveWork);
     m_listing = new QListWidget(splitter);
     m_listing->setAlternatingRowColors(true);
     m_listing->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_listing->setContextMenuPolicy(Qt::CustomContextMenu);
     m_listing->setUniformItemSizes(true);
 
-    auto* rightSplit = new QSplitter(Qt::Vertical, splitter);
-    m_largestList = new QListWidget(rightSplit);
+    auto* detailsHost = new QWidget(splitter);
+    auto* detailsLayout = new QVBoxLayout(detailsHost);
+    detailsLayout->setContentsMargins(0, 0, 0, 0);
+    detailsLayout->setSpacing(kUiSpace8);
+
+    auto* actionRow = new QHBoxLayout();
+    m_explorerButton = new QPushButton(QStringLiteral("Show in Explorer"), detailsHost);
+    m_openButton = new QPushButton(QStringLiteral("Open"), detailsHost);
+    m_itemMoreButton = new QToolButton(detailsHost);
+    m_itemMoreButton->setText(QStringLiteral("More"));
+    m_itemMoreButton->setPopupMode(QToolButton::InstantPopup);
+    m_itemMoreButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_openFolderButton = new QPushButton(QStringLiteral("Open Folder"), detailsHost);
+    m_copyPathButton = new QPushButton(QStringLiteral("Copy Path"), detailsHost);
+    m_rescanButton =
+        new QPushButton(QStringLiteral("Rescan This Location"), detailsHost);
+    m_openFolderButton->hide();
+    m_copyPathButton->hide();
+    m_rescanButton->hide();
+    auto* moreMenu = new QMenu(m_itemMoreButton);
+    moreMenu->addAction(QStringLiteral("Copy Path"), this, &MainWindow::onCopyPath);
+    moreMenu->addAction(QStringLiteral("Copy Name"), this, &MainWindow::onCopyName);
+    moreMenu->addAction(QStringLiteral("Open containing folder"), this,
+                        &MainWindow::onOpenFolder);
+    moreMenu->addSeparator();
+    moreMenu->addAction(QStringLiteral("Rescan this location"), this,
+                        &MainWindow::onRescanLocation);
+    m_itemMoreButton->setMenu(moreMenu);
+    m_addReviewButton =
+        new QPushButton(QStringLiteral("Add to Cleanup Review"), detailsHost);
+    actionRow->addWidget(m_explorerButton);
+    actionRow->addWidget(m_openButton);
+    actionRow->addWidget(m_itemMoreButton);
+    actionRow->addStretch(1);
+    actionRow->addWidget(m_addReviewButton);
+    detailsLayout->addLayout(actionRow);
+
+    m_details = new QTextEdit(detailsHost);
+    m_details->setReadOnly(true);
+    detailsLayout->addWidget(m_details, 3);
+
+    m_largestLabel = new QLabel(QStringLiteral("Largest files"), detailsHost);
+    m_largestLabel->setObjectName(QStringLiteral("slHint"));
+    m_largestList = new QListWidget(detailsHost);
     m_largestList->setAlternatingRowColors(true);
     m_largestList->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_details = new QTextEdit(rightSplit);
-    m_details->setReadOnly(true);
-    rightSplit->setStretchFactor(0, 2);
-    rightSplit->setStretchFactor(1, 3);
+    detailsLayout->addWidget(m_largestLabel);
+    detailsLayout->addWidget(m_largestList, 2);
+
+    m_selectionLabel = new QLabel(QStringLiteral("Selected: 0 items"), detailsHost);
+    m_selectionLabel->setObjectName(QStringLiteral("slHint"));
+    detailsLayout->addWidget(m_selectionLabel);
 
     splitter->addWidget(m_listing);
-    splitter->addWidget(rightSplit);
-    splitter->setStretchFactor(0, 3);
-    splitter->setStretchFactor(1, 2);
-    rootLayout->addWidget(splitter, 1);
+    splitter->addWidget(detailsHost);
+    splitter->setStretchFactor(0, 7);
+    splitter->setStretchFactor(1, 3);
+    splitter->setSizes({900, 380});
+    workLayout->addWidget(splitter, 1);
+
+    m_liveStack->addWidget(m_liveEmpty);
+    m_liveStack->addWidget(m_liveWork);
+    rootLayout->addWidget(m_liveStack, 1);
 
     connect(m_selectButton, &QPushButton::clicked, this, &MainWindow::onSelectFolder);
+    connect(m_liveEmpty, &EmptyStateWidget::actionClicked, this, [this]() {
+        if (m_rootPath.isEmpty()) {
+            onSelectFolder();
+        } else {
+            onScan();
+        }
+    });
     connect(m_scanButton, &QPushButton::clicked, this, &MainWindow::onScan);
     connect(m_cancelButton, &QPushButton::clicked, this, &MainWindow::onCancel);
     connect(m_upButton, &QPushButton::clicked, this, &MainWindow::onNavigateUp);
@@ -296,8 +421,17 @@ QWidget* MainWindow::buildLiveScanPage()
             &MainWindow::onFilterChanged);
     connect(m_classFilter, &QComboBox::currentIndexChanged, this,
             &MainWindow::onFilterChanged);
+    connect(m_sortFilter, &QComboBox::currentIndexChanged, this,
+            &MainWindow::onFilterChanged);
     connect(m_extFilter, &QLineEdit::textChanged, this, &MainWindow::onFilterChanged);
     connect(m_minSizeFilter, &QLineEdit::textChanged, this,
+            &MainWindow::onFilterChanged);
+    connect(m_searchEdit, &QLineEdit::textChanged, this,
+            &MainWindow::onFilterChanged);
+    connect(panel, &FilterPanel::resetRequested, this, [this]() {
+        resetLiveFilters();
+    });
+    connect(panel, &FilterPanel::applyRequested, this,
             &MainWindow::onFilterChanged);
     connect(m_openButton, &QPushButton::clicked, this, &MainWindow::onOpen);
     connect(m_openFolderButton, &QPushButton::clicked, this,
@@ -312,6 +446,7 @@ QWidget* MainWindow::buildLiveScanPage()
     connect(m_rescanButton, &QPushButton::clicked, this,
             &MainWindow::onRescanLocation);
 
+    updateLiveEmptyState();
     return page;
 }
 
@@ -327,6 +462,13 @@ void MainWindow::updateActionState()
     m_selectButton->setEnabled(!running);
     m_scanButton->setEnabled(hasPath && !running);
     m_cancelButton->setEnabled(running);
+    m_cancelButton->setVisible(running);
+    if (m_scanProgress) {
+        m_scanProgress->setVisible(running);
+        if (running) {
+            m_scanProgress->setMaximum(0);
+        }
+    }
     m_upButton->setEnabled(hasResult && m_currentDir != InvalidDirIndex &&
                            m_lastResult->tree.dir(m_currentDir).parent !=
                                InvalidDirIndex &&
@@ -335,9 +477,11 @@ void MainWindow::updateActionState()
     m_openFolderButton->setEnabled(one && !running);
     m_explorerButton->setEnabled(one && !running);
     m_copyPathButton->setEnabled(any && !running);
+    m_itemMoreButton->setEnabled((any || hasResult) && !running);
     m_addReviewButton->setEnabled(any && hasResult && !running);
     m_showReviewButton->setEnabled(true);
     m_rescanButton->setEnabled(hasResult && !running);
+    updateLiveEmptyState();
 }
 
 void MainWindow::setStatusMessage(const QString& message)
@@ -351,9 +495,12 @@ void MainWindow::clearResults()
     m_largestList->clear();
     m_details->clear();
     m_lastResult.reset();
+    m_lastProgress = {};
     m_currentDir = InvalidDirIndex;
     rebuildBreadcrumb();
+    updateLiveMetrics();
     updateSelectionSummary();
+    updateLiveEmptyState();
 }
 
 void MainWindow::onSelectFolder()
@@ -368,6 +515,7 @@ void MainWindow::onSelectFolder()
     m_rootPath = QDir::toNativeSeparators(dir);
     m_pathEdit->setText(m_rootPath);
     updateActionState();
+    updateLiveEmptyState();
     setStatusMessage(QStringLiteral("Ready to scan: %1").arg(m_rootPath));
 }
 
@@ -398,22 +546,8 @@ void MainWindow::onCancel()
 
 void MainWindow::onProgress(const ScanProgress& progress)
 {
-    m_filesLabel->setText(QStringLiteral("Files: %1").arg(progress.filesSeen));
-    m_foldersLabel->setText(
-        QStringLiteral("Folders: %1").arg(progress.directoriesSeen));
-    m_processedLabel->setText(
-        QStringLiteral("Processed: %1").arg(QString::fromStdString(
-            SizeFormatter::format(progress.bytesSeen))));
-    m_elapsedLabel->setText(
-        QStringLiteral("Elapsed: %1").arg(formatElapsed(progress.elapsedSeconds)));
-    const auto errors = progress.accessDenied + progress.reparsePointsSkipped +
-                        progress.otherErrors;
-    m_errorsLabel->setText(
-        QStringLiteral("Errors: %1 (denied %2, reparse %3, other %4)")
-            .arg(errors)
-            .arg(progress.accessDenied)
-            .arg(progress.reparsePointsSkipped)
-            .arg(progress.otherErrors));
+    m_lastProgress = progress;
+    updateLiveMetrics();
     setStatusMessage(
         QStringLiteral("Scanning: %1").arg(fromWide(progress.currentPath)));
 }
@@ -570,11 +704,16 @@ void MainWindow::refreshCurrentListing()
         item->setData(Qt::UserRole + 2, row.path);
         item->setData(Qt::UserRole + 3, row.name);
         item->setData(Qt::UserRole + 4, QVariant::fromValue<qulonglong>(row.size));
+        item->setToolTip(row.path);
     }
 
-    // Files sorted by size desc.
+    // Files sorted by size desc, then optionally by name.
     std::vector<FileIndex> files = node.files;
+    const bool sortByName = m_sortFilter && m_sortFilter->currentIndex() == 1;
     std::sort(files.begin(), files.end(), [&](FileIndex a, FileIndex b) {
+        if (sortByName) {
+            return tree.file(a).name < tree.file(b).name;
+        }
         return tree.file(a).size > tree.file(b).size;
     });
     for (const FileIndex fi : files) {
@@ -599,9 +738,14 @@ void MainWindow::refreshCurrentListing()
         item->setData(Qt::UserRole + 2, row.path);
         item->setData(Qt::UserRole + 3, row.name);
         item->setData(Qt::UserRole + 4, QVariant::fromValue<qulonglong>(row.size));
+        item->setToolTip(row.path);
+    }
+    if (sortByName && m_listing->count() > 1) {
+        m_listing->sortItems(Qt::AscendingOrder);
     }
     updateDetails();
     updateSelectionSummary();
+    updateLiveEmptyState();
 }
 
 bool MainWindow::rowPassesFilter(const RowRef& row, const Classification& cls) const
@@ -640,6 +784,13 @@ bool MainWindow::rowPassesFilter(const RowRef& row, const Classification& cls) c
             return false;
         }
     }
+    const QString search = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
+    if (!search.isEmpty()) {
+        if (!row.name.contains(search, Qt::CaseInsensitive) &&
+            !row.path.contains(search, Qt::CaseInsensitive)) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -669,9 +820,135 @@ Classification MainWindow::classifyRow(const RowRef& row) const
 
 void MainWindow::onFilterChanged()
 {
+    updateLiveFilterCount();
     if (m_lastResult) {
         refreshCurrentListing();
     }
+}
+
+void MainWindow::onLiveWorkspace()
+{
+    m_navLive->setChecked(true);
+    m_navIndexed->setChecked(false);
+    m_pages->setCurrentIndex(0);
+    m_navLive->setFocus(Qt::ShortcutFocusReason);
+}
+
+void MainWindow::onIndexedWorkspace()
+{
+    m_navIndexed->setChecked(true);
+    m_navLive->setChecked(false);
+    m_pages->setCurrentIndex(1);
+    m_navIndexed->setFocus(Qt::ShortcutFocusReason);
+}
+
+void MainWindow::updateLiveMetrics()
+{
+    if (m_metrics == nullptr) {
+        return;
+    }
+    const auto& p = m_lastProgress;
+    const auto errors =
+        p.accessDenied + p.reparsePointsSkipped + p.otherErrors;
+    const QLocale loc;
+    m_metrics->setItems({
+        {QStringLiteral("Files"), loc.toString(static_cast<qulonglong>(p.filesSeen)),
+         {}},
+        {QStringLiteral("Folders"),
+         loc.toString(static_cast<qulonglong>(p.directoriesSeen)),
+         {}},
+        {QStringLiteral("Processed"),
+         QString::fromStdString(SizeFormatter::format(p.bytesSeen)),
+         {}},
+        {QStringLiteral("Elapsed"), formatElapsed(p.elapsedSeconds), {}},
+        {QStringLiteral("Errors"), loc.toString(static_cast<qlonglong>(errors)),
+         QStringLiteral("Denied %1 · reparse %2 · other %3")
+             .arg(p.accessDenied)
+             .arg(p.reparsePointsSkipped)
+             .arg(p.otherErrors)},
+    });
+}
+
+int MainWindow::liveActiveFilterCount() const
+{
+    int count = 0;
+    if (m_kindFilter && m_kindFilter->currentIndex() != 0) {
+        ++count;
+    }
+    if (m_minSizeFilter && !m_minSizeFilter->text().trimmed().isEmpty()) {
+        ++count;
+    }
+    if (m_extFilter && !m_extFilter->text().trimmed().isEmpty()) {
+        ++count;
+    }
+    if (m_classFilter && !m_classFilter->currentData().toString().isEmpty()) {
+        ++count;
+    }
+    return count;
+}
+
+void MainWindow::updateLiveFilterCount()
+{
+    if (m_filterButton) {
+        m_filterButton->setActiveCount(liveActiveFilterCount());
+    }
+}
+
+void MainWindow::resetLiveFilters()
+{
+    QSignalBlocker b1(m_kindFilter);
+    QSignalBlocker b2(m_classFilter);
+    QSignalBlocker b3(m_extFilter);
+    QSignalBlocker b4(m_minSizeFilter);
+    m_kindFilter->setCurrentIndex(0);
+    m_classFilter->setCurrentIndex(0);
+    m_extFilter->clear();
+    m_minSizeFilter->clear();
+    updateLiveFilterCount();
+    onFilterChanged();
+}
+
+void MainWindow::updateLiveEmptyState()
+{
+    if (m_liveStack == nullptr || m_liveEmpty == nullptr) {
+        return;
+    }
+    const bool running = m_session && m_session->isRunning();
+    const bool hasResult = m_lastResult.has_value();
+    const int hits = m_listing ? m_listing->count() : 0;
+    if (running || (hasResult && hits > 0)) {
+        m_liveStack->setCurrentWidget(m_liveWork);
+        if (m_largestLabel) {
+            m_largestLabel->setVisible(m_largestList && m_largestList->count() > 0);
+        }
+        if (m_largestList) {
+            m_largestList->setVisible(m_largestList->count() > 0);
+        }
+        return;
+    }
+    if (hasResult && hits == 0) {
+        m_liveEmpty->setTitle(QStringLiteral("No matching files"));
+        m_liveEmpty->setBody(
+            QStringLiteral("Adjust filters or scan another location."));
+        m_liveEmpty->setActionVisible(false);
+        m_liveStack->setCurrentWidget(m_liveEmpty);
+        return;
+    }
+    if (!m_rootPath.isEmpty()) {
+        m_liveEmpty->setTitle(QStringLiteral("Ready to scan"));
+        m_liveEmpty->setBody(m_rootPath);
+        m_liveEmpty->setActionText(QStringLiteral("Scan"));
+        m_liveEmpty->setActionVisible(true);
+        m_liveStack->setCurrentWidget(m_liveEmpty);
+        return;
+    }
+    m_liveEmpty->setTitle(QStringLiteral("Select a folder to analyze"));
+    m_liveEmpty->setBody(
+        QStringLiteral("SpaceLens scans it read-only and shows where storage "
+                       "is being used."));
+    m_liveEmpty->setActionText(QStringLiteral("Select folder"));
+    m_liveEmpty->setActionVisible(true);
+    m_liveStack->setCurrentWidget(m_liveEmpty);
 }
 
 void MainWindow::onItemActivated(QListWidgetItem* item)
@@ -816,21 +1093,20 @@ void MainWindow::updateDetails()
         text += QStringLiteral("Child directories\n%1\n\n").arg(node.childDirCount);
         if (node.newestDescendantWrite != 0) {
             text += QStringLiteral(
-                "Newest descendant write\n(FILETIME ticks) %1\n\n")
-                        .arg(node.newestDescendantWrite);
+                "Newest descendant write\n%1\n\n")
+                        .arg(formatFileTimeLocal(node.newestDescendantWrite));
         }
     } else if (row.kind == RowKind::File && row.file != InvalidFileIndex) {
         const auto& file = m_lastResult->tree.file(row.file);
         const QFileInfo fi(row.name);
         text += QStringLiteral("Extension\n%1\n\n").arg(fi.suffix());
         if (file.lastWriteTime != 0) {
-            text += QStringLiteral("Last write (FILETIME ticks)\n%1\n\n")
-                        .arg(file.lastWriteTime);
+            text += QStringLiteral("Last write\n%1\n\n")
+                        .arg(formatFileTimeLocal(file.lastWriteTime));
         }
         if (file.lastAccessTime != 0) {
-            text += QStringLiteral(
-                        "Last access (FILETIME ticks, advisory only)\n%1\n\n")
-                        .arg(file.lastAccessTime);
+            text += QStringLiteral("Last access (advisory only)\n%1\n\n")
+                        .arg(formatFileTimeLocal(file.lastAccessTime));
         }
         text += QStringLiteral("Attributes\n0x%1\n\n")
                     .arg(file.attributes, 0, 16);

@@ -3,6 +3,7 @@
 #include "app/CleanupRevalidationSession.hpp"
 #include "app/MaintenanceSession.hpp"
 #include "ui/MaintenanceHistoryDialog.hpp"
+#include "ui/UiTheme.hpp"
 #include "core/CleanupPlan.hpp"
 #include "core/CleanupReview.hpp"
 #include "core/CleanupReviewStore.hpp"
@@ -19,9 +20,11 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QToolButton>
 #include <QSaveFile>
 #include <QSplitter>
 #include <QTextEdit>
@@ -180,6 +183,7 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     resize(960, 560);
 
     auto* root = new QVBoxLayout(this);
+    applyPageMargins(this);
     m_summary = new QLabel(this);
     m_summary->setWordWrap(true);
     root->addWidget(m_summary);
@@ -208,7 +212,8 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
             "Cleanup Review is planning-only until you confirm Move to Recycle "
             "Bin. That path is Recycle Bin only — not permanent deletion."),
         this);
-    note->setStyleSheet(QStringLiteral("color: #666;"));
+    note->setObjectName(QStringLiteral("slHint"));
+    note->setWordWrap(true);
     root->addWidget(note);
 
     m_redact = new QCheckBox(
@@ -216,7 +221,7 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     m_redact->setChecked(true);
     root->addWidget(m_redact);
 
-    auto* buttons = new QHBoxLayout();
+    auto* itemRow = new QHBoxLayout();
     m_revalidateButton = new QPushButton(QStringLiteral("Revalidate All"), this);
     m_cancelButton = new QPushButton(QStringLiteral("Cancel"), this);
     m_refreshEvidenceButton =
@@ -225,27 +230,48 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     m_revealButton = new QPushButton(QStringLiteral("Show in Explorer"), this);
     m_removeButton = new QPushButton(QStringLiteral("Remove from Review"), this);
     m_clearButton = new QPushButton(QStringLiteral("Clear Review"), this);
-    m_recycleButton =
-        new QPushButton(QStringLiteral("Move to Recycle Bin…"), this);
     m_historyButton =
         new QPushButton(QStringLiteral("Maintenance History"), this);
     auto* copyBtn = new QPushButton(QStringLiteral("Copy Plan"), this);
     auto* exportBtn = new QPushButton(QStringLiteral("Export JSON"), this);
+    m_clearButton->hide();
+    m_historyButton->hide();
+    copyBtn->hide();
+    exportBtn->hide();
+    auto* more = new QToolButton(this);
+    more->setText(QStringLiteral("More"));
+    more->setPopupMode(QToolButton::InstantPopup);
+    more->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    auto* moreMenu = new QMenu(more);
+    moreMenu->addAction(QStringLiteral("Copy Plan"), this,
+                        &CleanupReviewDialog::onCopyPlan);
+    moreMenu->addAction(QStringLiteral("Export JSON"), this,
+                        &CleanupReviewDialog::onExportJson);
+    moreMenu->addAction(QStringLiteral("Maintenance History"), this,
+                        &CleanupReviewDialog::onMaintenanceHistory);
+    moreMenu->addSeparator();
+    moreMenu->addAction(QStringLiteral("Clear Review"), this,
+                        &CleanupReviewDialog::onClear);
+    more->setMenu(moreMenu);
+    itemRow->addWidget(m_revalidateButton);
+    itemRow->addWidget(m_cancelButton);
+    itemRow->addWidget(m_refreshEvidenceButton);
+    itemRow->addWidget(m_revealButton);
+    itemRow->addWidget(m_openButton);
+    itemRow->addWidget(m_removeButton);
+    itemRow->addWidget(more);
+    itemRow->addStretch(1);
+    root->addLayout(itemRow);
+
+    auto* primaryRow = new QHBoxLayout();
+    m_recycleButton =
+        new QPushButton(QStringLiteral("Move to Recycle Bin…"), this);
+    markPrimaryButton(m_recycleButton);
     auto* closeBtn = new QPushButton(QStringLiteral("Close"), this);
-    buttons->addWidget(m_revalidateButton);
-    buttons->addWidget(m_cancelButton);
-    buttons->addWidget(m_refreshEvidenceButton);
-    buttons->addWidget(m_openButton);
-    buttons->addWidget(m_revealButton);
-    buttons->addWidget(m_removeButton);
-    buttons->addWidget(m_clearButton);
-    buttons->addWidget(m_recycleButton);
-    buttons->addWidget(m_historyButton);
-    buttons->addWidget(copyBtn);
-    buttons->addWidget(exportBtn);
-    buttons->addStretch(1);
-    buttons->addWidget(closeBtn);
-    root->addLayout(buttons);
+    primaryRow->addStretch(1);
+    primaryRow->addWidget(m_recycleButton);
+    primaryRow->addWidget(closeBtn);
+    root->addLayout(primaryRow);
 
     connect(m_list, &QListWidget::itemSelectionChanged, this,
             &CleanupReviewDialog::onSelectionChanged);
@@ -565,7 +591,7 @@ void CleanupReviewDialog::confirmAndExecute()
     }
     QMessageBox box(this);
     box.setIcon(QMessageBox::Warning);
-    box.setWindowTitle(QStringLiteral("Move to Recycle Bin"));
+    box.setWindowTitle(QString::fromUtf8(kCleanupConfirmTitle));
     box.setText(QStringLiteral("Move %1 eligible file(s) to the Recycle Bin?")
                     .arg(plan.eligibleCount));
     box.setInformativeText(
@@ -588,7 +614,7 @@ void CleanupReviewDialog::confirmAndExecute()
             .arg(blocked.isEmpty() ? QStringLiteral("(none)")
                                    : blocked.join(QStringLiteral("\n"))));
     auto* moveButton =
-        box.addButton(QStringLiteral("Move eligible files to Recycle Bin"),
+        box.addButton(QString::fromUtf8(kCleanupConfirmPrimary),
                       QMessageBox::AcceptRole);
     box.addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
     box.exec();

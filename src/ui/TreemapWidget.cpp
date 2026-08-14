@@ -2,7 +2,9 @@
 
 #include "core/SizeFormatter.hpp"
 #include "core/index/IndexOverview.hpp"
+#include "ui/UiTheme.hpp"
 
+#include <QEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -36,9 +38,6 @@ TreemapWidget::TreemapWidget(QWidget* parent)
     setMinimumHeight(140);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(true);
-    QPalette pal = palette();
-    pal.setColor(QPalette::Window, QColor(0xF4, 0xF5, 0xF7));
-    setPalette(pal);
 }
 
 QSize TreemapWidget::sizeHint() const
@@ -239,44 +238,39 @@ void TreemapWidget::relayout()
 QColor TreemapWidget::colorFor(const TreemapDisplayItem& item) const
 {
     // Deterministic palette by category / kind — not safety coloring.
+    QColor fill;
     if (item.isOther) {
-        return QColor(0xB0, 0xB6, 0xBE);
+        fill = QColor(0xB0, 0xB6, 0xBE);
+    } else {
+        const std::string& c = item.classification;
+        if (c == "BuildArtifact") {
+            fill = QColor(0x5B, 0x8F, 0xF9);
+        } else if (c == "DependencyDirectory") {
+            fill = QColor(0x7C, 0x6C, 0xF0);
+        } else if (c == "PackageCache" || c == "IdeCache") {
+            fill = QColor(0x3D, 0xB8, 0xA0);
+        } else if (c == "DownloadedAiModel") {
+            fill = QColor(0xE0, 0x8A, 0x3D);
+        } else if (c == "LogData" || c == "TemporaryData") {
+            fill = QColor(0x6A, 0xA8, 0x4F);
+        } else if (c == "Archive") {
+            fill = QColor(0xC4, 0x7A, 0xC0);
+        } else if (c == "UserData") {
+            fill = QColor(0x4A, 0x90, 0xC8);
+        } else if (c == "SystemData" || c == "ApplicationData") {
+            fill = QColor(0x8A, 0x8F, 0x98);
+        } else if (item.kind == IndexEntryKind::Directory) {
+            fill = QColor(0x6E, 0x9E, 0xCF);
+        } else {
+            std::size_t h = 0;
+            for (wchar_t ch : item.name) {
+                h = h * 131u + static_cast<std::size_t>(ch);
+            }
+            const int hue = static_cast<int>(h % 360);
+            fill = QColor::fromHsv(hue, 70, 200);
+        }
     }
-    const std::string& c = item.classification;
-    if (c == "BuildArtifact") {
-        return QColor(0x5B, 0x8F, 0xF9);
-    }
-    if (c == "DependencyDirectory") {
-        return QColor(0x7C, 0x6C, 0xF0);
-    }
-    if (c == "PackageCache" || c == "IdeCache") {
-        return QColor(0x3D, 0xB8, 0xA0);
-    }
-    if (c == "DownloadedAiModel") {
-        return QColor(0xE0, 0x8A, 0x3D);
-    }
-    if (c == "LogData" || c == "TemporaryData") {
-        return QColor(0x6A, 0xA8, 0x4F);
-    }
-    if (c == "Archive") {
-        return QColor(0xC4, 0x7A, 0xC0);
-    }
-    if (c == "UserData") {
-        return QColor(0x4A, 0x90, 0xC8);
-    }
-    if (c == "SystemData" || c == "ApplicationData") {
-        return QColor(0x8A, 0x8F, 0x98);
-    }
-    if (item.kind == IndexEntryKind::Directory) {
-        return QColor(0x6E, 0x9E, 0xCF);
-    }
-    // File by extension family (hash of name).
-    std::size_t h = 0;
-    for (wchar_t ch : item.name) {
-        h = h * 131u + static_cast<std::size_t>(ch);
-    }
-    const int hue = static_cast<int>(h % 360);
-    return QColor::fromHsv(hue, 70, 200);
+    return adjustClassificationFill(fill, paletteIsDark(palette()));
 }
 
 int TreemapWidget::hitIndex(const QPoint& pos) const
@@ -328,14 +322,20 @@ void TreemapWidget::paintEvent(QPaintEvent*)
 
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, false);
-    p.fillRect(rect(), palette().color(QPalette::Window));
+    const QPalette pal = palette();
+    const QColor surface = pal.color(QPalette::Base);
+    p.fillRect(rect(), surface);
 
     if (m_nodes.empty()) {
-        p.setPen(QColor(0x66, 0x66, 0x66));
+        p.setPen(mutedTextColor(pal));
         p.drawText(rect().adjusted(12, 12, -12, -12),
                    Qt::AlignCenter | Qt::TextWordWrap, m_emptyMessage);
         return;
     }
+
+    const QColor highlight = pal.color(QPalette::Highlight);
+    QColor gutter = pal.color(QPalette::Window);
+    gutter.setAlpha(200);
 
     for (std::size_t i = 0; i < m_nodes.size(); ++i) {
         const auto& n = m_nodes[i];
@@ -346,21 +346,18 @@ void TreemapWidget::paintEvent(QPaintEvent*)
 
         QColor fill = n.fill;
         if (static_cast<int>(i) == m_hoverIndex) {
-            fill = mix(fill, QColor(Qt::white), 0.18);
+            fill = mix(fill, surface, 0.18);
         }
         if (static_cast<int>(i) == m_selectedIndex) {
-            fill = mix(fill, QColor(0x1A, 0x56, 0xDB), 0.22);
+            fill = mix(fill, highlight, 0.22);
         }
         p.fillRect(r, fill);
 
-        QPen border(static_cast<int>(i) == m_selectedIndex
-                        ? QColor(0x1A, 0x56, 0xDB)
-                        : QColor(0xFF, 0xFF, 0xFF, 180));
+        QPen border(static_cast<int>(i) == m_selectedIndex ? highlight : gutter);
         border.setWidth(static_cast<int>(i) == m_selectedIndex ? 2 : 1);
         p.setPen(border);
         p.drawRect(r);
 
-        // Labels only when large enough.
         if (r.width() >= 56.0 && r.height() >= 28.0) {
             QString name = n.item.isOther
                                ? QStringLiteral("Other")
@@ -370,7 +367,8 @@ void TreemapWidget::paintEvent(QPaintEvent*)
             }
             const QString size =
                 QString::fromStdString(SizeFormatter::format(n.item.sizeBytes));
-            p.setPen(QColor(0x1A, 0x1A, 0x1A));
+            const QColor label = contrastingTextColor(fill);
+            p.setPen(label);
             QFont f = font();
             f.setPointSizeF(std::max(8.0, f.pointSizeF()));
             p.setFont(f);
@@ -382,10 +380,22 @@ void TreemapWidget::paintEvent(QPaintEvent*)
                 QFont fs = f;
                 fs.setPointSizeF(std::max(7.5, f.pointSizeF() - 1.0));
                 p.setFont(fs);
-                p.setPen(QColor(0x33, 0x33, 0x33));
+                QColor secondary = label;
+                secondary.setAlpha(200);
+                p.setPen(secondary);
                 p.drawText(textRect, Qt::AlignBottom | Qt::AlignLeft, size);
             }
         }
+    }
+}
+
+void TreemapWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event != nullptr && (event->type() == QEvent::PaletteChange ||
+                             event->type() == QEvent::StyleChange)) {
+        m_layoutDirty = true;
+        update();
     }
 }
 

@@ -216,8 +216,7 @@ if(SPACELENS_BUILD_GUI)
 
     find_package(Qt6 REQUIRED COMPONENTS Widgets Concurrent)
 
-    add_executable(SpaceLens
-        src/main.cpp
+    set(SPACELENS_GUI_SOURCES
         src/app/Application.hpp
         src/app/Application.cpp
         src/app/ScanSession.hpp
@@ -244,6 +243,23 @@ if(SPACELENS_BUILD_GUI)
         src/ui/DuplicateFilesDialog.cpp
         src/ui/OrdinaryLocationsDialog.hpp
         src/ui/OrdinaryLocationsDialog.cpp
+        src/ui/UiTheme.hpp
+        src/ui/UiTheme.cpp
+        src/ui/PageHeader.hpp
+        src/ui/PageHeader.cpp
+        src/ui/MetricStrip.hpp
+        src/ui/MetricStrip.cpp
+        src/ui/EmptyStateWidget.hpp
+        src/ui/EmptyStateWidget.cpp
+        src/ui/FilterPopup.hpp
+        src/ui/FilterPopup.cpp
+        src/ui/IndexedRootDelegate.hpp
+        src/ui/IndexedRootDelegate.cpp
+    )
+
+    add_executable(SpaceLens
+        src/main.cpp
+        ${SPACELENS_GUI_SOURCES}
     )
 
     target_link_libraries(SpaceLens
@@ -277,7 +293,7 @@ if(SPACELENS_BUILD_GUI)
 endif()
 
 # ---------------------------------------------------------------------------
-# Tests — core only (no Qt)
+# Tests — core always; GUI tests only when SPACELENS_BUILD_GUI
 # ---------------------------------------------------------------------------
 if(SPACELENS_BUILD_TESTS)
     enable_testing()

@@ -1,5 +1,7 @@
 #include "ui/DuplicateFilesDialog.hpp"
 
+#include "ui/UiTheme.hpp"
+
 #include "core/CleanupRevalidation.hpp"
 #include "core/SizeFormatter.hpp"
 #include "core/SizeParse.hpp"
@@ -95,6 +97,7 @@ DuplicateFilesDialog::DuplicateFilesDialog(CleanupReviewController& review,
     resize(880, 600);
 
     auto* root = new QVBoxLayout(this);
+    applyPageMargins(this);
     m_summary = new QLabel(this);
     m_summary->setWordWrap(true);
     root->addWidget(m_summary);
@@ -133,11 +136,13 @@ DuplicateFilesDialog::DuplicateFilesDialog(CleanupReviewController& review,
                        "Same-size files are not duplicates until full SHA-256 "
                        "verification succeeds."),
         this);
-    note->setStyleSheet(QStringLiteral("color: #666;"));
+    note->setObjectName(QStringLiteral("slHint"));
+    note->setWordWrap(true);
     root->addWidget(note);
 
     auto* buttons = new QHBoxLayout();
     m_findButton = new QPushButton(QStringLiteral("Find Duplicates"), this);
+    markPrimaryButton(m_findButton);
     m_cancelButton = new QPushButton(QStringLiteral("Cancel"), this);
     m_revealButton = new QPushButton(QStringLiteral("Show in Explorer"), this);
     m_copyPathsButton = new QPushButton(QStringLiteral("Copy Path(s)"), this);

@@ -24,7 +24,9 @@ class QTextEdit;
 class QComboBox;
 class QHBoxLayout;
 class QWidget;
-class QTabWidget;
+class QStackedWidget;
+class QProgressBar;
+class QToolButton;
 
 namespace spacelens {
 
@@ -60,6 +62,8 @@ private slots:
     void onContextMenu(const QPoint& pos);
     void onIndexStatusMessage(const QString& message);
     void onOrdinaryLocations();
+    void onLiveWorkspace();
+    void onIndexedWorkspace();
 
 private:
     enum class RowKind { Directory, File };
@@ -83,6 +87,11 @@ private:
     void refreshCurrentListing();
     void updateDetails();
     void updateSelectionSummary();
+    void updateLiveEmptyState();
+    void updateLiveMetrics();
+    void updateLiveFilterCount();
+    void resetLiveFilters();
+    [[nodiscard]] int liveActiveFilterCount() const;
     [[nodiscard]] std::vector<RowRef> selectedRows() const;
     [[nodiscard]] std::optional<RowRef> singleSelectedRow() const;
     [[nodiscard]] RowRef rowFromItem(const QListWidgetItem* item) const;
@@ -94,12 +103,15 @@ private:
     QString m_rootPath;
     std::unique_ptr<ScanSession> m_session;
     std::optional<ScanResult> m_lastResult;
+    ScanProgress m_lastProgress{};
     DirIndex m_currentDir = InvalidDirIndex;
     CleanupReviewController m_reviewController;
     std::unique_ptr<CleanupRevalidationSession> m_revalidationSession;
     std::unique_ptr<MaintenanceSession> m_maintenanceSession;
 
-    QTabWidget* m_tabs = nullptr;
+    QStackedWidget* m_pages = nullptr;
+    QPushButton* m_navLive = nullptr;
+    QPushButton* m_navIndexed = nullptr;
     IndexBrowserPage* m_indexPage = nullptr;
 
     QLineEdit* m_pathEdit = nullptr;
@@ -107,22 +119,28 @@ private:
     QPushButton* m_scanButton = nullptr;
     QPushButton* m_cancelButton = nullptr;
     QPushButton* m_upButton = nullptr;
+    QProgressBar* m_scanProgress = nullptr;
 
     QWidget* m_breadcrumbBar = nullptr;
     QHBoxLayout* m_breadcrumbLayout = nullptr;
 
+    QLineEdit* m_searchEdit = nullptr;
     QComboBox* m_kindFilter = nullptr;
     QLineEdit* m_extFilter = nullptr;
     QLineEdit* m_minSizeFilter = nullptr;
     QComboBox* m_classFilter = nullptr;
+    QComboBox* m_sortFilter = nullptr;
 
-    QLabel* m_filesLabel = nullptr;
-    QLabel* m_foldersLabel = nullptr;
-    QLabel* m_processedLabel = nullptr;
-    QLabel* m_elapsedLabel = nullptr;
-    QLabel* m_errorsLabel = nullptr;
+    class MetricStrip* m_metrics = nullptr;
+    class EmptyStateWidget* m_liveEmpty = nullptr;
+    class FilterButton* m_filterButton = nullptr;
+    QStackedWidget* m_liveStack = nullptr;
+    QWidget* m_liveWork = nullptr;
+    QLabel* m_largestLabel = nullptr;
     QLabel* m_selectionLabel = nullptr;
     QLabel* m_statusLabel = nullptr;
+    QLabel* m_trustLabel = nullptr;
+    QToolButton* m_itemMoreButton = nullptr;
 
     QListWidget* m_listing = nullptr;
     QListWidget* m_largestList = nullptr;

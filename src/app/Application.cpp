@@ -1,6 +1,7 @@
 #include "app/Application.hpp"
 
 #include "ui/MainWindow.hpp"
+#include "ui/UiTheme.hpp"
 
 #ifndef SPACELENS_VERSION_STRING
 #define SPACELENS_VERSION_STRING "0.1.2"
@@ -14,6 +15,7 @@ Application::Application(int& argc, char** argv)
     QApplication::setApplicationName(QStringLiteral("SpaceLens"));
     QApplication::setOrganizationName(QStringLiteral("SpaceLens"));
     QApplication::setApplicationVersion(QStringLiteral(SPACELENS_VERSION_STRING));
+    applyApplicationChrome(m_qtApp);
 
     m_mainWindow = std::make_unique<MainWindow>();
     m_mainWindow->show();

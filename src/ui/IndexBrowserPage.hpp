@@ -134,6 +134,9 @@ private:
     void updateOverviewLabel(const StorageOverview& overview);
     void applyHierarchyResult(const HierarchyChildrenResult& hierarchy);
     void applyPresetDefaults(IndexDiscoveryPreset preset);
+    void updateIndexedFilterCount();
+    void resetIndexedFilters();
+    [[nodiscard]] int indexedActiveFilterCount() const;
     [[nodiscard]] IndexQuerySpec buildQuerySpec() const;
     [[nodiscard]] std::optional<IndexRootSummary> selectedRoot() const;
     [[nodiscard]] std::vector<int> selectedRows() const;
@@ -175,6 +178,7 @@ private:
     QTableView* m_hitsView = nullptr;
     TreemapWidget* m_treemap = nullptr;
     QTextEdit* m_inspector = nullptr;
+    QLabel* m_rootTitle = nullptr;
     QLabel* m_rootMeta = nullptr;
     QLabel* m_overviewLabel = nullptr;
     QLabel* m_queryMeta = nullptr;
@@ -182,8 +186,10 @@ private:
     QLabel* m_emptyLabel = nullptr;
     QWidget* m_breadcrumbBar = nullptr;
     QHBoxLayout* m_breadcrumbLayout = nullptr;
+    QWidget* m_exploreHost = nullptr;
 
     QButtonGroup* m_presetGroup = nullptr;
+    class FilterButton* m_filterButton = nullptr;
     QLineEdit* m_searchEdit = nullptr;
     QComboBox* m_kindFilter = nullptr;
     QComboBox* m_minSizeFilter = nullptr;
@@ -207,6 +213,8 @@ private:
     QPushButton* m_openButton = nullptr;
     QPushButton* m_revealButton = nullptr;
     QPushButton* m_copyPathButton = nullptr;
+    QToolButton* m_moreButton = nullptr;
+    QToolButton* m_itemMoreButton = nullptr;
 };
 
 }  // namespace spacelens
