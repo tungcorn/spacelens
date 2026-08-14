@@ -11,9 +11,10 @@ selection.
 
 ## Information architecture
 
-Two top-level workspaces — **Live Scan** and **Indexed** — in a segmented
-navigation strip. No permanent left application sidebar. Cleanup Review and
-Maintenance History stay workflows, not destinations.
+Two top-level workspaces — **Live Scan** and **Indexed** — in a compact
+segmented selector. No menu bar, no permanent left application sidebar.
+Cleanup Review and Maintenance History stay workflows, not destinations.
+User-declared ordinary locations live under the navigation **More** overflow.
 
 Common page shell:
 
@@ -42,18 +43,23 @@ Safety-critical actions are never hidden in an overflow menu.
 
 Choose a folder → scan → inspect results → optionally add to Cleanup Review.
 
-Wide windows use a ~70 / 30 list / details splitter. Metrics are a compact
-typographic strip, not cards. Advanced kind / size / extension / class
-filters live in a Filters popup. A search box filters the current listing
-only.
+Wide windows use a ~70 / 30 table / inspector splitter. Results are a
+Name / Size / Type / Class / Modified table. The right pane is a property
+inspector (empty and “Unknown” fields are omitted) plus a Largest files
+table. Metrics are a compact typographic strip, not cards. Advanced kind /
+size / extension / class filters live in a Filters popup. A search box
+filters the current listing only. Cancel is shown only while a scan is
+running.
 
 ## Indexed
 
-Resizable root list (~260–340 px) + selected-root exploration. Each root
-shows path, size · age, and a textual health state. Discovery modes are a
-segmented selector, not a row of unrelated buttons. Search is wide; Sort
-stays visible; the rest of the criteria sit behind Filters. The treemap is
-first-class content and follows the widget palette in both themes.
+Resizable root list (~280–380 px) + selected-root exploration. Each root
+shows a folder name, size · age, health, and a full-path tooltip. Discovery
+modes are a segmented selector (Largest / Old & Large / Developer / Reclaim /
+Custom). Search is wide; Sort stays visible; the rest of the criteria sit
+behind Filters. The treemap sits above the result table; the inspector is
+the right-hand pane. Empty, loading, and zero-result states replace a blank
+table. The treemap follows the widget palette in both themes.
 
 ## Theme
 
@@ -62,8 +68,9 @@ Hard-coded light fills are forbidden on theme-dependent surfaces.
 
 ## Safety language
 
-CLI and analysis remain read-only. The window status bar carries a compact
-**Read-only analysis** cue. Maintenance confirmation still says files go to
+CLI and analysis remain read-only. The window status bar carries the
+status message on the left and a compact **Read-only analysis** chip on
+the right. Maintenance confirmation still says files go to
 the Recycle Bin, this is not permanent deletion, Recycle Bin still occupies
 disk space, and SpaceLens does not empty it. The primary confirmation button
 remains **Move eligible files to Recycle Bin**.

@@ -12,6 +12,11 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
   treemap, and a command hierarchy replace the previous equal-weight toolbar
   chrome. Cleanup Review confirmation remains **Move eligible files to Recycle
   Bin**. Analysis stays read-only. Launch the local GUI with `.\scripts\dev.ps1`.
+- GUI UX V1.1: higher-contrast secondary text, compact workspace and discovery
+  segmented controls, Live Scan / Largest Files data tables, a property
+  inspector that omits no-value fields, clearer Indexed root and empty
+  states, Cancel only while busy, and a status-bar Read-only analysis chip.
+  Version stays 0.1.2. No filesystem mutation.
 
 ## [0.1.2] — 2026-08-14
 
