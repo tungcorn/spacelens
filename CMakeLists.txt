@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(SpaceLens
     VERSION 0.1.2
-    DESCRIPTION "Native Windows disk-space analyzer (core + CLI + GUI)"
+    DESCRIPTION "Native Windows disk-space analyzer (core + CLI + MCP + GUI)"
     LANGUAGES CXX
 )
 
@@ -13,10 +13,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(SPACELENS_BUILD_TESTS "Build unit tests" ON)
 option(SPACELENS_BUILD_GUI "Build Qt GUI (SpaceLens.exe)" ON)
 option(SPACELENS_BUILD_CLI "Build CLI (spacelens.exe)" ON)
+option(SPACELENS_BUILD_MCP "Build read-only MCP adapter (spacelens-mcp.exe)" ON)
 option(SPACELENS_MSVC_WARNINGS_AS_ERRORS
     "Treat first-party MSVC warnings as errors (not SQLite/Qt/generated)" ON)
 option(SPACELENS_MSVC_ANALYZE
-    "Enable MSVC /analyze on first-party core and CLI" OFF)
+    "Enable MSVC /analyze on first-party core, CLI, and MCP" OFF)
 
 # Version source of truth: project(VERSION) above. Consumed as
 # SPACELENS_VERSION_STRING on first-party targets.
@@ -98,6 +99,8 @@ add_library(spacelens_core STATIC
     src/core/ReclaimAnalysis.cpp
     src/core/StorageIntelligence.hpp
     src/core/StorageIntelligence.cpp
+    src/core/StorageAnalysis.hpp
+    src/core/StorageAnalysis.cpp
     src/core/index/Sqlite.hpp
     src/core/index/Sqlite.cpp
     src/core/index/IndexPaths.hpp
@@ -209,6 +212,33 @@ if(SPACELENS_BUILD_CLI)
 endif()
 
 # ---------------------------------------------------------------------------
+# MCP — stdio adapter, core only, no Qt, no maintenance
+# ---------------------------------------------------------------------------
+if(SPACELENS_BUILD_MCP)
+    add_executable(spacelens-mcp
+        src/mcp/main.cpp
+        src/mcp/JsonValue.hpp
+        src/mcp/JsonValue.cpp
+        src/mcp/Protocol.hpp
+        src/mcp/Protocol.cpp
+        src/mcp/StorageTools.hpp
+        src/mcp/StorageTools.cpp
+    )
+    target_link_libraries(spacelens-mcp PRIVATE spacelens_core)
+    set_target_properties(spacelens-mcp PROPERTIES
+        OUTPUT_NAME "spacelens-mcp"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/mcp"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/mcp"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/mcp"
+    )
+    if(WIN32)
+        target_link_options(spacelens-mcp PRIVATE "/SUBSYSTEM:CONSOLE")
+        set_target_properties(spacelens-mcp PROPERTIES WIN32_EXECUTABLE FALSE)
+    endif()
+    spacelens_apply_first_party_warnings(spacelens-mcp)
+endif()
+
+# ---------------------------------------------------------------------------
 # GUI — optional Qt
 # ---------------------------------------------------------------------------
 if(SPACELENS_BUILD_GUI)
@@ -307,6 +337,7 @@ endif()
 message(STATUS "SpaceLens ${PROJECT_VERSION}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  CLI:  ${SPACELENS_BUILD_CLI}")
+message(STATUS "  MCP:  ${SPACELENS_BUILD_MCP}")
 message(STATUS "  GUI:  ${SPACELENS_BUILD_GUI}")
 message(STATUS "  Tests:${SPACELENS_BUILD_TESTS}")
 if(SPACELENS_BUILD_GUI)
@@ -314,6 +345,6 @@ if(SPACELENS_BUILD_GUI)
 endif()
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  MSVC /WX (first-party): ${SPACELENS_MSVC_WARNINGS_AS_ERRORS}")
-message(STATUS "  MSVC /analyze (core/CLI): ${SPACELENS_MSVC_ANALYZE}")
+message(STATUS "  MSVC /analyze (core/CLI/MCP): ${SPACELENS_MSVC_ANALYZE}")
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpaceLensInstall.cmake")

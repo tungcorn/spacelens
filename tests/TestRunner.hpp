@@ -94,8 +94,8 @@ inline int runAll()
 
 #define SPACELENS_REQUIRE_EQ(a, b)                                             \
     do {                                                                       \
-        const auto& _va = (a);                                                 \
-        const auto& _vb = (b);                                                 \
+        const auto _va = (a);                                                  \
+        const auto _vb = (b);                                                  \
         if (!(_va == _vb)) {                                                   \
             throw ::spacelens::test::Failure(                                  \
                 std::string("expected equality: ") + #a + " == " + #b);        \

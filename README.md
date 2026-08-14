@@ -9,6 +9,7 @@ agent permission to destroy data.
 
 ```text
 spacelens_core         →  spacelens (CLI, read-only)
+                       →  spacelens-mcp (stdio MCP, read-only)
                        →  SpaceLens (Qt desktop analyzer)
 spacelens_maintenance  →  GUI Recycle Bin adapter only
 ```
@@ -64,9 +65,13 @@ commands until they resolve from the official WinGet source.
   breadcrumb navigation, storage overview, interactive squarified treemap,
   inspector, Explorer/copy, **Find Duplicates**, durable Cleanup Review V2,
   and human-authorized Recycle Bin maintenance)
+- **Read-only MCP adapter** (source builds): `spacelens-mcp.exe` exposes
+  overview / opportunities / query / duplicates / index status as typed
+  stdio tools. Not included in the published v0.1.2 zip or npm package.
+  See [`docs/MCP.md`](docs/MCP.md).
 - Not yet: permanent delete, directory recycle, restore from Recycle Bin,
   auto-refresh on query, journal creation, persistent hash cache, MFT initial
-  scan, MCP, product AI, automatic deletion, or CLI/agent mutation
+  scan, product AI, automatic deletion, or CLI/agent/MCP mutation
 
 ## Features
 
@@ -106,9 +111,10 @@ commands until they resolve from the official WinGet source.
 - Directory reparse points not followed by default; access errors are non-fatal
   and counted
 
-**Safety contract:** the CLI is read-only by design. See
+**Safety contract:** the CLI and MCP adapter are read-only by design. See
 [`docs/SAFETY.md`](docs/SAFETY.md). Agent workflow:
 [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
+MCP: [`docs/MCP.md`](docs/MCP.md).
 Index design: [`docs/INDEX.md`](docs/INDEX.md).
 Cleanup Review: [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md).
 Duplicates: [`docs/DUPLICATES.md`](docs/DUPLICATES.md).
@@ -152,6 +158,13 @@ cmake --build --preset windows-cli-release --target spacelens
 .\build-cli-release\cli\spacelens.exe index refresh <folder> --json
 .\build-cli-release\cli\spacelens.exe query <folder> --files --min-size 100MB --limit 20 --json
 .\build-cli-release\cli\spacelens.exe duplicates <folder> --min-size 1MB --json
+```
+
+Read-only MCP adapter (source builds; not in the published v0.1.2 zip/npm):
+
+```powershell
+.\build-cli-release\mcp\spacelens-mcp.exe
+# stdio only — pair with an MCP client. See docs/MCP.md.
 ```
 
 Point those commands at a folder you own. Do not use the SpaceLens source tree

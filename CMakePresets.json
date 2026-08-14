@@ -48,7 +48,7 @@
     {
       "name": "windows-cli-release",
       "displayName": "Windows CLI-only Release (no Qt)",
-      "description": "Release CLI + core + tests. Does not require Qt.",
+      "description": "Release CLI + MCP + core + tests. Does not require Qt.",
       "inherits": "windows-base",
       "binaryDir": "${sourceDir}/build-cli-release",
       "cacheVariables": {
@@ -61,7 +61,7 @@
     {
       "name": "windows-analyze",
       "displayName": "Windows CLI-only Release + MSVC /analyze",
-      "description": "First-party core/CLI static analysis. No Qt.",
+      "description": "First-party core/CLI/MCP static analysis. No Qt.",
       "inherits": "windows-cli-release",
       "binaryDir": "${sourceDir}/build-analyze",
       "cacheVariables": {

@@ -25,7 +25,13 @@ set(SPACELENS_TEST_SOURCES
     test_treemap_layout.cpp
     test_index_overview.cpp
     test_storage_intelligence.cpp
+    test_storage_analysis.cpp
+    test_mcp_json.cpp
+    test_mcp_protocol.cpp
     TestRunner.hpp
+    ${CMAKE_SOURCE_DIR}/src/mcp/JsonValue.cpp
+    ${CMAKE_SOURCE_DIR}/src/mcp/Protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/mcp/StorageTools.cpp
     FakeFileEnumerator.hpp
 )
 

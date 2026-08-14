@@ -219,11 +219,18 @@ IndexStore IndexStore::openRead(const IndexLocation& loc)
     if (!indexDatabaseExists(loc)) {
         throw SqliteError("index database not found");
     }
-    SqliteDb db(loc.dbPath, SqliteOpen::ReadWrite);  // migrate may need write
+    try {
+        SqliteDb readonly(loc.dbPath, SqliteOpen::ReadOnly);
+        IndexStore store(loc, std::move(readonly));
+        if (store.schemaSupported()) {
+            return store;
+        }
+    } catch (const SqliteError&) {
+        // Fall through and migrate with a write connection.
+    }
+    SqliteDb db(loc.dbPath, SqliteOpen::ReadWrite);
     IndexStore store(loc, std::move(db));
     store.migrateSchemaIfNeeded();
-    // Reopen read-only for pure queries is optional; keep RW for simplicity
-    // of shared open path. Query only SELECTs.
     if (!store.schemaSupported()) {
         throw SqliteError("unsupported index_schema_version");
     }

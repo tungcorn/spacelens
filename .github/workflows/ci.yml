@@ -114,6 +114,21 @@ jobs:
         shell: pwsh
         run: .\scripts\verify-agent-interface.ps1 -CliPath .\build-release\cli\spacelens.exe
 
+      - name: MCP safety gate
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          .\scripts\verify-mcp-safety.ps1 -McpPath .\build-release\mcp\spacelens-mcp.exe
+
+      - name: MCP wire gate
+        shell: pwsh
+        run: .\scripts\verify-mcp-wire.ps1 -McpPath .\build-release\mcp\spacelens-mcp.exe
+
+      - name: MCP parity gate
+        shell: pwsh
+        run: .\scripts\verify-mcp-parity.ps1 -CliPath .\build-release\cli\spacelens.exe -McpPath .\build-release\mcp\spacelens-mcp.exe
+
       - name: Package staging (no publish)
         shell: pwsh
         run: |
@@ -174,6 +189,21 @@ jobs:
         shell: pwsh
         run: .\scripts\verify-agent-interface.ps1 -CliPath .\build-cli-release\cli\spacelens.exe
 
+      - name: MCP safety gate
+        shell: pwsh
+        run: |
+          . .\scripts\use-msvc.ps1
+          if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
+          .\scripts\verify-mcp-safety.ps1 -McpPath .\build-cli-release\mcp\spacelens-mcp.exe
+
+      - name: MCP wire gate
+        shell: pwsh
+        run: .\scripts\verify-mcp-wire.ps1 -McpPath .\build-cli-release\mcp\spacelens-mcp.exe
+
+      - name: MCP parity gate
+        shell: pwsh
+        run: .\scripts\verify-mcp-parity.ps1 -CliPath .\build-cli-release\cli\spacelens.exe -McpPath .\build-cli-release\mcp\spacelens-mcp.exe
+
       - name: Distribution gate selftest
         shell: pwsh
         run: .\scripts\verify-distribution-selftest.ps1
@@ -210,19 +240,19 @@ jobs:
           if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
           cmake --preset windows-analyze
 
-      - name: Build analyze (core + CLI)
+      - name: Build analyze (core + CLI + MCP)
         shell: pwsh
         run: |
           . .\scripts\use-msvc.ps1
           if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
-          cmake --build --preset windows-analyze --target spacelens 2>&1 |
+          cmake --build --preset windows-analyze --target spacelens spacelens-mcp 2>&1 |
             Tee-Object -FilePath analyze.log
 
       - name: First-party analyzer warnings
         shell: pwsh
         run: |
           if (-not (Test-Path analyze.log)) { throw "analyze.log missing" }
-          $hits = Select-String -Path analyze.log -Pattern 'src\\(core|cli|platform)\\.*warning C'
+          $hits = Select-String -Path analyze.log -Pattern 'src\\(core|cli|mcp|platform)\\.*warning C'
           if ($hits) {
             $hits | ForEach-Object { Write-Host $_.Line }
             throw "First-party MSVC /analyze warnings are not a clean baseline"

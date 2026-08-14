@@ -9,6 +9,9 @@ namespace spacelens {
 /// Convert UTF-16/UTF-32 wide text to UTF-8 without a platform dependency.
 [[nodiscard]] std::string utf8FromWide(std::wstring_view wide);
 
+/// Convert UTF-8 to wide text. Invalid sequences become U+FFFD.
+[[nodiscard]] std::wstring wideFromUtf8(std::string_view utf8);
+
 /// Escape an UTF-8/narrow string for use inside a JSON string literal.
 [[nodiscard]] std::string jsonEscape(std::string_view input);
 

@@ -7,11 +7,19 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ### Added
 
+- Read-only MCP adapter V1: `spacelens-mcp.exe` is a native stdio Model
+  Context Protocol server over `spacelens_core`. Six tools
+  (`storage_capabilities`, `storage_overview`, `storage_opportunities`,
+  `storage_query`, `storage_duplicates`, `storage_index_status`) share
+  `StorageAnalysis` with the CLI. Dual-era protocol `2026-07-28` /
+  `2025-11-25`. No Qt, no `spacelens_maintenance`, no mutation tools, no
+  automatic index refresh. Not installed into published v0.1.2 packages.
+  See [`docs/MCP.md`](docs/MCP.md).
 - Storage Intelligence / Agent Interface V1: CLI `overview` and `opportunities`
   compose one live scan (or one published index) into a bounded storage
   summary and ranked review opportunities. Core types live in
-  `spacelens_core` (`StorageIntelligence`) so a future MCP adapter can reuse
-  them. See [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
+  `spacelens_core` (`StorageIntelligence`) and are reused by the MCP adapter.
+  See [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
 - `query --under PATH` restricts indexed results to a subtree. Windows
   path prefixes now escape `\` / `%` / `_` before `LIKE ? ESCAPE '\'`, so
   a prefix such as `D:\Projects\app` matches descendants instead of

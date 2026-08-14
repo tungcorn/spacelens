@@ -37,7 +37,8 @@ struct IndexRootInfo {
 /// Caller owns the SqliteDb lifetime; IndexStore does not share across threads.
 class IndexStore {
 public:
-    /// Open an existing ready index for read queries (migrates schema if needed).
+    /// Open an existing ready index for queries. Current schema opens
+    /// read-only (`query_only`); older schemas migrate on a write connection.
     [[nodiscard]] static IndexStore openRead(const IndexLocation& loc);
 
     /// Open published index for incremental refresh (read/write, no staging).

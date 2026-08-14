@@ -7,22 +7,24 @@ cleanup. It does **not** grant automated authority to destroy data.
 
 > **AI recommendation is not filesystem permission.**
 
-> **SpaceLens CLI is read-only by design.**
+> **SpaceLens CLI and MCP are read-only by design.**
 
 Whenever convenience conflicts with filesystem safety, choose safety.
 Whenever AI confidence conflicts with deterministic filesystem policy, choose
 deterministic policy.
 Whenever a destructive action can wait for explicit human review, delay it.
 
-## Two consumers, two trust levels
+## Three consumers, two trust levels
 
 | Consumer | Interface | Mutation |
 |----------|-----------|----------|
 | AI agents / scripts | `spacelens.exe` (CLI) | **None** — observation and query only |
+| AI harnesses | `spacelens-mcp.exe` (stdio MCP) | **None** — same analysis, typed tools |
 | Humans | `spacelens-gui.exe` | Inspection, cleanup review, and **human-authorized Recycle Bin** only |
 
-The agent-facing CLI must remain safe to grant to a coding agent without
-implicitly granting file-deletion or file-movement capability.
+The agent-facing CLI and MCP adapter must remain safe to grant to a coding
+agent without implicitly granting file-deletion or file-movement capability.
+See [`docs/MCP.md`](MCP.md).
 
 ## CLI: read-only by design
 

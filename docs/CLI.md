@@ -16,6 +16,10 @@ flags for a particular build (including `storage_overview`,
 `storage_opportunities`, `persistent_index`, `indexed_query`, and
 `incremental_index`).
 
+AI harnesses that should not learn CLI syntax can use the separate
+`spacelens-mcp` stdio adapter instead. It reuses the same core analysis
+and never mutates the filesystem. See [`docs/MCP.md`](MCP.md).
+
 ## Build
 
 ```powershell

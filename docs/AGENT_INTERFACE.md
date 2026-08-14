@@ -8,8 +8,10 @@ mutate analyzed files.
 overview → opportunities → drill-down → specialized queries
 ```
 
-Human-authorized Recycle Bin maintenance stays in the GUI. The CLI reports
-`filesystem_mutation: false` and `read_only: true`.
+Human-authorized Recycle Bin maintenance stays in the GUI. The CLI and the
+stdio MCP adapter both report `filesystem_mutation: false` and
+`read_only: true`. MCP tools are the same investigation, not a second
+policy. See [`docs/MCP.md`](MCP.md).
 
 ## Why SpaceLens for AI agents
 
@@ -39,9 +41,22 @@ spacelens query D:\ --dirs --under D:\Projects\app --limit 20 --json
 spacelens duplicates D:\ --json            # if an index exists
 ```
 
-Prefer a published index when `index status` shows an acceptable `age_ms`
-and `status`. Indexed commands take `--from-index` (overview/opportunities)
-or are index-only (`query`, `duplicates`). They never silently refresh.
+The same workflow through MCP (`spacelens-mcp.exe`):
+
+```text
+storage_capabilities
+storage_index_status      { "path": "D:\\" }
+storage_overview          { "path": "D:\\", "source": "live_scan" }
+storage_opportunities     { "path": "D:\\" }
+storage_query             { "path": "D:\\", "object_type": "directory",
+                            "under": "D:\\Projects\\app", "limit": 20 }
+```
+
+Prefer a published index when `index status` / `storage_index_status` shows
+an acceptable `age_ms` and `status`. Indexed commands take `--from-index`
+(overview/opportunities) or `source: persistent_index`. `query` /
+`storage_query` and `duplicates` / `storage_duplicates` are index-only.
+They never silently refresh.
 
 ```powershell
 spacelens overview D:\ --from-index --json

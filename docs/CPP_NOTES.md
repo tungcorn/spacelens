@@ -216,9 +216,23 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 ## Shared core JSON
 
 - **Why used:** Cleanup Plan and CLI both need deterministic UTF-8 JSON escaping; core must not include CLI headers.
-- **Ownership:** `src/core/Json.*` is the single implementation. CLI wrappers delegate; Cleanup Plan does not keep a private escaper.
+- **Ownership:** `src/core/Json.*` is the single implementation. CLI wrappers delegate; Cleanup Plan does not keep a private escaper. `wideFromUtf8` lives here so MCP/CLI can turn tool arguments into `wstring` paths without a second codec.
 - **Lifetime:** Redaction of `%USERPROFILE%` happens only while rendering text/JSON. Stored candidate paths are never rewritten.
 - **Bug prevented:** Divergent escaping, core depending on CLI, and redaction mutating durable review state.
+
+## Isolated MCP JSON parser
+
+- **Why used:** There is no official C++ MCP SDK. The stdio adapter must parse NDJSON requests without pulling a third-party JSON library or teaching `spacelens_core` to parse untrusted input.
+- **Ownership:** `src/mcp/JsonValue.*` is recursive-descent and used only by `spacelens-mcp` and MCP unit tests. Core still writes JSON; it does not parse it.
+- **Lifetime:** One `JsonValue` tree per incoming line. `stringify()` is compact and never emits raw newlines (stdout is protocol-only).
+- **Bug prevented:** Protocol banners on stdout, core growing an unused parser, and embedding newlines that would split an MCP message.
+
+## MCP stdio reader vs analysis mutex
+
+- **Why used:** `notifications/cancelled` must be applied while a live scan is blocked in `analyzeOverview`. A single-threaded stdin loop would swallow cancel until the tool returned.
+- **Ownership:** `McpServer::runStdio` owns a reader thread, a line queue, and `m_currentStop`. Expensive tools serialize on `m_analysisMutex`. stdout writes stay on the processor thread.
+- **Lifetime:** Reader exits on stdin EOF; the process then returns 0. Incoming lines over 1 MiB are discarded and reported as `-32700`.
+- **Bug prevented:** Uncancellable multi-minute scans, interleaved analysis races, and a banner/log line corrupting the MCP stream.
 
 ## SQLite RAII (`SqliteDb` / `SqliteStmt` / `SqliteTxn`)
 
@@ -285,8 +299,8 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 
 ## First-party MSVC warnings and `/analyze`
 
-- **Why used:** Release Engineering V0.1 treats first-party core, CLI, and
-  maintenance as a warnings-as-errors surface. SQLite, Qt headers, and
+- **Why used:** Release Engineering V0.1 treats first-party core, CLI, MCP,
+  and maintenance as a warnings-as-errors surface. SQLite, Qt headers, and
   generated moc/uic stay outside that gate.
 - **Ownership:** `cmake/SpaceLensWarnings.cmake` applies `/W4 /permissive-`
   and optional `/WX` per target. `/analyze /analyze:external-` is a separate

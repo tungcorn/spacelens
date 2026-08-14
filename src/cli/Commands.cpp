@@ -9,6 +9,7 @@
 #include "core/ReclaimAnalysis.hpp"
 #include "core/ScanEngine.hpp"
 #include "core/SizeFormatter.hpp"
+#include "core/StorageAnalysis.hpp"
 #include "core/StorageIntelligence.hpp"
 #include "core/index/IndexCatalog.hpp"
 #include "core/index/IndexBuilder.hpp"
@@ -694,66 +695,11 @@ ExitCode runIndex(const ParsedArgs& args, std::stop_token stop)
 
 ExitCode runIndexStatus(const ParsedArgs& args)
 {
-    const auto status = spacelens::indexStatus(args.path);
-    const auto probe = spacelens::probeIncremental(args.path);
+    const auto doc = spacelens::analyzeIndexStatus(args.path);
+    const auto& status = doc.status;
+    const auto& probe = doc.probe;
     if (args.json) {
-        std::cout << "{"
-                  << "\"schema_version\":" << kSchemaVersion << ","
-                  << "\"ok\":" << jsonBool(status.ok) << ","
-                  << "\"command\":\"index_status\","
-                  << "\"root\":" << jsonString(status.location.rootPath) << ","
-                  << "\"source\":\"persistent_index\","
-                  << "\"index_schema_version\":" << kIndexSchemaVersion << ","
-                  << "\"index\":{"
-                  << "\"path\":" << jsonString(status.location.dbPath) << ","
-                  << "\"exists\":"
-                  << jsonBool(indexDatabaseExists(status.location)) << ","
-                  << "\"indexed_at\":" << jsonString(status.root.indexedAtIso)
-                  << ","
-                  << "\"full_indexed_at\":"
-                  << jsonString(status.root.indexedAtIso) << ","
-                  << "\"age_ms\":" << jsonUInt(status.age_ms) << ","
-                  << "\"snapshot_age_ms\":" << jsonUInt(status.age_ms) << ","
-                  << "\"file_count\":" << jsonUInt(status.root.fileCount) << ","
-                  << "\"directory_count\":" << jsonUInt(status.root.dirCount)
-                  << ","
-                  << "\"logical_bytes\":" << jsonUInt(status.root.logicalBytes)
-                  << ","
-                  << "\"status\":"
-                  << jsonString(toString(status.root.status)) << "},"
-                  << "\"incremental_refresh\":{"
-                  << "\"supported\":"
-                  << jsonBool(probe.incrementalState ==
-                              IncrementalRefreshState::Supported)
-                  << ","
-                  << "\"state\":"
-                  << jsonString(toString(probe.incrementalState)) << ","
-                  << "\"reason\":" << jsonString(probe.reason) << ","
-                  << "\"fallback\":"
-                  << jsonString(probe.incrementalState ==
-                                        IncrementalRefreshState::Supported
-                                    ? "none"
-                                    : "full_rebuild")
-                  << ","
-                  << "\"refresh_method\":"
-                  << jsonString(probe.checkpoint.lastRefreshMethod) << ","
-                  << "\"last_incremental_refresh\":"
-                  << jsonString(fileTimeTicksToIsoUtc(
-                         probe.checkpoint.lastRefreshAtTicks))
-                  << ","
-                  << "\"checkpoint\":{"
-                  << "\"usn_journal_id\":"
-                  << jsonUInt(probe.checkpoint.usnJournalId) << ","
-                  << "\"next_usn\":" << jsonUInt(probe.checkpoint.nextUsn) << ","
-                  << "\"volume_serial\":"
-                  << jsonUInt(probe.checkpoint.volumeSerial) << ","
-                  << "\"status\":" << jsonString(probe.checkpoint.status)
-                  << "}"
-                  << "}";
-        if (!status.error.empty()) {
-            std::cout << ",\"error\":" << jsonString(status.error);
-        }
-        std::cout << "}\n";
+        std::cout << spacelens::indexStatusToJson(status, probe);
     } else {
         if (!status.ok) {
             std::cerr << "index status: " << status.error << "\n";
@@ -1044,49 +990,7 @@ ExitCode runQuery(const ParsedArgs& args)
     const auto result = queryIndex(args.path, spec);
 
     if (args.json) {
-        std::cout << "{"
-                  << "\"schema_version\":" << kSchemaVersion << ","
-                  << "\"ok\":" << jsonBool(result.ok) << ","
-                  << "\"command\":\"query\","
-                  << "\"source\":\"persistent_index\","
-                  << "\"root\":" << jsonString(result.location.rootPath) << ","
-                  << "\"index\":{"
-                  << "\"path\":" << jsonString(result.location.dbPath) << ","
-                  << "\"indexed_at\":" << jsonString(result.root.indexedAtIso)
-                  << ","
-                  << "\"age_ms\":" << jsonUInt(result.age_ms) << ","
-                  << "\"index_schema_version\":" << kIndexSchemaVersion << "},"
-                  << "\"matched_items\":" << jsonUInt(result.matched_items)
-                  << ","
-                  << "\"returned_items\":" << jsonUInt(result.returned_items)
-                  << ","
-                  << "\"matched_logical_bytes\":"
-                  << jsonUInt(result.matched_logical_bytes) << ","
-                  << "\"results\":[";
-        for (std::size_t i = 0; i < result.hits.size(); ++i) {
-            if (i > 0) {
-                std::cout << ",";
-            }
-            const auto& h = result.hits[i];
-            std::cout << "{\"path\":" << jsonString(h.path)
-                      << ",\"kind\":"
-                      << jsonString(h.kind == IndexEntryKind::Directory
-                                        ? "directory"
-                                        : "file")
-                      << ",\"size_bytes\":" << jsonUInt(h.size_bytes)
-                      << ",\"classification\":" << jsonString(h.classification)
-                      << ",\"confidence\":" << jsonString(h.confidence)
-                      << ",\"location_safety\":"
-                      << jsonString(h.location_safety)
-                      << ",\"reclaimability\":" << jsonString(h.reclaimability)
-                      << ",\"candidate_strength\":"
-                      << jsonString(h.candidate_strength) << "}";
-        }
-        std::cout << "]";
-        if (!result.error.empty()) {
-            std::cout << ",\"error\":" << jsonString(result.error);
-        }
-        std::cout << "}\n";
+        std::cout << spacelens::indexQueryToJson(result);
     } else {
         if (!result.ok) {
             std::cerr << "query failed: " << result.error << "\n";
@@ -1117,44 +1021,24 @@ ExitCode runQuery(const ParsedArgs& args)
 
 ExitCode runDuplicates(const ParsedArgs& args, std::stop_token stop)
 {
+    DuplicateRequest request;
+    request.root = args.path;
+    request.minSize = args.minSize.value_or(kDefaultDuplicateMinSize);
+    const auto result = analyzeDuplicates(request, stop);
     DuplicateScanOptions options;
-    options.minimumSize =
-        args.minSize.value_or(kDefaultDuplicateMinSize);
+    options.minimumSize = request.minSize;
     wchar_t profile[MAX_PATH]{};
     const DWORD profileLen =
         ::GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH);
     if (profileLen > 0 && profileLen < MAX_PATH) {
         options.userProfilePath.assign(profile, profileLen);
     }
-    const auto candidates =
-        queryDuplicateSizeCandidates(args.path, options.minimumSize);
-    if (!candidates.ok) {
-        if (args.json) {
-            DuplicateDetectionResult failed;
-            failed.root = candidates.root.rootPath.empty()
-                              ? args.path
-                              : candidates.root.rootPath;
-            failed.minimumSize = options.minimumSize;
-            failed.error = candidates.error;
-            failed.completed = false;
-            std::cout << failed.toJson(options) << "\n";
-        } else {
-            std::cerr << "error: " << candidates.error << "\n";
-        }
-        if (candidates.error == "index_not_found") {
-            return ExitCode::IndexNotFound;
-        }
-        return ExitCode::ScanFailed;
-    }
-
-    WindowsCleanupMetadataReader reader;
-    WindowsFileContentHasher hasher;
-    const auto result = detectDuplicates(
-        candidates, reader, hasher, options,
-        [&stop]() { return stop.stop_requested(); });
 
     if (args.json) {
         std::cout << result.toJson(options) << "\n";
+    } else if (!result.error.empty() && result.groups.empty() &&
+               !result.completed) {
+        std::cerr << "error: " << result.error << "\n";
     } else {
         std::cout << result.toText(options);
         std::cerr << "source=persistent_index verification=full_sha256 "
@@ -1168,6 +1052,9 @@ ExitCode runDuplicates(const ParsedArgs& args, std::stop_token stop)
         return ExitCode::Cancelled;
     }
     if (!result.error.empty()) {
+        if (result.error == "index_not_found") {
+            return ExitCode::IndexNotFound;
+        }
         return ExitCode::ScanFailed;
     }
     return ExitCode::Success;
@@ -1247,23 +1134,6 @@ void printHumanOpportunities(const OpportunityReport& report)
     }
 }
 
-IndexQueryResult queryKind(const std::wstring& root, bool files, bool dirs,
-                           std::size_t limit, std::optional<ByteSize> minSize,
-                           std::optional<std::uint64_t> olderThan,
-                           const std::vector<std::string>& classifications)
-{
-    IndexQuerySpec spec;
-    spec.includeFiles = files;
-    spec.includeDirectories = dirs;
-    spec.limit = limit;
-    spec.minSize = minSize;
-    spec.olderThanDays = olderThan;
-    spec.classifications = classifications;
-    spec.sortBy = IndexSortKey::Size;
-    spec.sortDescending = true;
-    return queryIndex(root, spec);
-}
-
 }  // namespace
 
 ExitCode runOverview(const ParsedArgs& args, std::stop_token stop)
@@ -1276,56 +1146,32 @@ ExitCode runOverview(const ParsedArgs& args, std::stop_token stop)
         return ExitCode::InaccessibleRoot;
     }
 
-    if (args.fromIndex) {
-        const auto status = indexStatus(args.path);
-        if (!status.ok) {
-            if (args.json) {
-                StorageOverviewReport failed;
-                failed.ok = false;
-                failed.source = EvidenceSource::PersistentIndex;
-                failed.root = args.path;
-                failed.state = "failed";
-                failed.error = status.error.empty() ? "index_not_found"
-                                                    : status.error;
-                std::cout << failed.toJson();
-            } else {
-                std::cerr << "overview: " << status.error << "\n";
-            }
-            return status.error == "index_not_found" ? ExitCode::IndexNotFound
-                                                     : ExitCode::ScanFailed;
-        }
-        const auto dirs =
-            queryKind(args.path, false, true, args.limit + 2, std::nullopt,
-                      std::nullopt, {});
-        const auto files =
-            queryKind(args.path, true, false, args.limit + 1, std::nullopt,
-                      std::nullopt, {});
-        auto report = buildIndexedOverview(
-            status.location.rootPath.empty() ? args.path
-                                             : status.location.rootPath,
-            status.root.logicalBytes, status.root.fileCount,
-            status.root.dirCount, dirs.hits, files.hits, status.age_ms,
-            status.root.indexedAtIso, args.limit);
-        if (args.json) {
-            std::cout << report.toJson();
-        } else {
-            printHumanOverview(report);
-        }
-        return ExitCode::Success;
-    }
-
-    const std::size_t topFiles = std::max<std::size_t>(args.limit, 100);
-    auto result = runEngine(args.path, topFiles, stop);
-    auto report = buildLiveOverview(result, args.limit, nowFileTime());
-    report.accessDenied = result.progress.accessDenied;
-    report.reparseSkipped = result.progress.reparsePointsSkipped;
-    report.otherErrors = result.progress.otherErrors;
+    OverviewRequest request;
+    request.root = args.path;
+    request.fromIndex = args.fromIndex;
+    request.limit = args.limit;
+    const auto analysis = analyzeOverview(request, stop);
     if (args.json) {
-        std::cout << report.toJson();
+        std::cout << analysis.report.toJson();
+    } else if (!analysis.report.ok &&
+               analysis.error == AnalysisError::IndexNotFound) {
+        std::cerr << "overview: " << analysis.report.error << "\n";
+    } else if (!analysis.report.ok &&
+               analysis.error == AnalysisError::ScanFailed && args.fromIndex) {
+        std::cerr << "overview: " << analysis.report.error << "\n";
     } else {
-        printHumanOverview(report);
+        printHumanOverview(analysis.report);
     }
-    return mapState(result);
+    if (analysis.error == AnalysisError::IndexNotFound) {
+        return ExitCode::IndexNotFound;
+    }
+    if (analysis.error == AnalysisError::ScanFailed) {
+        return ExitCode::ScanFailed;
+    }
+    if (analysis.error == AnalysisError::Cancelled) {
+        return ExitCode::Cancelled;
+    }
+    return ExitCode::Success;
 }
 
 ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
@@ -1338,138 +1184,40 @@ ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
         return ExitCode::InaccessibleRoot;
     }
 
-    OpportunityQuery query;
-    query.minSize = args.minSize.value_or(kDefaultOpportunityMinSize);
-    query.olderThanDays = args.olderThanDays.value_or(kDefaultOldLargeDays);
-    query.nowTicks = nowFileTime();
-    query.limit = args.limit;
-
-    if (args.fromIndex) {
-        const auto status = indexStatus(args.path);
-        if (!status.ok) {
-            if (args.json) {
-                OpportunityReport failed;
-                failed.ok = false;
-                failed.source = EvidenceSource::PersistentIndex;
-                failed.root = args.path;
-                failed.state = "failed";
-                failed.error = status.error.empty() ? "index_not_found"
-                                                    : status.error;
-                std::cout << failed.toJson();
-            } else {
-                std::cerr << "opportunities: " << status.error << "\n";
-            }
-            return status.error == "index_not_found" ? ExitCode::IndexNotFound
-                                                     : ExitCode::ScanFailed;
-        }
-
-        std::vector<IndexHit> hits;
-        bool fetchCapped = false;
-        auto appendUnique = [&](const IndexQueryResult& more) {
-            if (more.hits.size() >= kIndexedOpportunityFetchLimit ||
-                more.matched_items > more.returned_items) {
-                fetchCapped = true;
-            }
-            for (const auto& hit : more.hits) {
-                const bool exists = std::any_of(
-                    hits.begin(), hits.end(),
-                    [&](const IndexHit& have) { return have.path == hit.path; });
-                if (!exists) {
-                    hits.push_back(hit);
-                }
-            }
-        };
-        appendUnique(
-            queryKind(args.path, true, true, kIndexedOpportunityFetchLimit,
-                      query.minSize, std::nullopt,
-                      regenerableOpportunityClassifications()));
-        appendUnique(queryKind(args.path, true, true,
-                               kIndexedOpportunityFetchLimit, query.minSize,
-                               query.olderThanDays, {}));
-        IndexQuerySpec reclaimSpec;
-        reclaimSpec.includeFiles = true;
-        reclaimSpec.includeDirectories = true;
-        reclaimSpec.minSize = query.minSize;
-        reclaimSpec.limit = kIndexedOpportunityFetchLimit;
-        reclaimSpec.candidateStrengths = {"Strong", "Moderate"};
-        reclaimSpec.sortBy = IndexSortKey::CandidateStrength;
-        reclaimSpec.sortDescending = true;
-        appendUnique(queryIndex(args.path, reclaimSpec));
-
-        auto report = buildIndexedOpportunities(
-            status.location.rootPath.empty() ? args.path
-                                             : status.location.rootPath,
-            status.root.logicalBytes, status.root.fileCount,
-            status.root.dirCount, hits, query, status.age_ms,
-            status.root.indexedAtIso);
-        if (fetchCapped) {
-            report.uniqueReviewEstimated = true;
-        }
-        if (args.json) {
-            std::cout << report.toJson();
-        } else {
-            printHumanOpportunities(report);
-        }
-        return ExitCode::Success;
-    }
-
-    auto result = runEngine(args.path, /*topFiles=*/0, stop);
-    OpportunityReport report;
-    if (result.state == ScanState::Completed ||
-        result.state == ScanState::Cancelled) {
-        report = buildLiveOpportunities(result.tree, query);
-        report.state = result.state == ScanState::Cancelled ? "cancelled"
-                                                            : "completed";
-        report.ok = result.state == ScanState::Completed;
-    } else {
-        report.ok = false;
-        report.state = "failed";
-        report.root = args.path;
-    }
-    report.accessDenied = result.progress.accessDenied;
-    report.reparseSkipped = result.progress.reparsePointsSkipped;
-    report.otherErrors = result.progress.otherErrors;
-    if (result.progress.elapsedSeconds > 0.0) {
-        report.elapsedMs = static_cast<std::uint64_t>(
-            result.progress.elapsedSeconds * 1000.0 + 0.5);
-    }
+    OpportunityRequest request;
+    request.root = args.path;
+    request.fromIndex = args.fromIndex;
+    request.query.minSize = args.minSize.value_or(kDefaultOpportunityMinSize);
+    request.query.olderThanDays =
+        args.olderThanDays.value_or(kDefaultOldLargeDays);
+    request.query.nowTicks = nowFileTime();
+    request.query.limit = args.limit;
+    const auto analysis = analyzeOpportunities(request, stop);
     if (args.json) {
-        std::cout << report.toJson();
+        std::cout << analysis.report.toJson();
+    } else if (!analysis.report.ok &&
+               (analysis.error == AnalysisError::IndexNotFound ||
+                (analysis.error == AnalysisError::ScanFailed && args.fromIndex))) {
+        std::cerr << "opportunities: " << analysis.report.error << "\n";
     } else {
-        printHumanOpportunities(report);
+        printHumanOpportunities(analysis.report);
     }
-    return mapState(result);
+    if (analysis.error == AnalysisError::IndexNotFound) {
+        return ExitCode::IndexNotFound;
+    }
+    if (analysis.error == AnalysisError::ScanFailed) {
+        return ExitCode::ScanFailed;
+    }
+    if (analysis.error == AnalysisError::Cancelled) {
+        return ExitCode::Cancelled;
+    }
+    return ExitCode::Success;
 }
 
 ExitCode runCapabilities(const ParsedArgs& args)
 {
     if (args.json) {
-        std::cout << "{"
-                  << "\"schema_version\":" << kSchemaVersion << ","
-                  << "\"version\":" << jsonString(SPACELENS_VERSION_STRING) << ","
-                  << "\"json_contract_version\":" << kSchemaVersion << ","
-                  << "\"commands\":[\"scan\",\"top\",\"find\",\"index\","
-                     "\"index status\",\"index list\",\"index refresh\",\"query\","
-                     "\"overview\",\"opportunities\",\"duplicates\","
-                     "\"capabilities\",\"help\",\"version\"],"
-                  << "\"features\":{"
-                  << "\"json\":true,"
-                  << "\"cancellation\":true,"
-                  << "\"persistent_index\":true,"
-                  << "\"indexed_query\":true,"
-                  << "\"incremental_index\":true,"
-                  << "\"filesystem_mutation\":false,"
-                  << "\"classification\":true,"
-                  << "\"filters\":true,"
-                  << "\"storage_overview\":true,"
-                  << "\"storage_opportunities\":true,"
-                  << "\"duplicate_detection\":true,"
-                  << "\"reclaim_analysis\":true"
-                  << "},"
-                  << "\"read_only\":true,"
-                  << "\"filesystem_mutation\":false,"
-                  << "\"index_schema_version\":" << kIndexSchemaVersion
-                  << "}\n";
+        std::cout << spacelens::cliCapabilitiesJson();
     } else {
         std::cout << "spacelens " << SPACELENS_VERSION_STRING << "\n"
                   << "commands: scan top find index index-refresh query "

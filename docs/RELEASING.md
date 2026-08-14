@@ -32,7 +32,9 @@ SHA256SUMS.txt
 The first archive is the complete product (GUI + read-only CLI + Qt
 runtime). The second is the optional CLI-only profile. There is no
 GUI-only zip for v0.1.1 and later. Historical `spacelens-gui-v0.1.0-*.zip`
-on the v0.1.0 Release is immutable.
+on the v0.1.0 Release is immutable. `spacelens-mcp.exe` is built from
+source (`SPACELENS_BUILD_MCP`, default ON) but is **not** installed into
+the current v0.1.2 zip or npm packages.
 
 These are verification artifacts. They are not a public GitHub Release
 until Release Automation V2 publishes from `main` (`publish=true`).
@@ -75,6 +77,10 @@ cmake --build --preset windows-release
 ctest --preset windows-release
 .\build-release\tests\spacelens_tests.exe
 .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
+.\scripts\verify-mcp-safety.ps1 -McpPath .\build-release\mcp\spacelens-mcp.exe
+.\scripts\verify-mcp-wire.ps1   -McpPath .\build-release\mcp\spacelens-mcp.exe
+.\scripts\verify-mcp-parity.ps1 -CliPath .\build-release\cli\spacelens.exe `
+                               -McpPath .\build-release\mcp\spacelens-mcp.exe
 .\scripts\verify-distribution-selftest.ps1
 .\scripts\package-release.ps1
 ```

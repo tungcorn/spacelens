@@ -3,12 +3,15 @@
 ## Product boundary
 
 ```text
-External AI / script  →  spacelens CLI  →  read-only filesystem intelligence
-Human                 →  SpaceLens GUI  →  review → explicit Recycle Bin
+External AI / script  →  spacelens CLI      →  read-only filesystem intelligence
+External AI harness   →  spacelens-mcp      →  same core, typed MCP tools
+Human                 →  SpaceLens GUI      →  review → explicit Recycle Bin
 ```
 
-Do not add CLI verbs that delete, recycle, restore, move, or write safety
-declarations. Do not link `spacelens_maintenance` into `spacelens`.
+Do not add CLI verbs or MCP tools that delete, recycle, restore, move, or
+write safety declarations. Do not link `spacelens_maintenance` into
+`spacelens` or `spacelens-mcp`. AI recommendation is not filesystem
+permission.
 
 ## Prerequisites
 
@@ -55,6 +58,10 @@ After a Release build:
 
 ```powershell
 .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
+.\scripts\verify-mcp-safety.ps1 -McpPath .\build-release\mcp\spacelens-mcp.exe
+.\scripts\verify-mcp-wire.ps1   -McpPath .\build-release\mcp\spacelens-mcp.exe
+.\scripts\verify-mcp-parity.ps1 -CliPath .\build-release\cli\spacelens.exe `
+                               -McpPath .\build-release\mcp\spacelens-mcp.exe
 ```
 
 npm packaging templates (no native rebuild required):
@@ -75,7 +82,8 @@ npm packaging templates (no native rebuild required):
   or formatting-only noise.
 - CI must stay green: Full Debug, Full Release, CLI-only, `/analyze`,
   and npm package staging.
-- The Release job runs the CLI safety script. Do not skip or weaken it.
+- The Release and CLI-only jobs run CLI safety and MCP safety/wire/parity
+  scripts. Do not skip or weaken them.
 - Pin any new GitHub Action to a verified full-length commit SHA. Do not invent
   SHAs.
 

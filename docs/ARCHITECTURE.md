@@ -8,22 +8,24 @@ it is not a filesystem mutation service.
 
 ```text
                  spacelens_core
-                /              \
-               /                \
-      spacelens (CLI)       SpaceLens (GUI)
-      humans / scripts /    human inspection,
-      AI agents             review, Recycle Bin V1
-      read-only                  |
-                           spacelens_maintenance
+                /      |       \
+               /       |        \
+      spacelens     spacelens-mcp    SpaceLens (GUI)
+      CLI           stdio MCP        human inspection
+      scripts       AI harnesses     + Recycle Bin
+      read-only     read-only              |
+                                     spacelens_maintenance
 ```
 
-The **CLI is a first-class product interface**. AI coding agents and automation
-scripts can use deterministic, machine-readable output without receiving a file
-delete or file-move capability. The GUI is an optional interactive surface over
-the same core snapshot and analysis types. See [`docs/GUI.md`](GUI.md) for the
+The **CLI is a first-class product interface**. The **MCP adapter**
+(`spacelens-mcp.exe`) is the same read-only analysis for AI harnesses that
+speak Model Context Protocol instead of argv. Neither receives a file delete
+or file-move capability. The GUI is an optional interactive surface over the
+same core snapshot and analysis types. See [`docs/GUI.md`](GUI.md) for the
 Qt Widgets shell: two top-level workspaces (Live Scan, Indexed), system
 palette, no permanent sidebar. Recycle Bin maintenance stays a confirmed GUI
-workflow; CLI `filesystem_mutation` remains false.
+workflow; CLI and MCP `filesystem_mutation` remain false. See
+[`docs/MCP.md`](MCP.md).
 
 ## Scope: safety + storage intelligence milestone
 

@@ -25,7 +25,9 @@ analyzed user data.
 - Auto-refresh on `query` (refresh is always explicit)
 - Creating or configuring the USN journal
 - Writing into the analyzed root
-- MCP, product AI, deletion/movement
+- Product AI, deletion/movement, or MCP mutation (MCP may *read* a
+  published index via `storage_query` / `storage_index_status` and must
+  never refresh it)
 - MFT-based initial scan (future)
 - Fuzzy/semantic search, watch mode, new USN optimizations
 
