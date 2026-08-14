@@ -2,6 +2,7 @@
 
 #include "ui/FilterPopup.hpp"
 #include "ui/MainWindow.hpp"
+#include "ui/PropertyInspector.hpp"
 #include "ui/TreemapWidget.hpp"
 #include "ui/UiTheme.hpp"
 
@@ -100,6 +101,50 @@ SPACELENS_TEST(GuiUx_treemap_keeps_system_palette_background)
     SPACELENS_REQUIRE(window == QColor(18, 18, 18));
     SPACELENS_REQUIRE(base == QColor(12, 12, 12));
     SPACELENS_REQUIRE(window != QColor(0xF4, 0xF5, 0xF7));
+}
+
+SPACELENS_TEST(GuiUx_noise_values_are_skipped)
+{
+    qtApp();
+    SPACELENS_REQUIRE(isNoiseDisplayValue(QString()));
+    SPACELENS_REQUIRE(isNoiseDisplayValue(QStringLiteral("Unknown")));
+    SPACELENS_REQUIRE(isNoiseDisplayValue(QStringLiteral("none")));
+    SPACELENS_REQUIRE(isNoiseDisplayValue(QStringLiteral("(none)")));
+    SPACELENS_REQUIRE(isNoiseDisplayValue(QStringLiteral("0x0")));
+    SPACELENS_REQUIRE(!isNoiseDisplayValue(QStringLiteral("Protected")));
+    SPACELENS_REQUIRE(!isNoiseDisplayValue(QStringLiteral("UserData")));
+    SPACELENS_REQUIRE_EQ(displayFolderName(QStringLiteral("C:/Users/demo/Downloads"))
+                             .toStdString(),
+                         std::string("Downloads"));
+    const QString drive = displayFolderName(QStringLiteral("D:/"));
+    SPACELENS_REQUIRE(drive.contains(QStringLiteral("D:")));
+    SPACELENS_REQUIRE(!drive.contains(QStringLiteral("Downloads")));
+
+    PropertyInspector inspector;
+    inspector.setHeading(QStringLiteral("demo.bin"), QStringLiteral("12 MB"));
+    inspector.addRow(QStringLiteral("Class"), QStringLiteral("Unknown"));
+    inspector.addRow(QStringLiteral("Path"), QStringLiteral("C:/tmp/demo.bin"));
+    const QString plain = inspector.toPlainText();
+    SPACELENS_REQUIRE(plain.contains(QStringLiteral("demo.bin")));
+    SPACELENS_REQUIRE(plain.contains(QStringLiteral("C:/tmp/demo.bin")));
+    SPACELENS_REQUIRE(!plain.contains(QStringLiteral("Unknown")));
+}
+
+SPACELENS_TEST(GuiUx_muted_text_stays_readable)
+{
+    qtApp();
+    QPalette light;
+    light.setColor(QPalette::Window, QColor(243, 243, 243));
+    light.setColor(QPalette::WindowText, QColor(26, 26, 26));
+    light.setColor(QPalette::Mid, QColor(180, 180, 180));
+    const QColor muted = mutedTextColor(light);
+    const int textL = light.color(QPalette::WindowText).lightness();
+    const int mutedDelta = muted.lightness() > textL ? muted.lightness() - textL
+                                                    : textL - muted.lightness();
+    const int midL = light.color(QPalette::Mid).lightness();
+    const int midDelta = midL > textL ? midL - textL : textL - midL;
+    SPACELENS_REQUIRE(mutedDelta < midDelta);
+    SPACELENS_REQUIRE(muted.lightness() < 120);
 }
 
 SPACELENS_TEST(GuiUx_cleanup_confirm_cta_wording)
