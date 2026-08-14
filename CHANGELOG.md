@@ -5,6 +5,14 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+### Changed
+
+- Human-authorized Recycle Bin maintenance is now V2: durable operation IDs,
+  Attempting-before-Shell checkpoints, crash/restart Uncertain reconciliation,
+  a 2-minute prepared-plan expiry, and an inspection-only Maintenance History
+  dialog. The mutation remains GUI-only file-to-Recycle-Bin. Version stays
+  0.1.1; this is not a release.
+
 ## [0.1.1] — 2026-08-14
 
 Packaging/distribution patch. No scanner, index, or maintenance behavior

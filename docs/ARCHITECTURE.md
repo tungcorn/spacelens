@@ -47,10 +47,11 @@ than claiming a shipped feature.
   evidence, object identity, and last validation live in
   `%LOCALAPPDATA%\SpaceLens\state.db` (`review_schema_version = 1`), independent
   of replaceable per-root indexes. See [`docs/CLEANUP_REVIEW.md`](CLEANUP_REVIEW.md).
-- **Human-Authorized Maintenance V1**: the GUI may send eligible reviewed files
-  to the Recycle Bin after fresh preflight, explicit confirmation, and a final
-  identity/safety guard. The Shell adapter lives in `spacelens_maintenance` and
-  is not linked into the CLI. See [`docs/MAINTENANCE.md`](MAINTENANCE.md).
+- **Human-Authorized Maintenance V2**: the GUI may send eligible reviewed files
+  to the Recycle Bin after fresh preflight, explicit confirmation, a final
+  identity/safety guard, and durable Attempting/Recycled/Uncertain checkpoints.
+  The Shell adapter lives in `spacelens_maintenance` and is not linked into the
+  CLI. See [`docs/MAINTENANCE.md`](MAINTENANCE.md).
 - An agent-safe CLI contract with `capabilities`, `scan`, `top`, and `find`
   query surfaces, filters, versioned JSON output, and explicit read-only
   capability reporting.

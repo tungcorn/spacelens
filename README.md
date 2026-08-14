@@ -67,8 +67,10 @@ commands until they resolve from the official WinGet source.
 - Durable Cleanup Review V2: captured evidence, strong object identity,
   metadata-only revalidation, overlap-aware Cleanup Plan, and planning-only
   JSON
-- Human-authorized Maintenance V1: GUI Recycle Bin only, after fresh preflight,
-  confirmation, and a final identity/safety guard. Not permanent deletion.
+- Human-authorized Maintenance V2: GUI Recycle Bin only, after fresh preflight,
+  confirmation, and a final identity/safety guard. Durable operation IDs and
+  Attempting checkpoints reconcile crash/restart as Uncertain rather than
+  guessing Recycled. History is inspection-only. Not permanent deletion.
 - Persistent SQLite index for fast repeated filtered queries
 - Optional USN-based incremental refresh (`index refresh`) — read-only journal
   access; full rebuild required on discontinuity or access denied

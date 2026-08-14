@@ -176,9 +176,9 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
 
 - **Why used:** Recycle-Bin-only mutation must not leak into the CLI or into core.
 - **Ownership:** `spacelens_maintenance` owns `WindowsRecycleAdapter`. `MainWindow` owns `MaintenanceSession`. The session owns one `std::jthread`; the adapter `CoInitializeEx`s STA around each `IFileOperation`. A heap `RecycleSink` keeps its creating reference until after `Unadvise`.
-- **Lifetime:** Prepare probes on the worker, wait for a GUI confirmation that says “Move to Recycle Bin”, then recycle one file at a time. Receipts persist on the GUI thread. Closing the review dialog aborts a pending confirmation but does not unlink an in-flight recycle.
-- **Evidence:** Success requires `psiNewlyCreated != NULL` plus a gone source path. Missing Recycle Bin evidence after the source disappears is `UnexpectedPermanentRemoval` and stops the remainder.
-- **Bug prevented:** Linking Shell recycle into `spacelens.exe`, treating `DeleteFileW` / `SHFileOperation` as recycle, use-after-free of the progress sink, and claiming physical space freed.
+- **Lifetime:** Prepare probes on the worker, wait for a GUI confirmation that says “Move eligible files to Recycle Bin”, then recycle one file at a time. `Attempting` is checkpointed on the GUI thread via `BlockingQueuedConnection` before Shell; Recycled/Uncertain follow. The worker join pumps `ExcludeUserInputEvents` so a destructor cannot deadlock on that queued checkpoint. Closing the review dialog aborts a pending confirmation but does not unlink an in-flight recycle.
+- **Evidence:** Success requires `psiNewlyCreated != NULL` plus a gone source path. Missing Recycle Bin evidence after the source disappears is `UnexpectedPermanentRemoval` and stops the remainder. Persist failure after a verified recycle is `Uncertain` and must not retry Shell. Restart rewrites leftover `Attempting` rows to `Uncertain`; a missing path is not guessed Recycled.
+- **Bug prevented:** Linking Shell recycle into `spacelens.exe`, treating `DeleteFileW` / `SHFileOperation` as recycle, use-after-free of the progress sink, claiming physical space freed, holding a SQLite write txn across IFileOperation, and treating bookkeeping failure as license to recycle again.
 
 ## Duplicate content hashing (BCrypt, no-follow)
 

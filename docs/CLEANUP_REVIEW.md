@@ -25,7 +25,7 @@ Review changes/warnings
    ↓
 Build Cleanup Plan
    ↓
-optional human-authorized Recycle Bin (Maintenance V1)
+optional human-authorized Recycle Bin (Maintenance V2)
 ```
 
 Cleanup Review itself is still a planning queue: add, revalidate, refresh
@@ -62,7 +62,7 @@ Startup **loads** review state. It does **not** revalidate automatically.
 | `meta` | `review_schema_version`, `review_next_id`, `maintenance_schema_version`, `location_schema_version`, `location_declaration_generation` |
 | `review_items` | Durable ID, original path, normalized path key, captured object evidence, historical directory aggregate, classification, reclaimability, strength, safety, source/root, index age/timestamp, `addedAt`, optional `lifecycle` |
 | `review_validation` | Current observation, current object/aggregate evidence, primary state, reason flags, diffs, identity/direct/recursive honesty flags, checked time |
-| `maintenance_operations` | Additive Recycle Bin operation receipts (see Maintenance V1) |
+| `maintenance_operations` | Additive Recycle Bin operation receipts (`maintenance_schema_version = 2`; see Maintenance V2) |
 | `maintenance_receipt_items` | Per-file Recycle Bin results |
 | `ordinary_location_declarations` | User-declared ordinary roots and volume binding (see Location Safety V2). Independent of review rows and of replaceable indexes. |
 
@@ -242,7 +242,7 @@ Available actions:
 - Remove from Review / Clear Review
 - Copy Plan / Export JSON
 - optional `%USERPROFILE%` redaction
-- **Move to Recycle Bin…** (human-authorized Maintenance V1)
+- **Move to Recycle Bin…** / Maintenance History (human-authorized Maintenance V2; history is inspection-only)
 
 There is no permanent Delete and no arbitrary Move/Rename. Open and Reveal
 are human-initiated Explorer/default-app actions on a selected path. Recycle

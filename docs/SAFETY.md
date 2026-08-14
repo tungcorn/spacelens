@@ -101,15 +101,16 @@ ordinary CLI verb on `spacelens.exe`.
 
 ```text
 spacelens              READ ONLY (agents/scripts)
-spacelens-gui          human inspection + review + Recycle Bin V1
+spacelens-gui          human inspection + review + Recycle Bin (V2)
 spacelens_maintenance  GUI-only Windows Recycle Bin adapter
 ```
 
-Maintenance V1 may send eligible reviewed **files** to the Recycle Bin after a
+Maintenance V2 may send eligible reviewed **files** to the Recycle Bin after a
 fresh preflight, explicit human confirmation, and a final identity/safety
-guard. It does not permanently delete, empty the Recycle Bin, recycle
-directories, follow reparse points, or accept CLI/agent/AI invocation. See
-[`docs/MAINTENANCE.md`](MAINTENANCE.md).
+guard. It does not permanently delete, empty or restore the Recycle Bin,
+recycle directories, follow reparse points, or accept CLI/agent/AI invocation.
+Crash/restart leaves incomplete attempts `Uncertain` rather than guessing
+Recycled from a missing path. See [`docs/MAINTENANCE.md`](MAINTENANCE.md).
 
 ## Separated concepts (never collapse them)
 
@@ -218,15 +219,16 @@ item by scanning a volume for a file ID. Cancellation discards partial
 results. Missing, denied, and failed records stay until the user refreshes
 evidence or removes them.
 
-Maintenance V1 revalidates again immediately before each Recycle Bin attempt
+Maintenance V2 revalidates again immediately before each Recycle Bin attempt
 (identity, kind, reparse, location, size/write/attributes). `Refresh Evidence`
 only replaces the captured baseline; it is not permission to recycle.
 
 ## Recycle Bin vs permanent delete
 
-Human-authorized Maintenance V1 prefers **Move to Recycle Bin** and does not
-implement permanent delete. Permanent delete, if ever added, must be clearly
-separate and harder. See [`docs/MAINTENANCE.md`](MAINTENANCE.md).
+Human-authorized Maintenance V2 uses **Move eligible files to Recycle Bin** and
+does not implement permanent delete, restore, or empty. Permanent delete, if
+ever added, must be clearly separate and harder. See
+[`docs/MAINTENANCE.md`](MAINTENANCE.md).
 
 Moving data to the Recycle Bin does **not** free the same amount of space.
 The UI reports logical sizes only:
@@ -270,13 +272,13 @@ Flow:
 discovery → add (persist captured evidence) → later reopen
          → explicit live revalidation → review changes/warnings
          → Cleanup Plan (text/JSON)
-         → optional human-authorized Recycle Bin (Maintenance V1)
+         → optional human-authorized Recycle Bin (Maintenance V2)
 ```
 
 Available review actions today: revalidate all, cancel, refresh evidence,
 open, reveal in Explorer, remove from review, clear review, copy plan,
-export JSON, and **Move to Recycle Bin…**. **No permanent Delete. No arbitrary
-Move.**
+export JSON, **Move to Recycle Bin…**, and inspection-only Maintenance
+History. **No permanent Delete. No arbitrary Move. No Recycle Bin Restore.**
 
 ```text
 Delete: NOT IMPLEMENTED
