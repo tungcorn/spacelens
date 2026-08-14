@@ -53,6 +53,12 @@ After a Release build:
 .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
 ```
 
+npm packaging templates (no native rebuild required):
+
+```powershell
+.\scripts\verify-npm-template.ps1
+```
+
 ## Tests
 
 - Generated temporary fixtures only.
@@ -63,7 +69,8 @@ After a Release build:
 
 - Keep changes coherent. Do not mix product features with release-engineering
   or formatting-only noise.
-- CI must stay green: Full Debug, Full Release, CLI-only, and `/analyze`.
+- CI must stay green: Full Debug, Full Release, CLI-only, `/analyze`,
+  and npm package staging.
 - The Release job runs the CLI safety script. Do not skip or weaken it.
 - Pin any new GitHub Action to a verified full-length commit SHA. Do not invent
   SHAs.

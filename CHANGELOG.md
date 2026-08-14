@@ -5,6 +5,13 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+### Added
+
+- npm packaging for the existing published v0.1.1 unified Windows x64
+  archive (`packaging/npm/`, `scripts/package-npm.ps1`). The tarball
+  embeds the native GUI + read-only CLI. Node is a launcher only. The
+  package is not advertised until it is on the public npm registry.
+
 ### Changed
 
 - Human-authorized Recycle Bin maintenance is now V2: durable operation IDs,

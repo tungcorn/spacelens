@@ -70,6 +70,11 @@ with:
 "filesystem_mutation": false
 ```
 
+The optional npm channel (`@tungcorn/spacelens`) installs the same native
+CLI and GUI. The Node files are launchers only (`shell: false`, no
+argument concatenation, no JSON rewrite, no mutation API). npm
+uninstall must not delete `%LOCALAPPDATA%\SpaceLens\`.
+
 ### GUI Index Browser (V2) + Treemap V1
 
 The Indexed tab is discovery, visualization, and planning only:

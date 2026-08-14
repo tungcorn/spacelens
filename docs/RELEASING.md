@@ -145,6 +145,40 @@ fallback. Do not hardcode a one-line body in the workflow.
 The existing `v0.1.0` Release title is `SpaceLens v0.1.0`. GitHub already
 renders the Pre-release badge; do not add `(prerelease)` to the title.
 
+## npm
+
+Templates live in `packaging/npm/`. The package name is
+`@tungcorn/spacelens` version `0.1.1`. It distributes the **published**
+unified archive `spacelens-v0.1.1-windows-x64.zip` after verifying
+SHA-256
+`b4d4cb993bb53e1414c9fc156d9c29a5dca1b8640ac8d3b1229e5ff5a345793d`.
+A hash mismatch is a hard stop. Do not substitute a locally rebuilt zip.
+
+```powershell
+.\scripts\verify-npm-template.ps1
+.\scripts\package-npm.ps1
+.\scripts\verify-npm-package.ps1
+```
+
+The tarball contains the native GUI, the read-only CLI, the Qt runtime,
+and license/source-offer files. There is no `postinstall` download.
+Node launchers spawn `native\spacelens.exe` / `native\spacelens-gui.exe`
+with `shell: false` and do not rewrite stdout.
+
+`.github/workflows/npm-publish.yml` is **manual dispatch only**. Pack
+always runs; publish runs only when the `publish` input is true **and**
+the ref is `main`, after the same validation, using npm Trusted
+Publishing (OIDC, `id-token: write`). It does not publish on push to
+`main` or from other branches. Do not add an `NPM_TOKEN` secret.
+
+Trusted Publishing can be bound only after the package name exists on
+the registry. First publish of `@tungcorn/spacelens` is a one-time
+maintainer action (`npm login`, then `npm publish <tarball> --access public`).
+Do not advertise `npm install -g @tungcorn/spacelens` in the root README
+until `npm view @tungcorn/spacelens version` returns `0.1.1`.
+
+npm uninstall must not delete `%LOCALAPPDATA%\SpaceLens\`.
+
 ## WinGet
 
 Staged manifests live in `packaging/winget/`. Public identifiers:

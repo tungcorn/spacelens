@@ -35,6 +35,11 @@ WinGet identifiers are staged in [`packaging/winget/`](packaging/winget/):
 the optional CLI-only profile. They are not advertised as public install
 commands until they resolve from the official WinGet source.
 
+npm packaging for the same unified v0.1.1 archive lives in
+[`packaging/npm/`](packaging/npm/). It is not advertised as
+`npm install -g` until `@tungcorn/spacelens` resolves from the public
+npm registry.
+
 ## Status
 
 - Core scanner: working (Win32 enumeration, logical-size aggregation, Top-K,
