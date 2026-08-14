@@ -16,6 +16,7 @@
 namespace spacelens {
 
 inline constexpr int kStorageIntelligenceSchemaVersion = 1;
+inline constexpr const char* kOpportunityRankPolicy = "opportunity_rank_v2";
 inline constexpr std::size_t kDefaultOverviewLimit = 10;
 inline constexpr std::size_t kDefaultOpportunityLimit = 20;
 inline constexpr ByteSize kDefaultOpportunityMinSize = 1024ULL * 1024ULL;
@@ -43,6 +44,14 @@ inline constexpr const char* kPossiblyRegenerable = "possibly_regenerable";
 inline constexpr const char* kStrongCandidate = "strong_candidate";
 inline constexpr const char* kModerateCandidate = "moderate_candidate";
 inline constexpr const char* kReviewOnly = "review_only";
+inline constexpr const char* kKnownDependencyTree = "known_dependency_tree";
+inline constexpr const char* kKnownGeneratedOutput = "known_generated_output";
+inline constexpr const char* kKnownPackageCache = "known_package_cache";
+inline constexpr const char* kKnownTempLocation = "known_temp_location";
+inline constexpr const char* kOldLargeArchive = "old_large_archive";
+inline constexpr const char* kOldLargeInstaller = "old_large_installer";
+inline constexpr const char* kDownloadsLocation = "downloads_location";
+inline constexpr const char* kNestedOverlap = "nested_overlap";
 }  // namespace reason
 
 enum class EvidenceSource {
@@ -61,6 +70,16 @@ struct StorageConsumer {
     std::string reclaimability;
     std::string locationSafety;
     std::string candidateStrength;
+    std::vector<std::string> reasonCodes;
+};
+
+struct OpportunityGroup {
+    std::string id;
+    std::string classification;
+    ByteSize logicalBytes = 0;
+    std::uint64_t itemCount = 0;
+    bool estimated = false;
+    std::string strongestCandidateStrength;
     std::vector<std::string> reasonCodes;
 };
 
@@ -86,17 +105,11 @@ struct StorageOverviewReport {
     bool truncatedFiles = false;
     std::uint64_t indexAgeMs = 0;
     std::string indexedAtIso;
+    /// Compact live-scan category totals. Empty for indexed overview (no extra
+    /// regenerable fetch) so overview does not become a second opportunities dump.
+    std::vector<OpportunityGroup> opportunitySummary;
 
     [[nodiscard]] std::string toJson() const;
-};
-
-struct OpportunityGroup {
-    std::string id;
-    std::string classification;
-    ByteSize logicalBytes = 0;
-    std::uint64_t itemCount = 0;
-    bool estimated = false;
-    std::vector<std::string> reasonCodes;
 };
 
 struct OpportunityItem {
@@ -113,6 +126,8 @@ struct OpportunityItem {
     FileTimeTicks activityWriteTicks = 0;
     std::vector<std::string> reasonCodes;
     std::string explanation;
+    std::string ecosystem;
+    std::string marker;
     int opportunityRank = 0;
     bool overlapped = false;
 };
@@ -122,6 +137,7 @@ struct OpportunityQuery {
     std::uint64_t olderThanDays = kDefaultOldLargeDays;
     FileTimeTicks nowTicks = 0;
     std::size_t limit = kDefaultOpportunityLimit;
+    std::optional<StorageCategory> categoryOnly;
 };
 
 struct OpportunityReport {
@@ -144,6 +160,7 @@ struct OpportunityReport {
     std::uint64_t elapsedMs = 0;
     std::uint64_t indexAgeMs = 0;
     std::string indexedAtIso;
+    std::string rankingPolicy = kOpportunityRankPolicy;
     std::vector<OpportunityGroup> groups;
     std::vector<OpportunityItem> opportunities;
 

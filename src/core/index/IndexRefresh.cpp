@@ -260,12 +260,80 @@ void deleteEntrySubtree(SqliteDb& db, std::int64_t entryId)
 std::vector<std::wstring> listChildNames(SqliteDb& db, std::int64_t parentId)
 {
     std::vector<std::wstring> names;
+    if (parentId <= 0) {
+        return names;
+    }
     SqliteStmt stmt(db, "SELECT name FROM entries WHERE parent_id = ?1;");
     stmt.bindInt64(1, parentId);
     while (stmt.step()) {
         names.push_back(stmt.columnText16(0));
     }
     return names;
+}
+
+void persistDirectoryClass(SqliteDb& db, std::int64_t entryId, const std::wstring& path,
+                           ByteSize size, FileTimeTicks activity, Classification cls,
+                           FileTimeTicks now)
+{
+    const auto safety = classifyLocation(path);
+    const auto reclaim =
+        analyzeItem(path, ItemKind::Directory, size, activity, cls, safety, now, 0);
+    SqliteStmt upd(
+        db,
+        "UPDATE entries SET classification=?1, confidence=?2, rule_id=?3, "
+        "location_safety=?4, reclaimability=?5, candidate_strength=?6 "
+        "WHERE id=?7;");
+    upd.bindText(1, toString(cls.category));
+    upd.bindText(2, toString(cls.confidence));
+    upd.bindText(3, cls.ruleId);
+    upd.bindText(4, toString(safety));
+    upd.bindText(5, toString(reclaim.reclaimability));
+    upd.bindText(6, toString(reclaim.strength));
+    upd.bindInt64(7, entryId);
+    upd.stepDone();
+}
+
+/// Re-apply sibling-aware classification to immediate child directories after a
+/// parent is dirtied (e.g. Cargo.toml appears next to an existing target/).
+void reclassifyImmediateChildDirs(SqliteDb& db, std::int64_t parentId,
+                                  FileTimeTicks now)
+{
+    if (parentId <= 0) {
+        return;
+    }
+    const auto siblings = listChildNames(db, parentId);
+    struct ChildDir {
+        std::int64_t id = 0;
+        std::wstring name;
+        std::wstring path;
+        ByteSize size = 0;
+        FileTimeTicks newest = 0;
+    };
+    std::vector<ChildDir> children;
+    {
+        SqliteStmt stmt(
+            db,
+            "SELECT id, name, path, recursive_size, newest_descendant_write "
+            "FROM entries WHERE parent_id = ?1 AND kind = 1;");
+        stmt.bindInt64(1, parentId);
+        while (stmt.step()) {
+            ChildDir child;
+            child.id = stmt.columnInt64(0);
+            child.name = stmt.columnText16(1);
+            child.path = stmt.columnText16(2);
+            child.size = static_cast<ByteSize>(stmt.columnInt64(3));
+            child.newest = static_cast<FileTimeTicks>(stmt.columnInt64(4));
+            children.push_back(std::move(child));
+        }
+    }
+    for (const auto& child : children) {
+        const auto childNames = listChildNames(db, child.id);
+        persistDirectoryClass(
+            db, child.id, child.path, child.size, child.newest,
+            classifyDirectory(child.name, child.path, childNames.data(),
+                              childNames.size(), siblings.data(), siblings.size()),
+            now);
+    }
 }
 
 /// When a directory is renamed/moved, USN typically emits only the directory
@@ -367,9 +435,11 @@ UpsertTouch upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
         // parent_file_id filled by caller via separate update if known — 0 ok
         upd.bindInt64(11, 0);
         {
+            const auto siblings = listChildNames(db, parentEntryId);
             Classification cls =
                 isDir ? classifyDirectory(name, path, children.data(),
-                                          children.size())
+                                          children.size(), siblings.data(),
+                                          siblings.size())
                       : classifyFile(name, path);
             const auto safety = classifyLocation(path);
             const auto reclaim = analyzeItem(
@@ -412,7 +482,9 @@ UpsertTouch upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
         {
             Classification cls = classifyFile(name, path);
             if (isDir) {
-                cls = classifyDirectory(name, path, nullptr, 0);
+                const auto siblings = listChildNames(db, parentEntryId);
+                cls = classifyDirectory(name, path, nullptr, 0, siblings.data(),
+                                        siblings.size());
             }
             const auto safety = classifyLocation(path);
             const auto reclaim = analyzeItem(
@@ -485,21 +557,25 @@ void recomputeDirectory(SqliteDb& db, std::int64_t dirId, FileTimeTicks now)
         }
     }
 
-    // Reclassify directory using current children names.
+    // Reclassify directory using current children and parent siblings.
     std::wstring path;
     std::wstring name;
+    std::int64_t parentId = 0;
     {
-        SqliteStmt s(db, "SELECT path, name FROM entries WHERE id = ?1;");
+        SqliteStmt s(db, "SELECT path, name, parent_id FROM entries WHERE id = ?1;");
         s.bindInt64(1, dirId);
         if (!s.step()) {
             return;
         }
         path = s.columnText16(0);
         name = s.columnText16(1);
+        parentId = s.columnInt64(2);
     }
     const auto children = listChildNames(db, dirId);
+    const auto siblings = listChildNames(db, parentId);
     const auto cls =
-        classifyDirectory(name, path, children.data(), children.size());
+        classifyDirectory(name, path, children.data(), children.size(),
+                          siblings.data(), siblings.size());
     const auto safety = classifyLocation(path);
     const auto reclaim =
         analyzeItem(path, ItemKind::Directory, recursive, newest, cls, safety,
@@ -522,6 +598,7 @@ void recomputeDirectory(SqliteDb& db, std::int64_t dirId, FileTimeTicks now)
     upd.bindText(9, toString(reclaim.strength));
     upd.bindInt64(10, dirId);
     upd.stepDone();
+    reclassifyImmediateChildDirs(db, dirId, now);
 }
 
 /// Ensure a directory path under the indexed root exists as an entry, creating

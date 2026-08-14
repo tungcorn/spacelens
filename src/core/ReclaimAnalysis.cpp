@@ -31,17 +31,7 @@ struct RankCmp {
 
 Classification classifyDirFromTree(const DirectoryTree& tree, DirIndex idx)
 {
-    const auto& node = tree.dir(idx);
-    std::vector<std::wstring> children;
-    children.reserve(node.children.size() + node.files.size());
-    for (const DirIndex c : node.children) {
-        children.push_back(tree.dir(c).name);
-    }
-    for (const FileIndex f : node.files) {
-        children.push_back(tree.file(f).name);
-    }
-    const std::wstring path = tree.pathOfDirectory(idx);
-    return classifyDirectory(node.name, path, children.data(), children.size());
+    return classifyDirectoryFromTree(tree, idx);
 }
 
 }  // namespace
@@ -173,10 +163,16 @@ ReclaimCandidate analyzeItem(std::wstring path,
         return out;
     }
 
+    const bool highOnly = out.classification.confidence == Confidence::High;
+
     if (regenerable && highClass && inactiveVeryLong && size >= (100ULL << 20)) {
         out.strength = CandidateStrength::Strong;
         out.explanation =
             "Regenerable classified data with long write inactivity and large size";
+    } else if (regenerable && highOnly && size >= (10ULL << 20)) {
+        out.strength = CandidateStrength::Moderate;
+        out.explanation =
+            "High-confidence regenerable data of meaningful size — review recommended";
     } else if (regenerable && highClass && inactiveLong && size >= (10ULL << 20)) {
         out.strength = CandidateStrength::Moderate;
         out.explanation =

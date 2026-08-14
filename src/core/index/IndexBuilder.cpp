@@ -55,17 +55,7 @@ std::string extensionLower(std::wstring_view name)
 
 Classification classifyDirFromTree(const DirectoryTree& tree, DirIndex idx)
 {
-    const auto& node = tree.dir(idx);
-    std::vector<std::wstring> children;
-    children.reserve(node.children.size() + node.files.size());
-    for (const DirIndex c : node.children) {
-        children.push_back(tree.dir(c).name);
-    }
-    for (const FileIndex f : node.files) {
-        children.push_back(tree.file(f).name);
-    }
-    const std::wstring path = tree.pathOfDirectory(idx);
-    return classifyDirectory(node.name, path, children.data(), children.size());
+    return classifyDirectoryFromTree(tree, idx);
 }
 
 }  // namespace

@@ -54,17 +54,66 @@ bool isComponentPrefix(const std::wstring& ancestor, const std::wstring& descend
 
 Classification classifyDirFromTree(const DirectoryTree& tree, DirIndex idx)
 {
-    const auto& node = tree.dir(idx);
-    std::vector<std::wstring> children;
-    children.reserve(node.children.size() + node.files.size());
-    for (const DirIndex c : node.children) {
-        children.push_back(tree.dir(c).name);
+    return classifyDirectoryFromTree(tree, idx);
+}
+
+int strengthRank(const std::string& value)
+{
+    if (value == "Strong") {
+        return 3;
     }
-    for (const FileIndex f : node.files) {
-        children.push_back(tree.file(f).name);
+    if (value == "Moderate") {
+        return 2;
     }
-    return classifyDirectory(node.name, tree.pathOfDirectory(idx), children.data(),
-                             children.size());
+    if (value == "ReviewOnly") {
+        return 1;
+    }
+    return 0;
+}
+
+int confidenceRank(const std::string& value)
+{
+    if (value == "High") {
+        return 3;
+    }
+    if (value == "Medium") {
+        return 2;
+    }
+    if (value == "Low") {
+        return 1;
+    }
+    return 0;
+}
+
+const char* ecosystemFromRuleId(std::string_view ruleId)
+{
+    if (ruleId == "node-modules") {
+        return "node";
+    }
+    if (ruleId == "cmake-build-dir" || ruleId == "cmake-build-partial" ||
+        ruleId == "cmake-build-prefix") {
+        return "cmake";
+    }
+    if (ruleId == "rust-target-dir") {
+        return "rust";
+    }
+    if (ruleId == "dotnet-bin-obj" || ruleId == "msvc-config-dir") {
+        return "dotnet";
+    }
+    if (ruleId == "python-venv" || ruleId == "python-cache" ||
+        ruleId == "python-venv-name") {
+        return "python";
+    }
+    if (ruleId == "nuget-packages-path" || ruleId == "nuget-localappdata") {
+        return "nuget";
+    }
+    if (ruleId == "package-cache-name") {
+        return "";
+    }
+    if (ruleId == "git-metadata") {
+        return "git";
+    }
+    return "";
 }
 
 ReclaimCandidate analyzeDirectory(const DirectoryTree& tree, DirIndex idx,
@@ -119,7 +168,14 @@ bool includeOpportunity(const ReclaimCandidate& candidate,
         candidate.safety == LocationSafety::Protected) {
         return false;
     }
-    if (isRegenerable(candidate.reclaimability) &&
+    if (query.categoryOnly &&
+        candidate.classification.category != *query.categoryOnly) {
+        return false;
+    }
+    const bool confidentEnough =
+        candidate.classification.confidence == Confidence::High ||
+        candidate.classification.confidence == Confidence::Medium;
+    if (isRegenerable(candidate.reclaimability) && confidentEnough &&
         candidate.size_bytes >= query.minSize) {
         return true;
     }
@@ -246,6 +302,11 @@ OpportunityItem itemFromCandidate(const ReclaimCandidate& candidate,
     item.activityWriteTicks = candidate.activityWriteTime;
     item.reasonCodes = reasonCodesFor(candidate, oldLarge);
     item.explanation = candidate.explanation;
+    item.ecosystem = candidate.classification.ecosystem;
+    item.marker = candidate.classification.marker;
+    if (item.ecosystem.empty()) {
+        item.ecosystem = ecosystemFromRuleId(candidate.classification.ruleId);
+    }
     return item;
 }
 
@@ -276,6 +337,10 @@ void markOverlaps(std::vector<OpportunityItem>& items)
             }
             if (isComponentPrefix(dir.second, key)) {
                 items[i].overlapped = true;
+                if (std::find(items[i].reasonCodes.begin(), items[i].reasonCodes.end(),
+                              reason::kNestedOverlap) == items[i].reasonCodes.end()) {
+                    items[i].reasonCodes.push_back(reason::kNestedOverlap);
+                }
                 break;
             }
         }
@@ -286,22 +351,15 @@ void sortOpportunities(std::vector<OpportunityItem>& items)
 {
     std::sort(items.begin(), items.end(),
               [](const OpportunityItem& a, const OpportunityItem& b) {
-                  const auto strengthRank = [](const std::string& s) {
-                      if (s == "Strong") {
-                          return 3;
-                      }
-                      if (s == "Moderate") {
-                          return 2;
-                      }
-                      if (s == "ReviewOnly") {
-                          return 1;
-                      }
-                      return 0;
-                  };
                   const int sa = strengthRank(a.candidateStrength);
                   const int sb = strengthRank(b.candidateStrength);
                   if (sa != sb) {
                       return sa > sb;
+                  }
+                  const int ca = confidenceRank(a.confidence);
+                  const int cb = confidenceRank(b.confidence);
+                  if (ca != cb) {
+                      return ca > cb;
                   }
                   if (a.logicalBytes != b.logicalBytes) {
                       return a.logicalBytes > b.logicalBytes;
@@ -379,6 +437,10 @@ void buildGroupsAndUniqueBytes(OpportunityReport& report)
             }
         }
         ++slot.group.itemCount;
+        if (strengthRank(item.candidateStrength) >
+            strengthRank(slot.group.strongestCandidateStrength)) {
+            slot.group.strongestCandidateStrength = item.candidateStrength;
+        }
         if (slot.group.reasonCodes.empty()) {
             if (groupId == "developer_dependencies") {
                 slot.group.reasonCodes = {reason::kDeveloperDependency,
@@ -478,8 +540,22 @@ void writeOpportunity(std::ostringstream& os, const OpportunityItem& item)
     os << "\"activity_write_ticks\":" << jsonUInt(item.activityWriteTicks)
        << ",\"reason_codes\":" << jsonStringArray(item.reasonCodes)
        << ",\"explanation\":" << jsonString(item.explanation)
+       << ",\"evidence\":{\"ecosystem\":" << jsonString(item.ecosystem)
+       << ",\"marker\":" << jsonString(item.marker) << "}"
        << ",\"opportunity_rank\":" << jsonInt(item.opportunityRank)
        << ",\"overlapped\":" << jsonBool(item.overlapped) << "}";
+}
+
+void writeGroup(std::ostringstream& os, const OpportunityGroup& g)
+{
+    os << "{\"id\":" << jsonString(g.id)
+       << ",\"classification\":" << jsonString(g.classification)
+       << ",\"logical_bytes\":" << jsonUInt(g.logicalBytes)
+       << ",\"item_count\":" << jsonUInt(g.itemCount)
+       << ",\"estimated\":" << jsonBool(g.estimated)
+       << ",\"strongest_candidate_strength\":"
+       << jsonString(g.strongestCandidateStrength)
+       << ",\"reason_codes\":" << jsonStringArray(g.reasonCodes) << "}";
 }
 
 }  // namespace
@@ -558,12 +634,21 @@ std::vector<std::string> reasonCodesFor(const ReclaimCandidate& candidate,
     switch (candidate.classification.category) {
     case StorageCategory::DependencyDirectory:
         add(reason::kDeveloperDependency);
+        if (candidate.classification.confidence == Confidence::High ||
+            candidate.classification.confidence == Confidence::Medium) {
+            add(reason::kKnownDependencyTree);
+        }
         break;
     case StorageCategory::BuildArtifact:
         add(reason::kGeneratedOutput);
+        if (candidate.classification.confidence == Confidence::High ||
+            candidate.classification.confidence == Confidence::Medium) {
+            add(reason::kKnownGeneratedOutput);
+        }
         break;
     case StorageCategory::PackageCache:
         add(reason::kPackageCache);
+        add(reason::kKnownPackageCache);
         break;
     case StorageCategory::IdeCache:
         add(reason::kIdeCache);
@@ -582,6 +667,22 @@ std::vector<std::string> reasonCodesFor(const ReclaimCandidate& candidate,
     case StorageCategory::SystemData:
         add(reason::kUserOrUnknownContent);
         break;
+    }
+
+    if (candidate.classification.ruleId == "known-temp-folder") {
+        add(reason::kKnownTempLocation);
+    }
+    if (oldLargeFile &&
+        candidate.classification.category == StorageCategory::Archive) {
+        if (candidate.classification.ruleId == "installer-extension") {
+            add(reason::kOldLargeInstaller);
+        } else {
+            add(reason::kOldLargeArchive);
+        }
+    }
+    if (candidate.classification.marker == "downloads" ||
+        pathIsUnderFolder(candidate.path, knownDownloadsFolder())) {
+        add(reason::kDownloadsLocation);
     }
 
     if (candidate.reclaimability == Reclaimability::LikelyRegenerable) {
@@ -702,6 +803,13 @@ StorageOverviewReport buildLiveOverview(const ScanResult& result, std::size_t li
     }
     report.returnedFiles = report.largestFiles.size();
     report.truncatedFiles = fileMatches > report.largestFiles.size();
+
+    OpportunityQuery summaryQuery;
+    summaryQuery.minSize = kDefaultOpportunityMinSize;
+    summaryQuery.olderThanDays = kDefaultOldLargeDays;
+    summaryQuery.nowTicks = nowTicks;
+    summaryQuery.limit = 1;
+    report.opportunitySummary = buildLiveOpportunities(result.tree, summaryQuery).groups;
     return report;
 }
 
@@ -861,6 +969,13 @@ std::string StorageOverviewReport::toJson() const
         }
         writeConsumer(os, largestFiles[i]);
     }
+    os << "],\"opportunity_summary\":[";
+    for (std::size_t i = 0; i < opportunitySummary.size(); ++i) {
+        if (i > 0) {
+            os << ",";
+        }
+        writeGroup(os, opportunitySummary[i]);
+    }
     os << "],"
        << "\"returned_directories\":" << jsonUInt(returnedDirectories) << ","
        << "\"returned_files\":" << jsonUInt(returnedFiles) << ","
@@ -895,6 +1010,7 @@ std::string OpportunityReport::toJson() const
        << "\"planning_only\":true,"
        << "\"read_only\":true,"
        << "\"filesystem_mutation\":false,"
+       << "\"ranking_policy\":" << jsonString(rankingPolicy) << ","
        << "\"summary\":{"
        << "\"logical_bytes\":" << jsonUInt(logicalBytes) << ","
        << "\"files\":" << jsonUInt(files) << ","
@@ -909,13 +1025,7 @@ std::string OpportunityReport::toJson() const
         if (i > 0) {
             os << ",";
         }
-        const auto& g = groups[i];
-        os << "{\"id\":" << jsonString(g.id)
-           << ",\"classification\":" << jsonString(g.classification)
-           << ",\"logical_bytes\":" << jsonUInt(g.logicalBytes)
-           << ",\"item_count\":" << jsonUInt(g.itemCount)
-           << ",\"estimated\":" << jsonBool(g.estimated)
-           << ",\"reason_codes\":" << jsonStringArray(g.reasonCodes) << "}";
+        writeGroup(os, groups[i]);
     }
     os << "],\"opportunities\":[";
     for (std::size_t i = 0; i < opportunities.size(); ++i) {
