@@ -29,12 +29,14 @@ spacelens-cli-v<version>-windows-x64.zip
 SHA256SUMS.txt
 ```
 
-The first archive is the complete product (GUI + read-only CLI + Qt
-runtime). The second is the optional CLI-only profile. There is no
-GUI-only zip for v0.1.1 and later. Historical `spacelens-gui-v0.1.0-*.zip`
-on the v0.1.0 Release is immutable. `spacelens-mcp.exe` is built from
-source (`SPACELENS_BUILD_MCP`, default ON) but is **not** installed into
-the current v0.1.2 zip or npm packages.
+The first archive is the complete product (GUI + read-only CLI +
+read-only MCP + Qt runtime). The second is the headless profile
+(CLI + MCP, no Qt, no GUI). The `spacelens-cli-*` filename is kept
+for continuity with v0.1.2; from v0.1.3 it is not CLI-only.
+There is no GUI-only zip for v0.1.1 and later. Historical
+`spacelens-gui-v0.1.0-*.zip` on the v0.1.0 Release is immutable.
+`spacelens-mcp.exe` is installed into both current archives and the
+npm package.
 
 These are verification artifacts. They are not a public GitHub Release
 until Release Automation V2 publishes from `main` (`publish=true`).
@@ -46,8 +48,8 @@ distribute a Qt-free CLI.
 
 | Gate | Unlocks | Check |
 |------|---------|--------|
-| Maintainer-chosen root `LICENSE` (non-empty) | CLI-only zip may be attached to a GitHub Release | File exists and is not whitespace |
-| Structured Qt review PASS | Unified GUI+CLI zip may be attached | `scripts/verify-qt-redist-review.ps1 -RequirePass` |
+| Maintainer-chosen root `LICENSE` (non-empty) | Headless zip (CLI + MCP) may be attached to a GitHub Release | File exists and is not whitespace |
+| Structured Qt review PASS | Unified zip (GUI + CLI + MCP) may be attached | `scripts/verify-qt-redist-review.ps1 -RequirePass` |
 
 `RequirePass` succeeds only when `packaging/qt-redist-review.env` has
 **all** of:
@@ -85,20 +87,22 @@ ctest --preset windows-release
 .\scripts\package-release.ps1
 ```
 
-`package-release.ps1` installs the CLI component into the CLI-only
-stage and both `SpaceLensGui` and `SpaceLensCli` into the unified
-stage, deploys Qt onto the unified tree with `windeployqt
---no-compiler-runtime --no-system-d3d-compiler
+`package-release.ps1` installs `SpaceLensCli` and `SpaceLensMcp` into
+the headless stage and `SpaceLensGui`, `SpaceLensCli`, and
+`SpaceLensMcp` into the unified stage, deploys Qt onto the unified
+tree with `windeployqt --no-compiler-runtime --no-system-d3d-compiler
 --no-system-dxc-compiler --release`, copies package notices, the MIT
 `LICENSE`, and the Qt source offer/identity, then runs
-`scripts/verify-package.ps1`. The validator requires both
-`spacelens.exe` and `spacelens-gui.exe` plus `platforms\qwindows.dll`
-and `Qt6Core.dll` / `Qt6Gui.dll` / `Qt6Widgets.dll` in the unified
-stage, forbids Qt and the GUI in the CLI-only stage, forbids MSVC CRT
-DLLs in either zip, forbids Windows SDK `dxcompiler.dll` / `dxil.dll`
-and the SDK-sized `d3dcompiler_47.dll`, writes SHA-256 sums, verifies
-a full unified+CLI checksum set and a CLI-only filtered set, extracts
-both zips, and re-runs the safety script on each `spacelens.exe`.
+`scripts/verify-package.ps1`. The validator requires `spacelens.exe`,
+`spacelens-gui.exe`, and `spacelens-mcp.exe` plus
+`platforms\qwindows.dll` and `Qt6Core.dll` / `Qt6Gui.dll` /
+`Qt6Widgets.dll` in the unified stage, requires CLI + MCP and forbids
+Qt and the GUI in the headless stage, forbids MSVC CRT DLLs in either
+zip, forbids Windows SDK `dxcompiler.dll` / `dxil.dll` and the
+SDK-sized `d3dcompiler_47.dll`, writes SHA-256 sums, verifies a full
+unified+headless checksum set and a headless filtered set, extracts
+both zips, and re-runs CLI and MCP safety/wire gates on the packaged
+binaries.
 
 The Visual C++ Redistributable (x64) is a runtime prerequisite. Do not
 copy compiler-runtime DLLs from a developer machine into the zip.
@@ -132,7 +136,7 @@ It no longer runs on tag push. Inputs:
 
 | Input | Default | Meaning |
 |-------|---------|---------|
-| `version` | `0.1.2` | Must equal CMake `project(VERSION …)` and `packaging/npm/package.json` |
+| `version` | `0.1.3` | Must equal CMake `project(VERSION …)` and `packaging/npm/package.json` |
 | `publish` | `false` | Dry-run when false; create tag + GitHub Release + npm dispatch when true |
 
 Dry-run (`publish=false`) builds, tests, packages, hashes, and stages the
@@ -158,11 +162,12 @@ replace an existing Release. If the tag already points at this SHA and
 the Release does not exist (tag pushed, create failed), retry is
 allowed and only the Release is created.
 
-The unified zip, CLI-only zip, and `SHA256SUMS.txt` are attached.
+The unified zip, headless zip (`spacelens-cli-*`), and `SHA256SUMS.txt`
+are attached.
 `docs/release-notes/<tag>.md` is the Release body when that file exists.
 
-v0.1.2 is the first latest/current Release from this workflow. Historical
-v0.1.0 and v0.1.1 remain published prereleases and must not be retagged,
+v0.1.3 is the current latest Release from this workflow. Historical
+v0.1.0, v0.1.1, and v0.1.2 remain published and must not be retagged,
 redrafted, or have their assets replaced.
 
 If GitHub publication succeeds and npm later fails, leave the GitHub
@@ -205,17 +210,19 @@ validate the caller filename).
 .\scripts\verify-npm-package.ps1
 ```
 
-The tarball contains the native GUI, the read-only CLI, the Qt runtime,
-and license/source-offer files. There is no `postinstall` download.
-Node launchers spawn `native\spacelens.exe` / `native\spacelens-gui.exe`
-with `shell: false` and do not rewrite stdout.
+The tarball contains the native GUI, the read-only CLI, the read-only
+MCP server, the Qt runtime, and license/source-offer files. There is
+no `postinstall` download. Node launchers spawn
+`native\spacelens.exe` / `native\spacelens-gui.exe` /
+`native\spacelens-mcp.exe` with `shell: false` and do not rewrite
+stdout. The MCP launcher must emit protocol-only stdout.
 
-`@tungcorn/spacelens@0.1.1` is on the public npm registry. v0.1.2 is
-published by dispatching `npm-publish.yml` after the v0.1.2 GitHub
+`@tungcorn/spacelens@0.1.2` is on the public npm registry. v0.1.3 is
+published by dispatching `npm-publish.yml` after the v0.1.3 GitHub
 Release exists. The root README advertises
-`npm install -g @tungcorn/spacelens`. After a successful 0.1.2
+`npm install -g @tungcorn/spacelens`. After a successful 0.1.3
 publication, update `release-pin.env` to the new public hash so CI
-pack-from-release works again.
+pack-from-release works again. Do not retag or republish 0.1.2.
 
 npm uninstall must not delete `%LOCALAPPDATA%\SpaceLens\`.
 

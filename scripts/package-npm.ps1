@@ -140,6 +140,9 @@ try {
     if (-not (Test-Path (Join-Path $payload "spacelens-gui.exe"))) {
         Write-Error "extracted archive missing spacelens-gui.exe"
     }
+    if (-not (Test-Path (Join-Path $payload "spacelens-mcp.exe"))) {
+        Write-Error "extracted archive missing spacelens-mcp.exe"
+    }
 
     if (Test-Path $StageDir) {
         Remove-Item -Recurse -Force $StageDir

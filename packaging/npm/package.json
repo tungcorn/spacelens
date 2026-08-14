@@ -1,7 +1,7 @@
 {
   "name": "@tungcorn/spacelens",
-  "version": "0.1.2",
-  "description": "Native Windows storage intelligence. This package installs the desktop GUI and the read-only CLI.",
+  "version": "0.1.3",
+  "description": "Native Windows storage intelligence. This package installs the desktop GUI, the read-only CLI, and the read-only MCP server.",
   "license": "MIT",
   "author": "tungcorn",
   "homepage": "https://github.com/tungcorn/spacelens",
@@ -19,6 +19,7 @@
     "disk",
     "cli",
     "gui",
+    "mcp",
     "disk-usage"
   ],
   "os": [
@@ -32,7 +33,8 @@
   },
   "bin": {
     "spacelens": "bin/spacelens.js",
-    "spacelens-gui": "bin/spacelens-gui.js"
+    "spacelens-gui": "bin/spacelens-gui.js",
+    "spacelens-mcp": "bin/spacelens-mcp.js"
   },
   "files": [
     "bin/",

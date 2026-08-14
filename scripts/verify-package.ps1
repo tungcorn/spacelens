@@ -1,4 +1,4 @@
-# Category checks for staged CLI-only and unified main portable trees.
+# Category checks for staged headless (CLI+MCP) and unified main portable trees.
 # Does not hardcode every Qt plugin DLL. Fails on missing runtime,
 # developer leftovers, CLI Qt/maintenance contamination, and
 # Windows SDK D3D/DXC compilers.
@@ -84,6 +84,7 @@ if ($CliStage) {
         $cliRoot = (Resolve-Path $CliStage).Path
         Write-Host "Verifying CLI stage: $cliRoot"
         Test-RequiredFile $cliRoot "spacelens.exe" | Out-Null
+        Test-RequiredFile $cliRoot "spacelens-mcp.exe" | Out-Null
         Test-RequiredFile $cliRoot "README.txt" | Out-Null
         Test-RequiredFile $cliRoot "THIRD_PARTY_NOTICES.txt" | Out-Null
         $cliLicense = Test-RequiredFile $cliRoot "LICENSE"
@@ -109,6 +110,7 @@ if ($CliStage) {
             "*.ilk",
             "*.obj",
             "state.db",
+            "hash-cache.db",
             "CMakeCache.txt"
         )
         Test-ForbiddenDir $cliRoot @("platforms", "include", "cmake", "lib")
@@ -129,6 +131,7 @@ if ($MainStage) {
         Write-Host "Verifying unified main stage: $guiRoot"
         Test-RequiredFile $guiRoot "spacelens.exe" | Out-Null
         Test-RequiredFile $guiRoot "spacelens-gui.exe" | Out-Null
+        Test-RequiredFile $guiRoot "spacelens-mcp.exe" | Out-Null
         Test-RequiredFile $guiRoot "README.txt" | Out-Null
         Test-RequiredFile $guiRoot "THIRD_PARTY_NOTICES.txt" | Out-Null
         Test-RequiredFile $guiRoot "platforms\qwindows.dll" | Out-Null
@@ -182,6 +185,7 @@ if ($MainStage) {
             "*.obj",
             "*.prl",
             "state.db",
+            "hash-cache.db",
             "CMakeCache.txt",
             "Qt6EntryPoint*.lib"
         )

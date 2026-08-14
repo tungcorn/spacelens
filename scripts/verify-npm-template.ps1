@@ -39,8 +39,8 @@ if ((Test-Path $pinPath) -and (Test-Path $pkgPath)) {
     if ($pkg.license -ne "MIT") { Add-Fail "package license must be MIT" }
     if ($pkg.os -notcontains "win32") { Add-Fail "os must be win32" }
     if ($pkg.cpu -notcontains "x64") { Add-Fail "cpu must be x64" }
-    if (-not $pkg.bin.spacelens -or -not $pkg.bin.'spacelens-gui') {
-        Add-Fail "bin must expose spacelens and spacelens-gui"
+    if (-not $pkg.bin.spacelens -or -not $pkg.bin.'spacelens-gui' -or -not $pkg.bin.'spacelens-mcp') {
+        Add-Fail "bin must expose spacelens, spacelens-gui, and spacelens-mcp"
     }
     if ($pkg.scripts -and $pkg.scripts.postinstall) { Add-Fail "postinstall forbidden" }
     if ($pkg.dependencies) { Add-Fail "production dependencies forbidden" }
@@ -63,7 +63,7 @@ if ((Test-Path $pinPath) -and (Test-Path $pkgPath)) {
 }
 
 $binDir = Join-Path $root "packaging\npm\bin"
-foreach ($name in @("launch.js", "spacelens.js", "spacelens-gui.js")) {
+foreach ($name in @("launch.js", "spacelens.js", "spacelens-gui.js", "spacelens-mcp.js")) {
     $path = Join-Path $binDir $name
     if (-not (Test-Path $path)) {
         Add-Fail "missing $name"

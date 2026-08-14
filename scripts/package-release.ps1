@@ -1,6 +1,6 @@
 # Stage portable Windows x64 zip archives from a Release build.
-# Primary archive: unified GUI + read-only CLI + Qt runtime.
-# Optional archive: CLI-only (no Qt, no GUI).
+# Primary archive: unified GUI + read-only CLI + read-only MCP + Qt runtime.
+# Headless archive: CLI + MCP (no Qt, no GUI). Filename stays spacelens-cli-*.
 # Uses cmake --install components, then windeployqt for the unified tree.
 
 [CmdletBinding()]
@@ -107,22 +107,30 @@ Write-Host "Checking Qt review record (well-formed, not RequirePass)"
 & (Join-Path $root "scripts\verify-qt-redist-review.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host "Installing CLI component -> $cliStage"
+Write-Host "Installing headless CLI + MCP components -> $cliStage"
 cmake --install $BuildDir --prefix $cliStage --component SpaceLensCli
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+cmake --install $BuildDir --prefix $cliStage --component SpaceLensMcp
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Copy-Item (Join-Path $root "packaging\cli\README.txt") (Join-Path $cliStage "README.txt")
 Copy-Item (Join-Path $root "packaging\cli\THIRD_PARTY_NOTICES.txt") (Join-Path $cliStage "THIRD_PARTY_NOTICES.txt")
 Copy-ProjectLicense $cliStage
 
 $cliExe = Join-Path $cliStage "spacelens.exe"
+$cliMcp = Join-Path $cliStage "spacelens-mcp.exe"
 if (-not (Test-Path $cliExe)) {
-    Write-Error "CLI install did not produce spacelens.exe"
+    Write-Error "headless install did not produce spacelens.exe"
+}
+if (-not (Test-Path $cliMcp)) {
+    Write-Error "headless install did not produce spacelens-mcp.exe"
 }
 
 Write-Host "Installing unified main components -> $mainStage"
 cmake --install $BuildDir --prefix $mainStage --component SpaceLensGui
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 cmake --install $BuildDir --prefix $mainStage --component SpaceLensCli
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+cmake --install $BuildDir --prefix $mainStage --component SpaceLensMcp
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Copy-Item (Join-Path $root "packaging\gui\README.txt") (Join-Path $mainStage "README.txt")
 Copy-Item (Join-Path $root "packaging\gui\THIRD_PARTY_NOTICES.txt") (Join-Path $mainStage "THIRD_PARTY_NOTICES.txt")
@@ -135,11 +143,15 @@ Copy-ProjectLicense $mainStage
 
 $guiExe = Join-Path $mainStage "spacelens-gui.exe"
 $mainCliExe = Join-Path $mainStage "spacelens.exe"
+$mainMcpExe = Join-Path $mainStage "spacelens-mcp.exe"
 if (-not (Test-Path $guiExe)) {
     Write-Error "unified install did not produce spacelens-gui.exe"
 }
 if (-not (Test-Path $mainCliExe)) {
     Write-Error "unified install did not produce spacelens.exe"
+}
+if (-not (Test-Path $mainMcpExe)) {
+    Write-Error "unified install did not produce spacelens-mcp.exe"
 }
 
 $windeploy = Get-Windeployqt
@@ -189,14 +201,22 @@ if (-not $SkipSmoke) {
     try {
         Expand-Archive -Path $cliZip -DestinationPath $extractCli
         $smoke = Join-Path $extractCli "spacelens.exe"
+        $mcpSmoke = Join-Path $extractCli "spacelens-mcp.exe"
         $verOut = & $smoke version
         if ($verOut -notmatch [regex]::Escape($version)) {
-            Write-Error "Extracted CLI-only version '$verOut' does not contain $version"
+            Write-Error "Extracted headless CLI version '$verOut' does not contain $version"
         }
         if (Test-Path (Join-Path $extractCli "spacelens-gui.exe")) {
-            Write-Error "CLI-only zip must not contain spacelens-gui.exe"
+            Write-Error "headless zip must not contain spacelens-gui.exe"
+        }
+        if (-not (Test-Path $mcpSmoke)) {
+            Write-Error "headless zip missing spacelens-mcp.exe"
         }
         & (Join-Path $root "scripts\verify-cli-safety.ps1") -CliPath $smoke
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & (Join-Path $root "scripts\verify-mcp-safety.ps1") -McpPath $mcpSmoke -ExpectedVersion $version
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & (Join-Path $root "scripts\verify-mcp-wire.ps1") -McpPath $mcpSmoke
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     } finally {
         Remove-Item -Recurse -Force $extractCli -ErrorAction SilentlyContinue
@@ -208,8 +228,12 @@ if (-not $SkipSmoke) {
         Expand-Archive -Path $mainZip -DestinationPath $extractMain
         $mainSmoke = Join-Path $extractMain "spacelens.exe"
         $mainGui = Join-Path $extractMain "spacelens-gui.exe"
+        $mainMcp = Join-Path $extractMain "spacelens-mcp.exe"
         if (-not (Test-Path $mainGui)) {
             Write-Error "unified zip missing spacelens-gui.exe"
+        }
+        if (-not (Test-Path $mainMcp)) {
+            Write-Error "unified zip missing spacelens-mcp.exe"
         }
         if (-not (Test-Path (Join-Path $extractMain "platforms\qwindows.dll"))) {
             Write-Error "unified zip missing platforms\qwindows.dll"
@@ -219,6 +243,10 @@ if (-not $SkipSmoke) {
             Write-Error "Extracted unified CLI version '$mainVer' does not contain $version"
         }
         & (Join-Path $root "scripts\verify-cli-safety.ps1") -CliPath $mainSmoke
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & (Join-Path $root "scripts\verify-mcp-safety.ps1") -McpPath $mainMcp -ExpectedVersion $version
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & (Join-Path $root "scripts\verify-mcp-wire.ps1") -McpPath $mainMcp
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     } finally {
         Remove-Item -Recurse -Force $extractMain -ErrorAction SilentlyContinue

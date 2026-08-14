@@ -20,9 +20,10 @@ The adapter is analysis-only. It does not scan by shelling out to
 `spacelens.exe`, does not link `spacelens_maintenance`, and does not
 require Qt.
 
-Product version stays **0.1.2**. The MCP binary is built from source
-(`SPACELENS_BUILD_MCP`, default ON) and is **not** installed into the
-published v0.1.2 zip or npm package.
+Product version is **0.1.3**. The MCP binary is built from source
+(`SPACELENS_BUILD_MCP`, default ON) and is installed into both
+published v0.1.3 zip archives and the npm package
+(`spacelens-mcp`). v0.1.2 packages remain MCP-free and immutable.
 
 ## What a harness can ask
 

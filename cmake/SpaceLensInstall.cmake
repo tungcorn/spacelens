@@ -9,15 +9,19 @@ if(TARGET spacelens)
     )
 endif()
 
+if(TARGET spacelens-mcp)
+    install(TARGETS spacelens-mcp
+        RUNTIME DESTINATION .
+        COMPONENT SpaceLensMcp
+    )
+endif()
+
 if(TARGET SpaceLens)
     install(TARGETS SpaceLens
         RUNTIME DESTINATION .
         COMPONENT SpaceLensGui
     )
 endif()
-
-# MCP is built with CLI/headless trees but is not installed into the current
-# public v0.1.2 zip/npm packages. A later release can add the install rule.
 
 # Fail configure if the agent CLI or MCP adapter ever grows a maintenance link.
 if(TARGET spacelens-mcp)

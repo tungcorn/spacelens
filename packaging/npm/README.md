@@ -3,9 +3,10 @@
 SpaceLens is native C++ storage intelligence for Windows.
 
 This npm package is an installation channel. It contains the complete
-v0.1.2 distribution: the desktop GUI and the read-only CLI, plus the Qt
-6.8.3 runtime those binaries need. Node and npm are required only to
-install and launch this package. SpaceLens itself remains native C++.
+v0.1.3 distribution: the desktop GUI, the read-only CLI, and the
+read-only MCP server, plus the Qt 6.8.3 runtime the GUI needs. Node
+and npm are required only to install and launch this package.
+SpaceLens itself remains native C++.
 
 This is not a Node SDK. The wrappers do not add commands, transform
 JSON, or authorize filesystem maintenance.
@@ -31,25 +32,33 @@ download further GitHub or npm assets.
 
 ```text
 spacelens
+spacelens-mcp
 spacelens-gui
 ```
 
-CLI examples (real verbs from SpaceLens v0.1.2):
+- `spacelens` — command-line storage intelligence
+- `spacelens-mcp` — read-only stdio MCP server for AI agents
+- `spacelens-gui` — native desktop interface
+
+CLI examples:
 
 ```text
 spacelens version
 spacelens help
 spacelens capabilities --json
-spacelens scan C:\path\to\folder --json
-spacelens top C:\path\to\folder --json
+spacelens overview C:\path\to\folder --json
+spacelens opportunities C:\path\to\folder --json
 ```
 
 `spacelens ... --json` is safe for scripts and agents: the launcher
 prints no banner and does not rewrite native stdout.
 
+`spacelens-mcp` is stdio MCP. Pair it with an MCP client. The
+launcher prints no banner; stdout is protocol only.
+
 ## Safety
 
-The CLI is read-only.
+The CLI and MCP adapter are read-only.
 
 ```text
 spacelens capabilities --json
@@ -57,14 +66,14 @@ spacelens capabilities --json
 
 reports `filesystem_mutation: false`.
 
-The CLI cannot recycle, restore, delete, move, or declare locations.
+They cannot recycle, restore, delete, move, or declare locations.
 Filesystem maintenance remains GUI-only and explicitly human-authorized
 (Recycle Bin, after confirmation). The npm wrapper exposes no mutation
-API.
+API. AI recommendation is not filesystem permission.
 
 Uninstalling the npm package removes the staged binaries and shims. It
 does not delete `%LOCALAPPDATA%\SpaceLens\` (indexes, review state,
-maintenance history).
+maintenance history, hash cache).
 
 ## License
 

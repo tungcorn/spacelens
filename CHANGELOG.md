@@ -5,6 +5,13 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-08-14
+
+AI-ready storage intelligence release. v0.1.2 stays published and
+immutable.
+
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.3
+
 ### Added
 
 - Persistent Content Hash Cache / Duplicate Detection V2: verified SHA-256
@@ -12,7 +19,7 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
   FileId128 + size + ChangeTime + FileUsn still match. Path is never the
   key. A false cache hit is a defect; insufficient evidence hashes again.
   Cache write failures do not fail the scan. CLI, MCP, and GUI share the
-  same `spacelens_core` implementation. Version stays 0.1.2.
+  same `spacelens_core` implementation.
   See [`docs/DUPLICATES.md`](docs/DUPLICATES.md).
 - Read-only MCP adapter V1: `spacelens-mcp.exe` is a native stdio Model
   Context Protocol server over `spacelens_core`. Six tools
@@ -20,8 +27,7 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
   `storage_query`, `storage_duplicates`, `storage_index_status`) share
   `StorageAnalysis` with the CLI. Dual-era protocol `2026-07-28` /
   `2025-11-25`. No Qt, no `spacelens_maintenance`, no mutation tools, no
-  automatic index refresh. Not installed into published v0.1.2 packages.
-  See [`docs/MCP.md`](docs/MCP.md).
+  automatic index refresh. See [`docs/MCP.md`](docs/MCP.md).
 - Storage Intelligence / Agent Interface V1: CLI `overview` and `opportunities`
   compose one live scan (or one published index) into a bounded storage
   summary and ranked review opportunities. Core types live in
@@ -36,6 +42,10 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ### Changed
 
+- Public distribution now includes `spacelens-mcp.exe`. The unified zip
+  is GUI + CLI + MCP + Qt. The `spacelens-cli-*` zip is the headless
+  profile (CLI + MCP, no Qt). npm `@tungcorn/spacelens` exposes
+  `spacelens`, `spacelens-gui`, and `spacelens-mcp`.
 - `find --json` now includes classification, location safety, reclaimability,
   candidate strength, and explanation. Live scan/top/find JSON reports
   `"source": "live_scan"`. `find` `truncated` is true only when more matches
@@ -46,8 +56,7 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
   the scan root always being the largest directory.
 - `capabilities --json` advertises `overview`, `opportunities`,
   `json_contract_version`, and storage-intelligence feature flags.
-  `filesystem_mutation` remains `false`. Version stays 0.1.2.
-
+  `filesystem_mutation` remains `false`.
 - GUI UX V1: Live Scan and Indexed are segmented workspaces (no sidebar).
   Page headers, typographic metrics, Filters popups, first-class palette-aware
   treemap, and a command hierarchy replace the previous equal-weight toolbar
@@ -57,7 +66,7 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
   segmented controls, Live Scan / Largest Files data tables, a property
   inspector that omits no-value fields, clearer Indexed root and empty
   states, Cancel only while busy, and a status-bar Read-only analysis chip.
-  Version stays 0.1.2. No filesystem mutation.
+  No filesystem mutation.
 
 ## [0.1.2] — 2026-08-14
 

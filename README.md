@@ -16,16 +16,19 @@ spacelens_maintenance  →  GUI Recycle Bin adapter only
 
 ## Downloads
 
-Unsigned Windows x64: [SpaceLens v0.1.2](https://github.com/tungcorn/spacelens/releases/tag/v0.1.2)
+Unsigned Windows x64: [SpaceLens v0.1.3](https://github.com/tungcorn/spacelens/releases/tag/v0.1.3)
 
 | Asset | Use |
 | --- | --- |
-| `spacelens-v0.1.2-windows-x64.zip` | Recommended: desktop GUI + read-only CLI (Qt 6.8.3 runtime included) |
-| `spacelens-cli-v0.1.2-windows-x64.zip` | Optional CLI-only profile |
+| `spacelens-v0.1.3-windows-x64.zip` | Recommended: desktop GUI + read-only CLI + read-only MCP (Qt 6.8.3 runtime included) |
+| `spacelens-cli-v0.1.3-windows-x64.zip` | Headless: CLI + MCP, no GUI, no Qt |
 | `SHA256SUMS.txt` | SHA-256 of the attached zip assets |
 
 Do not install both archives together; both expose `spacelens`.
-Earlier [v0.1.1](https://github.com/tungcorn/spacelens/releases/tag/v0.1.1)
+The `spacelens-cli-*` name is kept for continuity; in v0.1.3 it is the
+headless agent profile, not CLI-only.
+Earlier [v0.1.2](https://github.com/tungcorn/spacelens/releases/tag/v0.1.2),
+[v0.1.1](https://github.com/tungcorn/spacelens/releases/tag/v0.1.1),
 and [v0.1.0](https://github.com/tungcorn/spacelens/releases/tag/v0.1.0)
 remain published and are not replaced.
 
@@ -39,9 +42,10 @@ npm install -g @tungcorn/spacelens
 ```
 
 That installs the same published unified archive: desktop GUI + read-only
-CLI + Qt 6.8.3 runtime. Then run `spacelens` or `spacelens-gui`. Node is
-required only to install and launch; SpaceLens remains native C++. The
-Visual C++ Redistributable (x64) is still required. Templates live in
+CLI + read-only MCP + Qt 6.8.3 runtime. Then run `spacelens`,
+`spacelens-mcp`, or `spacelens-gui`. Node is required only to install and
+launch; SpaceLens remains native C++. The Visual C++ Redistributable
+(x64) is still required. Templates live in
 [`packaging/npm/`](packaging/npm/).
 
 WinGet identifiers are staged in [`packaging/winget/`](packaging/winget/):
@@ -65,10 +69,9 @@ commands until they resolve from the official WinGet source.
   breadcrumb navigation, storage overview, interactive squarified treemap,
   inspector, Explorer/copy, **Find Duplicates**, durable Cleanup Review V2,
   and human-authorized Recycle Bin maintenance)
-- **Read-only MCP adapter** (source builds): `spacelens-mcp.exe` exposes
-  overview / opportunities / query / duplicates / index status as typed
-  stdio tools. Not included in the published v0.1.2 zip or npm package.
-  See [`docs/MCP.md`](docs/MCP.md).
+- **Read-only MCP adapter:** `spacelens-mcp.exe` exposes overview /
+  opportunities / query / duplicates / index status as typed stdio tools.
+  Included in the v0.1.3 zip and npm package. See [`docs/MCP.md`](docs/MCP.md).
 - **Persistent Content Hash Cache / Duplicate Detection V2:** verified
   SHA-256 digests may be reused from `%LOCALAPPDATA%\SpaceLens\hash-cache.db`
   when FileId128 + size + ChangeTime + FileUsn still match. Path is never
@@ -165,7 +168,7 @@ cmake --build --preset windows-cli-release --target spacelens
 .\build-cli-release\cli\spacelens.exe duplicates <folder> --min-size 1MB --json
 ```
 
-Read-only MCP adapter (source builds; not in the published v0.1.2 zip/npm):
+Read-only MCP adapter (also in the published v0.1.3 zip and npm package):
 
 ```powershell
 .\build-cli-release\mcp\spacelens-mcp.exe

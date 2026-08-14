@@ -3,7 +3,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$McpPath
+    [string]$McpPath,
+    [string]$ExpectedVersion = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,6 +34,14 @@ $delete = '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"stora
 $lines = Invoke-McpBatch -Lines @($init, $list, $caps, $refresh, $delete)
 if ($lines.Count -lt 5) {
     Write-Error "expected 5 protocol responses, got $($lines.Count): $lines"
+}
+
+$initJson = $lines[0] | ConvertFrom-Json
+if ($ExpectedVersion) {
+    $got = [string]$initJson.result.serverInfo.version
+    if ($got -ne $ExpectedVersion) {
+        Write-Error "MCP serverInfo.version '$got' != $ExpectedVersion"
+    }
 }
 
 $listJson = $lines[1] | ConvertFrom-Json

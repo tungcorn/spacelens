@@ -10,6 +10,7 @@ const repoRoot = path.join(__dirname, '..', '..');
 const launchPath = path.join(repoRoot, 'packaging', 'npm', 'bin', 'launch.js');
 const cliLauncher = path.join(repoRoot, 'packaging', 'npm', 'bin', 'spacelens.js');
 const guiLauncher = path.join(repoRoot, 'packaging', 'npm', 'bin', 'spacelens-gui.js');
+const mcpLauncher = path.join(repoRoot, 'packaging', 'npm', 'bin', 'spacelens-mcp.js');
 const { resolveNative, runNative } = require(launchPath);
 
 const scratch = [];
@@ -54,6 +55,8 @@ test('resolveNative uses package-local native basename', () => {
   assert.strictEqual(resolved, path.join(root, 'native', 'spacelens.exe'));
   const gui = resolveNative('spacelens-gui.exe', root);
   assert.strictEqual(gui, path.join(root, 'native', 'spacelens-gui.exe'));
+  const mcp = resolveNative('spacelens-mcp.exe', root);
+  assert.strictEqual(mcp, path.join(root, 'native', 'spacelens-mcp.exe'));
 });
 
 test('resolveNative rejects path separators', () => {
@@ -163,11 +166,28 @@ test('GUI launcher entry targets spacelens-gui.exe', () => {
   assert.doesNotMatch(text, /shell:\s*true/);
 });
 
+test('MCP launcher entry targets spacelens-mcp.exe and prints no banner', () => {
+  const text = fs.readFileSync(mcpLauncher, 'utf8');
+  assert.match(text, /spacelens-mcp\.exe/);
+  assert.doesNotMatch(text, /shell:\s*true/);
+  assert.doesNotMatch(text, /Starting SpaceLens|console\.log/);
+  const empty = makePackageTree();
+  const result = spawnSync(process.execPath, [mcpLauncher], {
+    cwd: empty,
+    shell: false,
+    encoding: 'utf8',
+  });
+  assert.notStrictEqual(result.status, 0);
+  assert.match(result.stderr, /native executable not found/);
+  assert.strictEqual(result.stdout, '');
+});
+
 test('launchers do not concatenate argv into a shell string', () => {
   const text = [
     fs.readFileSync(launchPath, 'utf8'),
     fs.readFileSync(cliLauncher, 'utf8'),
     fs.readFileSync(guiLauncher, 'utf8'),
+    fs.readFileSync(mcpLauncher, 'utf8'),
   ].join('\n');
   assert.match(text, /shell:\s*false/);
   assert.doesNotMatch(text, /child_process\.exec(?:Sync)?\s*\(/);

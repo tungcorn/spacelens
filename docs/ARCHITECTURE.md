@@ -320,11 +320,14 @@ Install is portable staging, not a Program Files installer:
 
 ```text
 cmake --install <build> --prefix <stage> --component SpaceLensCli
+cmake --install <build> --prefix <stage> --component SpaceLensMcp
 cmake --install <build> --prefix <stage> --component SpaceLensGui
 ```
 
 Only runtime executables are installed. Tests, PDBs, static libraries, and
-`%LOCALAPPDATA%\SpaceLens` state are not.
+`%LOCALAPPDATA%\SpaceLens` state are not. From v0.1.3 the unified zip
+contains GUI + CLI + MCP; the `spacelens-cli-*` zip is the headless
+CLI + MCP profile.
 
 CI (`.github/workflows/ci.yml`) is the quality gate: Full Debug, Full Release
 (with `scripts/verify-cli-safety.ps1` and zip staging), CLI-only Latest,
@@ -334,10 +337,11 @@ CI (`.github/workflows/ci.yml`) is the quality gate: Full Debug, Full Release
 Third-party actions are SHA-pinned. See [`docs/RELEASING.md`](RELEASING.md).
 
 npm is an additional **installation channel**, not a Node SDK. The
-`@tungcorn/spacelens` tarball embeds the same published Windows x64 GUI+CLI
-runtime. `bin/spacelens.js` and `bin/spacelens-gui.js` spawn the native
-executables with `shell: false`. They do not add commands, rewrite
-`--json` output, or authorize maintenance.
+`@tungcorn/spacelens` tarball embeds the same published Windows x64
+GUI+CLI+MCP runtime. `bin/spacelens.js`, `bin/spacelens-gui.js`, and
+`bin/spacelens-mcp.js` spawn the native executables with `shell: false`.
+They do not add commands, rewrite `--json` output, or authorize
+maintenance. The MCP launcher must keep stdout protocol-only.
 
 ## Core types and ownership
 

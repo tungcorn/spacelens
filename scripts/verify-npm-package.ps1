@@ -77,6 +77,7 @@ if ($pkg.cpu -notcontains "x64") { Add-Fail "cpu must include x64" }
 $launchers = @(
     (Join-Path $StageDir "bin\spacelens.js"),
     (Join-Path $StageDir "bin\spacelens-gui.js"),
+    (Join-Path $StageDir "bin\spacelens-mcp.js"),
     (Join-Path $StageDir "bin\launch.js")
 )
 foreach ($launcher in $launchers) {
@@ -125,9 +126,11 @@ if ($dry) {
             "LICENSE",
             "bin/spacelens.js",
             "bin/spacelens-gui.js",
+            "bin/spacelens-mcp.js",
             "bin/launch.js",
             "native/spacelens.exe",
             "native/spacelens-gui.exe",
+            "native/spacelens-mcp.exe",
             "native/platforms/qwindows.dll",
             "native/Qt6Core.dll",
             "native/Qt6Gui.dll",
@@ -147,7 +150,7 @@ if ($dry) {
             if ($leaf -match '\.(pdb|lib|exp|ilk|obj|prl)$') {
                 Add-Fail "tarball contains developer file $name"
             }
-            if ($leaf -eq "state.db" -or $leaf -eq "CMakeCache.txt" -or $leaf -eq ".npmrc") {
+            if ($leaf -eq "state.db" -or $leaf -eq "hash-cache.db" -or $leaf -eq "CMakeCache.txt" -or $leaf -eq ".npmrc") {
                 Add-Fail "tarball contains forbidden file $name"
             }
             if ($name -match '(^|/)(\.git|tests|src|build)(/|$)') {
@@ -202,11 +205,15 @@ if (-not $SkipInstall) {
             }
             $shim = Join-Path $prefix "spacelens.cmd"
             $guiShim = Join-Path $prefix "spacelens-gui.cmd"
+            $mcpShim = Join-Path $prefix "spacelens-mcp.cmd"
             $installed = Join-Path $prefix "node_modules\@tungcorn\spacelens"
             $installedCli = Join-Path $installed "native\spacelens.exe"
+            $installedMcp = Join-Path $installed "native\spacelens-mcp.exe"
             if (-not (Test-Path $shim)) { Add-Fail "missing isolated spacelens shim" }
             if (-not (Test-Path $guiShim)) { Add-Fail "missing isolated spacelens-gui shim" }
+            if (-not (Test-Path $mcpShim)) { Add-Fail "missing isolated spacelens-mcp shim" }
             if (-not (Test-Path $installedCli)) { Add-Fail "missing installed native CLI" }
+            if (-not (Test-Path $installedMcp)) { Add-Fail "missing installed native MCP" }
 
             if ((Test-Path $shim) -and (Test-Path $installedCli)) {
                 $verNative = & $installedCli version 2>&1 | Out-String
@@ -245,6 +252,18 @@ if (-not $SkipInstall) {
                 & (Join-Path $root "scripts\verify-cli-safety.ps1") -CliPath $installedCli
                 if ($LASTEXITCODE -ne 0) {
                     Add-Fail "packaged CLI safety gate failed"
+                }
+                if (Test-Path $installedMcp) {
+                    & (Join-Path $root "scripts\verify-mcp-safety.ps1") -McpPath $installedMcp -ExpectedVersion $pkg.version
+                    if ($LASTEXITCODE -ne 0) {
+                        Add-Fail "packaged native MCP safety gate failed"
+                    }
+                }
+                if ((Test-Path $mcpShim) -and (Test-Path $installedMcp)) {
+                    & (Join-Path $root "scripts\verify-mcp-wire.ps1") -McpPath $mcpShim
+                    if ($LASTEXITCODE -ne 0) {
+                        Add-Fail "npm spacelens-mcp shim failed the MCP wire gate"
+                    }
                 }
                 foreach ($verb in @(@("maintenance"), @("keep-one"))) {
                     $probe = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-npm-probe-" + [guid]::NewGuid().ToString("N"))
@@ -302,6 +321,7 @@ if (-not $SkipInstall) {
             }
             if (Test-Path $shim) { Add-Fail "spacelens shim still present after uninstall" }
             if (Test-Path $guiShim) { Add-Fail "spacelens-gui shim still present after uninstall" }
+            if (Test-Path $mcpShim) { Add-Fail "spacelens-mcp shim still present after uninstall" }
             if (Test-Path $installed) { Add-Fail "package files still present after uninstall" }
 
             $appDataAfter = Test-Path $appData
