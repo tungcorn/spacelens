@@ -24,6 +24,15 @@ function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { Add-Fail $Message }
 }
 
+function Get-AppDataStamp([string]$Path) {
+    if (-not (Test-Path $Path)) { return $null }
+    return @(
+        Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue |
+            ForEach-Object { "{0}|{1}|{2}" -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks } |
+            Sort-Object
+    )
+}
+
 if (-not (Test-Path $StageDir)) {
     Write-Error "staged npm package not found: $StageDir"
 }
@@ -148,17 +157,20 @@ if (-not $SkipInstall) {
     New-Item -ItemType Directory -Path $prefix | Out-Null
     $appData = Join-Path $env:LOCALAPPDATA "SpaceLens"
     $appDataExisted = Test-Path $appData
-    $appDataStamp = $null
-    if ($appDataExisted) {
-        $appDataStamp = Get-ChildItem $appData -Recurse -Force -ErrorAction SilentlyContinue |
-            ForEach-Object { "{0}|{1}|{2}" -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks } |
-            Sort-Object
-    }
+    $appDataStamp = Get-AppDataStamp $appData
     try {
         npm install -g --prefix $prefix --ignore-scripts $Tarball
         if ($LASTEXITCODE -ne 0) {
             Add-Fail "isolated npm install failed"
         } else {
+            if ((Test-Path $appData) -ne $appDataExisted) {
+                Add-Fail "npm install changed %LOCALAPPDATA%\SpaceLens existence"
+            } elseif ($appDataExisted) {
+                $installStamp = Get-AppDataStamp $appData
+                if (($appDataStamp -join "`n") -ne ($installStamp -join "`n")) {
+                    Add-Fail "npm install changed %LOCALAPPDATA%\SpaceLens contents"
+                }
+            }
             $shim = Join-Path $prefix "spacelens.cmd"
             $guiShim = Join-Path $prefix "spacelens-gui.cmd"
             $installed = Join-Path $prefix "node_modules\@tungcorn\spacelens"
@@ -252,6 +264,9 @@ if (-not $SkipInstall) {
                 }
             }
 
+            $afterUseExisted = Test-Path $appData
+            $afterUseStamp = Get-AppDataStamp $appData
+
             npm uninstall -g --prefix $prefix --ignore-scripts $pkg.name
             if ($LASTEXITCODE -ne 0) {
                 Add-Fail "isolated npm uninstall failed"
@@ -261,21 +276,16 @@ if (-not $SkipInstall) {
             if (Test-Path $installed) { Add-Fail "package files still present after uninstall" }
 
             $appDataAfter = Test-Path $appData
-            if ($appDataExisted -and -not $appDataAfter) {
+            if ($afterUseExisted -and -not $appDataAfter) {
                 Add-Fail "npm uninstall deleted %LOCALAPPDATA%\SpaceLens"
             }
-            if (-not $appDataExisted -and $appDataAfter) {
-                Add-Fail "npm install/uninstall created %LOCALAPPDATA%\SpaceLens"
-            }
-            if ($appDataExisted) {
-                $afterStamp = Get-ChildItem $appData -Recurse -Force -ErrorAction SilentlyContinue |
-                    ForEach-Object { "{0}|{1}|{2}" -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks } |
-                    Sort-Object
-                $beforeText = ($appDataStamp -join "`n")
-                $afterText = ($afterStamp -join "`n")
-                if ($beforeText -ne $afterText) {
-                    Add-Fail "npm lifecycle changed %LOCALAPPDATA%\SpaceLens contents"
+            if ($afterUseExisted) {
+                $unStamp = Get-AppDataStamp $appData
+                if (($afterUseStamp -join "`n") -ne ($unStamp -join "`n")) {
+                    Add-Fail "npm uninstall changed %LOCALAPPDATA%\SpaceLens contents"
                 }
+            } elseif ($appDataAfter) {
+                Add-Fail "npm uninstall created %LOCALAPPDATA%\SpaceLens"
             }
         }
     } finally {
