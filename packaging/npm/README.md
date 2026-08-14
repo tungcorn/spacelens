@@ -3,7 +3,7 @@
 SpaceLens is native C++ storage intelligence for Windows.
 
 This npm package is an installation channel. It contains the complete
-v0.1.1 distribution: the desktop GUI and the read-only CLI, plus the Qt
+v0.1.2 distribution: the desktop GUI and the read-only CLI, plus the Qt
 6.8.3 runtime those binaries need. Node and npm are required only to
 install and launch this package. SpaceLens itself remains native C++.
 
@@ -34,7 +34,7 @@ spacelens
 spacelens-gui
 ```
 
-CLI examples (real verbs from SpaceLens v0.1.1):
+CLI examples (real verbs from SpaceLens v0.1.2):
 
 ```text
 spacelens version

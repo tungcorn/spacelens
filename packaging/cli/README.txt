@@ -18,7 +18,7 @@ SpaceLens archive; both expose the `spacelens` command.
 
 Runtime: Windows x64. The official Microsoft Visual C++ Redistributable
 (x64) is required if the machine does not already have a compatible
-MSVC runtime. Binaries in the v0.1.1 prerelease are unsigned.
+MSVC runtime. Binaries in v0.1.2 are unsigned.
 
 This archive does not include Qt.
 
