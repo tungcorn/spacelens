@@ -63,7 +63,17 @@ public:
     [[nodiscard]] CleanupReviewStatus save(const CleanupReview& review);
     [[nodiscard]] CleanupReviewStatus saveMaintenanceReceipt(
         MaintenanceReceipt& receipt);
-    [[nodiscard]] std::vector<MaintenanceReceipt> loadMaintenanceReceipts();
+    [[nodiscard]] CleanupReviewStatus beginMaintenanceOperation(
+        MaintenanceReceipt& receipt);
+    [[nodiscard]] CleanupReviewStatus checkpointMaintenanceItem(
+        std::uint64_t operationId,
+        const MaintenanceItemReceipt& item,
+        ByteSize recycledLogicalBytes = 0);
+    [[nodiscard]] CleanupReviewStatus completeMaintenanceOperation(
+        const MaintenanceReceipt& receipt);
+    [[nodiscard]] CleanupReviewStatus reconcileIncompleteMaintenance();
+    [[nodiscard]] CleanupReviewStatus loadMaintenanceReceipts(
+        std::vector<MaintenanceReceipt>& out);
 
     [[nodiscard]] OrdinaryLocationAddOutcome addOrdinaryLocation(
         OrdinaryLocationDeclaration declaration);
@@ -76,15 +86,22 @@ public:
 
     /// Test hook: next save() fails and rolls back without writing.
     void failNextWrite() noexcept { m_failNextWrite = true; }
+    /// Test hook: next maintenance begin/checkpoint/complete/receipt write fails.
+    void failNextMaintenanceWrite() noexcept { m_failNextMaintenanceWrite = true; }
+    /// Test hook: next maintenance history read fails closed.
+    void failNextMaintenanceRead() noexcept { m_failNextMaintenanceRead = true; }
 
 private:
     [[nodiscard]] CleanupReviewStatus ensureSchema();
     [[nodiscard]] CleanupReviewStatus ensureMaintenanceSchema();
     [[nodiscard]] CleanupReviewStatus ensureLocationSchema();
+    [[nodiscard]] bool consumeMaintenanceWriteFailure();
 
     SqliteDb m_db;
     std::wstring m_path;
     bool m_failNextWrite = false;
+    bool m_failNextMaintenanceWrite = false;
+    bool m_failNextMaintenanceRead = false;
 };
 
 /// Durable facade: mutate a draft CleanupReview, persist the whole logical
@@ -127,6 +144,16 @@ public:
         const std::vector<CleanupValidationReplacement>& updates);
     [[nodiscard]] CleanupReviewStatus recordMaintenance(
         MaintenanceReceipt receipt);
+    [[nodiscard]] CleanupReviewStatus beginMaintenance(
+        MaintenanceReceipt& receipt);
+    [[nodiscard]] CleanupReviewStatus checkpointMaintenance(
+        std::uint64_t operationId,
+        const MaintenanceItemReceipt& item,
+        ByteSize recycledLogicalBytes = 0);
+    [[nodiscard]] CleanupReviewStatus completeMaintenance(
+        const MaintenanceReceipt& receipt);
+    [[nodiscard]] CleanupReviewStatus loadMaintenanceReceipts(
+        std::vector<MaintenanceReceipt>& out);
     [[nodiscard]] std::vector<MaintenanceReceipt> maintenanceReceipts();
 
     [[nodiscard]] OrdinaryLocationAddOutcome addOrdinaryLocation(
@@ -152,6 +179,14 @@ public:
     }
 
     void failNextWrite() noexcept { m_store.failNextWrite(); }
+    void failNextMaintenanceWrite() noexcept
+    {
+        m_store.failNextMaintenanceWrite();
+    }
+    void failNextMaintenanceRead() noexcept
+    {
+        m_store.failNextMaintenanceRead();
+    }
 
 private:
     template <typename Mutator>

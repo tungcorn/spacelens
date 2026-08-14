@@ -1052,8 +1052,12 @@ CleanupReviewStore::CleanupReviewStore(CleanupReviewStore&& other) noexcept
     : m_db(std::move(other.m_db))
     , m_path(std::move(other.m_path))
     , m_failNextWrite(other.m_failNextWrite)
+    , m_failNextMaintenanceWrite(other.m_failNextMaintenanceWrite)
+    , m_failNextMaintenanceRead(other.m_failNextMaintenanceRead)
 {
     other.m_failNextWrite = false;
+    other.m_failNextMaintenanceWrite = false;
+    other.m_failNextMaintenanceRead = false;
 }
 
 CleanupReviewStore& CleanupReviewStore::operator=(
@@ -1064,7 +1068,11 @@ CleanupReviewStore& CleanupReviewStore::operator=(
         m_db = std::move(other.m_db);
         m_path = std::move(other.m_path);
         m_failNextWrite = other.m_failNextWrite;
+        m_failNextMaintenanceWrite = other.m_failNextMaintenanceWrite;
+        m_failNextMaintenanceRead = other.m_failNextMaintenanceRead;
         other.m_failNextWrite = false;
+        other.m_failNextMaintenanceWrite = false;
+        other.m_failNextMaintenanceRead = false;
     }
     return *this;
 }
@@ -1074,6 +1082,8 @@ void CleanupReviewStore::close() noexcept
     m_db.close();
     m_path.clear();
     m_failNextWrite = false;
+    m_failNextMaintenanceWrite = false;
+    m_failNextMaintenanceRead = false;
 }
 
 bool CleanupReviewStore::isOpen() const noexcept
@@ -1257,15 +1267,250 @@ CleanupReviewStatus CleanupReviewStore::save(const CleanupReview& review)
     }
 }
 
+namespace {
+
+std::optional<int> readMaintenanceSchemaVersion(SqliteDb& db)
+{
+    if (!tableExists(db, "meta")) {
+        return std::nullopt;
+    }
+    SqliteStmt stmt(db, "SELECT value FROM meta WHERE key = ?1;");
+    stmt.bindText(1, "maintenance_schema_version");
+    if (!stmt.step()) {
+        return std::nullopt;
+    }
+    try {
+        return std::stoi(stmt.columnText(0));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+void upsertReceiptItem(SqliteDb& db,
+                       std::uint64_t operationId,
+                       const MaintenanceItemReceipt& item)
+{
+    {
+        SqliteStmt update(
+            db,
+            "UPDATE maintenance_receipt_items SET path = ?3, result = ?4, "
+            "block_reason = ?5, hresult = ?6, native_error = ?7, "
+            "recycle_parsing_name = ?8, detail = ?9, identity_source = ?10, "
+            "identity_volume = ?11, identity_file_id_128 = ?12 "
+            "WHERE operation_id = ?1 AND review_item_id = ?2;");
+        update.bindInt64(1, static_cast<std::int64_t>(operationId));
+        update.bindInt64(2, static_cast<std::int64_t>(item.reviewId));
+        update.bindText16(3, item.path);
+        update.bindText(4, toString(item.result));
+        update.bindText(5, toString(item.blockReason));
+        update.bindInt64(6, item.hresult);
+        update.bindInt64(7, static_cast<std::int64_t>(item.nativeError));
+        update.bindText(8, item.recycleParsingName);
+        update.bindText(9, item.detail);
+        update.bindText(10, toString(item.expectedIdentity.source));
+        update.bindInt64(
+            11, static_cast<std::int64_t>(item.expectedIdentity.volumeSerial));
+        update.bindText(12, fileIdToHex(item.expectedIdentity.fileId128));
+        update.stepDone();
+        if (db.changes() > 0) {
+            return;
+        }
+    }
+    SqliteStmt insert(
+        db,
+        "INSERT INTO maintenance_receipt_items("
+        "operation_id, review_item_id, path, result, block_reason, "
+        "hresult, native_error, recycle_parsing_name, detail, "
+        "identity_source, identity_volume, identity_file_id_128) "
+        "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12);");
+    insert.bindInt64(1, static_cast<std::int64_t>(operationId));
+    insert.bindInt64(2, static_cast<std::int64_t>(item.reviewId));
+    insert.bindText16(3, item.path);
+    insert.bindText(4, toString(item.result));
+    insert.bindText(5, toString(item.blockReason));
+    insert.bindInt64(6, item.hresult);
+    insert.bindInt64(7, static_cast<std::int64_t>(item.nativeError));
+    insert.bindText(8, item.recycleParsingName);
+    insert.bindText(9, item.detail);
+    insert.bindText(10, toString(item.expectedIdentity.source));
+    insert.bindInt64(
+        11, static_cast<std::int64_t>(item.expectedIdentity.volumeSerial));
+    insert.bindText(12, fileIdToHex(item.expectedIdentity.fileId128));
+    insert.stepDone();
+}
+
+void recountOperation(SqliteDb& db, std::uint64_t operationId)
+{
+    std::uint64_t attempted = 0;
+    std::uint64_t recycled = 0;
+    std::uint64_t blocked = 0;
+    std::uint64_t cancelled = 0;
+    std::uint64_t failed = 0;
+    std::uint64_t uncertain = 0;
+    bool unexpected = false;
+    SqliteStmt items(
+        db,
+        "SELECT result FROM maintenance_receipt_items WHERE operation_id = ?1;");
+    items.bindInt64(1, static_cast<std::int64_t>(operationId));
+    while (items.step()) {
+        const auto result = parseMaintenanceItemResult(items.columnText(0));
+        switch (result) {
+        case MaintenanceItemResult::Recycled:
+            ++attempted;
+            ++recycled;
+            break;
+        case MaintenanceItemResult::BlockedPreflight:
+        case MaintenanceItemResult::BlockedFinalGuard:
+            ++blocked;
+            if (result == MaintenanceItemResult::BlockedFinalGuard) {
+                ++attempted;
+            }
+            break;
+        case MaintenanceItemResult::Cancelled:
+            ++cancelled;
+            break;
+        case MaintenanceItemResult::NotAttempted:
+            break;
+        case MaintenanceItemResult::Attempting:
+            ++attempted;
+            break;
+        case MaintenanceItemResult::Uncertain:
+            ++attempted;
+            ++uncertain;
+            break;
+        case MaintenanceItemResult::UnexpectedPermanentRemoval:
+            ++attempted;
+            ++failed;
+            unexpected = true;
+            break;
+        default:
+            ++attempted;
+            ++failed;
+            break;
+        }
+    }
+
+    const char* sql =
+        columnExists(db, "maintenance_operations", "uncertain")
+            ? "UPDATE maintenance_operations SET attempted = ?2, recycled = ?3, "
+              "blocked = ?4, cancelled = ?5, failed = ?6, "
+              "unexpected_permanent_removal = ?7, uncertain = ?8 "
+              "WHERE id = ?1;"
+            : "UPDATE maintenance_operations SET attempted = ?2, recycled = ?3, "
+              "blocked = ?4, cancelled = ?5, failed = ?6, "
+              "unexpected_permanent_removal = ?7 WHERE id = ?1;";
+    SqliteStmt update(db, sql);
+    update.bindInt64(1, static_cast<std::int64_t>(operationId));
+    update.bindInt64(2, static_cast<std::int64_t>(attempted));
+    update.bindInt64(3, static_cast<std::int64_t>(recycled));
+    update.bindInt64(4, static_cast<std::int64_t>(blocked));
+    update.bindInt64(5, static_cast<std::int64_t>(cancelled));
+    update.bindInt64(6, static_cast<std::int64_t>(failed));
+    update.bindInt64(7, unexpected ? 1 : 0);
+    if (columnExists(db, "maintenance_operations", "uncertain")) {
+        update.bindInt64(8, static_cast<std::int64_t>(uncertain));
+    }
+    update.stepDone();
+}
+
+MaintenanceOperationStatus statusFromItems(SqliteDb& db,
+                                           std::uint64_t operationId)
+{
+    bool unexpected = false;
+    bool uncertain = false;
+    bool cancelled = false;
+    bool attempting = false;
+    SqliteStmt items(
+        db,
+        "SELECT result FROM maintenance_receipt_items WHERE operation_id = ?1;");
+    items.bindInt64(1, static_cast<std::int64_t>(operationId));
+    while (items.step()) {
+        const auto result = parseMaintenanceItemResult(items.columnText(0));
+        if (result == MaintenanceItemResult::UnexpectedPermanentRemoval) {
+            unexpected = true;
+        } else if (result == MaintenanceItemResult::Uncertain ||
+                   result == MaintenanceItemResult::Attempting) {
+            uncertain = true;
+        } else if (result == MaintenanceItemResult::Cancelled) {
+            cancelled = true;
+        }
+        if (result == MaintenanceItemResult::Attempting) {
+            attempting = true;
+        }
+    }
+    (void)attempting;
+    if (unexpected) {
+        return MaintenanceOperationStatus::HardStopped;
+    }
+    if (uncertain) {
+        return MaintenanceOperationStatus::Uncertain;
+    }
+    if (cancelled) {
+        return MaintenanceOperationStatus::Cancelled;
+    }
+    return MaintenanceOperationStatus::Completed;
+}
+
+}  // namespace
+
+bool CleanupReviewStore::consumeMaintenanceWriteFailure()
+{
+    if (!m_failNextMaintenanceWrite) {
+        return false;
+    }
+    m_failNextMaintenanceWrite = false;
+    return true;
+}
+
 CleanupReviewStatus CleanupReviewStore::ensureMaintenanceSchema()
 {
     try {
+        const auto version = readMaintenanceSchemaVersion(m_db);
+        if (version.has_value() && *version > kMaintenanceSchemaVersion) {
+            return makeStatus(
+                CleanupReviewError::SchemaUnsupported,
+                "Cleanup review database uses an unsupported newer "
+                "maintenance schema.");
+        }
+
         SqliteTxn txn(m_db);
         m_db.exec(kMaintenanceSql);
         if (!columnExists(m_db, "review_items", "lifecycle")) {
             m_db.exec(
                 "ALTER TABLE review_items ADD COLUMN lifecycle TEXT NOT NULL "
                 "DEFAULT 'Active';");
+        }
+        if (!columnExists(m_db, "maintenance_operations", "status")) {
+            m_db.exec(
+                "ALTER TABLE maintenance_operations ADD COLUMN status TEXT "
+                "NOT NULL DEFAULT 'Completed';");
+        }
+        if (!columnExists(m_db, "maintenance_operations", "uncertain")) {
+            m_db.exec(
+                "ALTER TABLE maintenance_operations ADD COLUMN uncertain "
+                "INTEGER NOT NULL DEFAULT 0;");
+        }
+        if (!columnExists(m_db, "maintenance_operations", "selected_count")) {
+            m_db.exec(
+                "ALTER TABLE maintenance_operations ADD COLUMN selected_count "
+                "INTEGER NOT NULL DEFAULT 0;");
+        }
+        if (!columnExists(m_db, "maintenance_operations", "eligible_count")) {
+            m_db.exec(
+                "ALTER TABLE maintenance_operations ADD COLUMN eligible_count "
+                "INTEGER NOT NULL DEFAULT 0;");
+        }
+        if (!columnExists(m_db, "maintenance_operations",
+                          "selected_logical_bytes")) {
+            m_db.exec(
+                "ALTER TABLE maintenance_operations ADD COLUMN "
+                "selected_logical_bytes INTEGER NOT NULL DEFAULT 0;");
+        }
+        if (!columnExists(m_db, "maintenance_operations",
+                          "eligible_logical_bytes")) {
+            m_db.exec(
+                "ALTER TABLE maintenance_operations ADD COLUMN "
+                "eligible_logical_bytes INTEGER NOT NULL DEFAULT 0;");
         }
         upsertMeta(m_db, "maintenance_schema_version",
                    std::to_string(kMaintenanceSchemaVersion));
@@ -1285,6 +1530,10 @@ CleanupReviewStatus CleanupReviewStore::saveMaintenanceReceipt(
         return makeStatus(CleanupReviewError::NotOpen,
                           "Cleanup review database is not open.");
     }
+    if (consumeMaintenanceWriteFailure()) {
+        return makeStatus(CleanupReviewError::WriteFailed,
+                          "Failed to persist the Recycle Bin receipt.");
+    }
     try {
         SqliteTxn txn(m_db);
         {
@@ -1293,8 +1542,10 @@ CleanupReviewStatus CleanupReviewStore::saveMaintenanceReceipt(
                 "INSERT INTO maintenance_operations("
                 "requested_at, confirmed_at, completed_at, attempted, recycled, "
                 "blocked, cancelled, failed, recycled_logical_bytes, "
-                "unexpected_permanent_removal) "
-                "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10);");
+                "unexpected_permanent_removal, status, uncertain, "
+                "selected_count, eligible_count, selected_logical_bytes, "
+                "eligible_logical_bytes) "
+                "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16);");
             stmt.bindInt64(1, static_cast<std::int64_t>(receipt.requestedAt));
             stmt.bindInt64(2, static_cast<std::int64_t>(receipt.confirmedAt));
             stmt.bindInt64(3, static_cast<std::int64_t>(receipt.completedAt));
@@ -1306,6 +1557,14 @@ CleanupReviewStatus CleanupReviewStore::saveMaintenanceReceipt(
             stmt.bindInt64(
                 9, static_cast<std::int64_t>(receipt.recycledLogicalBytes));
             stmt.bindInt64(10, receipt.unexpectedPermanentRemoval ? 1 : 0);
+            stmt.bindText(11, toString(receipt.status));
+            stmt.bindInt64(12, static_cast<std::int64_t>(receipt.uncertain));
+            stmt.bindInt64(13, static_cast<std::int64_t>(receipt.selectedCount));
+            stmt.bindInt64(14, static_cast<std::int64_t>(receipt.eligibleCount));
+            stmt.bindInt64(
+                15, static_cast<std::int64_t>(receipt.selectedLogicalBytes));
+            stmt.bindInt64(
+                16, static_cast<std::int64_t>(receipt.eligibleLogicalBytes));
             stmt.stepDone();
         }
         receipt.operationId =
@@ -1340,19 +1599,222 @@ CleanupReviewStatus CleanupReviewStore::saveMaintenanceReceipt(
     }
 }
 
-std::vector<MaintenanceReceipt> CleanupReviewStore::loadMaintenanceReceipts()
+CleanupReviewStatus CleanupReviewStore::beginMaintenanceOperation(
+    MaintenanceReceipt& receipt)
 {
-    std::vector<MaintenanceReceipt> out;
-    if (!isOpen() || !tableExists(m_db, "maintenance_operations")) {
-        return out;
+    if (!isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    if (consumeMaintenanceWriteFailure()) {
+        return makeStatus(CleanupReviewError::WriteFailed,
+                          "Failed to begin the Recycle Bin operation.");
     }
     try {
+        receipt.status = MaintenanceOperationStatus::Executing;
+        SqliteTxn txn(m_db);
         SqliteStmt stmt(
             m_db,
-            "SELECT id, requested_at, confirmed_at, completed_at, attempted, "
-            "recycled, blocked, cancelled, failed, recycled_logical_bytes, "
-            "unexpected_permanent_removal FROM maintenance_operations "
-            "ORDER BY id;");
+            "INSERT INTO maintenance_operations("
+            "requested_at, confirmed_at, completed_at, attempted, recycled, "
+            "blocked, cancelled, failed, recycled_logical_bytes, "
+            "unexpected_permanent_removal, status, uncertain, "
+            "selected_count, eligible_count, selected_logical_bytes, "
+            "eligible_logical_bytes) "
+            "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16);");
+        stmt.bindInt64(1, static_cast<std::int64_t>(receipt.requestedAt));
+        stmt.bindInt64(2, static_cast<std::int64_t>(receipt.confirmedAt));
+        stmt.bindInt64(3, static_cast<std::int64_t>(receipt.completedAt));
+        stmt.bindInt64(4, static_cast<std::int64_t>(receipt.attempted));
+        stmt.bindInt64(5, static_cast<std::int64_t>(receipt.recycled));
+        stmt.bindInt64(6, static_cast<std::int64_t>(receipt.blocked));
+        stmt.bindInt64(7, static_cast<std::int64_t>(receipt.cancelled));
+        stmt.bindInt64(8, static_cast<std::int64_t>(receipt.failed));
+        stmt.bindInt64(9, static_cast<std::int64_t>(receipt.recycledLogicalBytes));
+        stmt.bindInt64(10, receipt.unexpectedPermanentRemoval ? 1 : 0);
+        stmt.bindText(11, toString(receipt.status));
+        stmt.bindInt64(12, static_cast<std::int64_t>(receipt.uncertain));
+        stmt.bindInt64(13, static_cast<std::int64_t>(receipt.selectedCount));
+        stmt.bindInt64(14, static_cast<std::int64_t>(receipt.eligibleCount));
+        stmt.bindInt64(15, static_cast<std::int64_t>(receipt.selectedLogicalBytes));
+        stmt.bindInt64(16, static_cast<std::int64_t>(receipt.eligibleLogicalBytes));
+        stmt.stepDone();
+        receipt.operationId = static_cast<std::uint64_t>(m_db.lastInsertRowId());
+        txn.commit();
+        return {};
+    } catch (const SqliteError& ex) {
+        return mapWriteError(ex);
+    }
+}
+
+CleanupReviewStatus CleanupReviewStore::checkpointMaintenanceItem(
+    std::uint64_t operationId,
+    const MaintenanceItemReceipt& item,
+    ByteSize recycledLogicalBytes)
+{
+    if (!isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    if (consumeMaintenanceWriteFailure()) {
+        return makeStatus(CleanupReviewError::WriteFailed,
+                          "Failed to persist a Recycle Bin checkpoint.");
+    }
+    try {
+        SqliteTxn txn(m_db);
+        upsertReceiptItem(m_db, operationId, item);
+        if (item.result == MaintenanceItemResult::Recycled &&
+            columnExists(m_db, "review_items", "lifecycle") &&
+            item.reviewId != 0) {
+            SqliteStmt life(
+                m_db, "UPDATE review_items SET lifecycle = ?1 WHERE id = ?2;");
+            life.bindText(1, "Recycled");
+            life.bindInt64(2, static_cast<std::int64_t>(item.reviewId));
+            life.stepDone();
+        }
+        if (item.result == MaintenanceItemResult::Recycled &&
+            recycledLogicalBytes > 0) {
+            SqliteStmt bytes(
+                m_db,
+                "UPDATE maintenance_operations SET recycled_logical_bytes = "
+                "recycled_logical_bytes + ?2 WHERE id = ?1;");
+            bytes.bindInt64(1, static_cast<std::int64_t>(operationId));
+            bytes.bindInt64(2, static_cast<std::int64_t>(recycledLogicalBytes));
+            bytes.stepDone();
+        }
+        recountOperation(m_db, operationId);
+        txn.commit();
+        return {};
+    } catch (const SqliteError& ex) {
+        return mapWriteError(ex);
+    }
+}
+
+CleanupReviewStatus CleanupReviewStore::completeMaintenanceOperation(
+    const MaintenanceReceipt& receipt)
+{
+    if (!isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    if (consumeMaintenanceWriteFailure()) {
+        return makeStatus(CleanupReviewError::WriteFailed,
+                          "Failed to complete the Recycle Bin operation.");
+    }
+    try {
+        SqliteTxn txn(m_db);
+        SqliteStmt stmt(
+            m_db,
+            "UPDATE maintenance_operations SET requested_at = ?2, "
+            "confirmed_at = ?3, completed_at = ?4, attempted = ?5, "
+            "recycled = ?6, blocked = ?7, cancelled = ?8, failed = ?9, "
+            "recycled_logical_bytes = ?10, unexpected_permanent_removal = ?11, "
+            "status = ?12, uncertain = ?13, selected_count = ?14, "
+            "eligible_count = ?15, selected_logical_bytes = ?16, "
+            "eligible_logical_bytes = ?17 WHERE id = ?1;");
+        stmt.bindInt64(1, static_cast<std::int64_t>(receipt.operationId));
+        stmt.bindInt64(2, static_cast<std::int64_t>(receipt.requestedAt));
+        stmt.bindInt64(3, static_cast<std::int64_t>(receipt.confirmedAt));
+        stmt.bindInt64(4, static_cast<std::int64_t>(receipt.completedAt));
+        stmt.bindInt64(5, static_cast<std::int64_t>(receipt.attempted));
+        stmt.bindInt64(6, static_cast<std::int64_t>(receipt.recycled));
+        stmt.bindInt64(7, static_cast<std::int64_t>(receipt.blocked));
+        stmt.bindInt64(8, static_cast<std::int64_t>(receipt.cancelled));
+        stmt.bindInt64(9, static_cast<std::int64_t>(receipt.failed));
+        stmt.bindInt64(10, static_cast<std::int64_t>(receipt.recycledLogicalBytes));
+        stmt.bindInt64(11, receipt.unexpectedPermanentRemoval ? 1 : 0);
+        stmt.bindText(12, toString(receipt.status));
+        stmt.bindInt64(13, static_cast<std::int64_t>(receipt.uncertain));
+        stmt.bindInt64(14, static_cast<std::int64_t>(receipt.selectedCount));
+        stmt.bindInt64(15, static_cast<std::int64_t>(receipt.eligibleCount));
+        stmt.bindInt64(16, static_cast<std::int64_t>(receipt.selectedLogicalBytes));
+        stmt.bindInt64(17, static_cast<std::int64_t>(receipt.eligibleLogicalBytes));
+        stmt.stepDone();
+        txn.commit();
+        return {};
+    } catch (const SqliteError& ex) {
+        return mapWriteError(ex);
+    }
+}
+
+CleanupReviewStatus CleanupReviewStore::reconcileIncompleteMaintenance()
+{
+    if (!isOpen() || !tableExists(m_db, "maintenance_operations")) {
+        return {};
+    }
+    try {
+        SqliteTxn txn(m_db);
+        if (tableExists(m_db, "maintenance_receipt_items")) {
+            SqliteStmt attempting(
+                m_db,
+                "UPDATE maintenance_receipt_items SET result = 'Uncertain', "
+                "detail = CASE WHEN detail = '' OR detail = 'Recycle in progress' "
+                "THEN 'Interrupted while recycling; outcome is Uncertain' "
+                "ELSE detail END WHERE result = 'Attempting';");
+            attempting.stepDone();
+        }
+        if (columnExists(m_db, "maintenance_operations", "status")) {
+            std::vector<std::uint64_t> executing;
+            {
+                SqliteStmt ops(
+                    m_db,
+                    "SELECT id FROM maintenance_operations "
+                    "WHERE status = 'Executing';");
+                while (ops.step()) {
+                    executing.push_back(
+                        static_cast<std::uint64_t>(ops.columnInt64(0)));
+                }
+            }
+            for (const auto id : executing) {
+                recountOperation(m_db, id);
+                const auto status = statusFromItems(m_db, id);
+                SqliteStmt update(
+                    m_db,
+                    "UPDATE maintenance_operations SET status = ?2 WHERE id = ?1;");
+                update.bindInt64(1, static_cast<std::int64_t>(id));
+                update.bindText(2, toString(status));
+                update.stepDone();
+            }
+        }
+        txn.commit();
+        return {};
+    } catch (const SqliteError& ex) {
+        return mapWriteError(ex);
+    }
+}
+
+CleanupReviewStatus CleanupReviewStore::loadMaintenanceReceipts(
+    std::vector<MaintenanceReceipt>& out)
+{
+    out.clear();
+    if (!isOpen() || !tableExists(m_db, "maintenance_operations")) {
+        return {};
+    }
+    if (m_failNextMaintenanceRead) {
+        m_failNextMaintenanceRead = false;
+        return makeStatus(CleanupReviewError::IoFailed,
+                          "Failed to read Recycle Bin history.");
+    }
+    try {
+        const bool hasStatus =
+            columnExists(m_db, "maintenance_operations", "status");
+        const bool hasUncertain =
+            columnExists(m_db, "maintenance_operations", "uncertain");
+        const bool hasSelected =
+            columnExists(m_db, "maintenance_operations", "selected_count");
+        SqliteStmt stmt(
+            m_db,
+            hasStatus
+                ? "SELECT id, requested_at, confirmed_at, completed_at, "
+                  "attempted, recycled, blocked, cancelled, failed, "
+                  "recycled_logical_bytes, unexpected_permanent_removal, "
+                  "status, uncertain, selected_count, eligible_count, "
+                  "selected_logical_bytes, eligible_logical_bytes "
+                  "FROM maintenance_operations ORDER BY id;"
+                : "SELECT id, requested_at, confirmed_at, completed_at, "
+                  "attempted, recycled, blocked, cancelled, failed, "
+                  "recycled_logical_bytes, unexpected_permanent_removal "
+                  "FROM maintenance_operations ORDER BY id;");
         while (stmt.step()) {
             MaintenanceReceipt receipt;
             receipt.operationId =
@@ -1372,6 +1834,24 @@ std::vector<MaintenanceReceipt> CleanupReviewStore::loadMaintenanceReceipts()
             receipt.recycledLogicalBytes =
                 static_cast<ByteSize>(stmt.columnInt64(9));
             receipt.unexpectedPermanentRemoval = stmt.columnInt64(10) != 0;
+            if (hasStatus) {
+                receipt.status =
+                    parseMaintenanceOperationStatus(stmt.columnText(11));
+                if (hasUncertain) {
+                    receipt.uncertain =
+                        static_cast<std::uint64_t>(stmt.columnInt64(12));
+                }
+                if (hasSelected) {
+                    receipt.selectedCount =
+                        static_cast<std::uint64_t>(stmt.columnInt64(13));
+                    receipt.eligibleCount =
+                        static_cast<std::uint64_t>(stmt.columnInt64(14));
+                    receipt.selectedLogicalBytes =
+                        static_cast<ByteSize>(stmt.columnInt64(15));
+                    receipt.eligibleLogicalBytes =
+                        static_cast<ByteSize>(stmt.columnInt64(16));
+                }
+            }
             out.push_back(std::move(receipt));
         }
         SqliteStmt items(
@@ -1386,67 +1866,8 @@ std::vector<MaintenanceReceipt> CleanupReviewStore::loadMaintenanceReceipts()
             MaintenanceItemReceipt row;
             row.reviewId = static_cast<std::uint64_t>(items.columnInt64(1));
             row.path = items.columnText16(2);
-            const auto resultText = items.columnText(3);
-            if (resultText == "Recycled") {
-                row.result = MaintenanceItemResult::Recycled;
-            } else if (resultText == "BlockedPreflight") {
-                row.result = MaintenanceItemResult::BlockedPreflight;
-            } else if (resultText == "BlockedFinalGuard") {
-                row.result = MaintenanceItemResult::BlockedFinalGuard;
-            } else if (resultText == "Cancelled") {
-                row.result = MaintenanceItemResult::Cancelled;
-            } else if (resultText == "NotAttempted") {
-                row.result = MaintenanceItemResult::NotAttempted;
-            } else if (resultText == "AccessDenied") {
-                row.result = MaintenanceItemResult::AccessDenied;
-            } else if (resultText == "ShellError") {
-                row.result = MaintenanceItemResult::ShellError;
-            } else if (resultText == "OperationAborted") {
-                row.result = MaintenanceItemResult::OperationAborted;
-            } else if (resultText == "UnexpectedPermanentRemoval") {
-                row.result = MaintenanceItemResult::UnexpectedPermanentRemoval;
-            } else {
-                row.result = MaintenanceItemResult::UnknownResult;
-            }
-            const auto blockText = items.columnText(4);
-            if (blockText == "UnsupportedType") {
-                row.blockReason = MaintenanceBlockReason::UnsupportedType;
-            } else if (blockText == "ReparsePoint") {
-                row.blockReason = MaintenanceBlockReason::ReparsePoint;
-            } else if (blockText == "IdentityUnavailable") {
-                row.blockReason = MaintenanceBlockReason::IdentityUnavailable;
-            } else if (blockText == "IdentityMismatch") {
-                row.blockReason = MaintenanceBlockReason::IdentityMismatch;
-            } else if (blockText == "ChangedSinceReview") {
-                row.blockReason = MaintenanceBlockReason::ChangedSinceReview;
-            } else if (blockText == "Missing") {
-                row.blockReason = MaintenanceBlockReason::Missing;
-            } else if (blockText == "AccessDenied") {
-                row.blockReason = MaintenanceBlockReason::AccessDenied;
-            } else if (blockText == "Protected") {
-                row.blockReason = MaintenanceBlockReason::Protected;
-            } else if (blockText == "Sensitive") {
-                row.blockReason = MaintenanceBlockReason::Sensitive;
-            } else if (blockText == "UnknownLocation") {
-                row.blockReason = MaintenanceBlockReason::UnknownLocation;
-            } else if (blockText == "EmptyPath") {
-                row.blockReason = MaintenanceBlockReason::EmptyPath;
-            } else if (blockText == "RootPath") {
-                row.blockReason = MaintenanceBlockReason::RootPath;
-            } else if (blockText == "RecycleUnavailable") {
-                row.blockReason = MaintenanceBlockReason::RecycleUnavailable;
-            } else if (blockText == "SameIdentityAlreadySelected") {
-                row.blockReason =
-                    MaintenanceBlockReason::SameIdentityAlreadySelected;
-            } else if (blockText == "AlreadyRecycled") {
-                row.blockReason = MaintenanceBlockReason::AlreadyRecycled;
-            } else if (blockText == "RequiresElevation") {
-                row.blockReason = MaintenanceBlockReason::RequiresElevation;
-            } else if (blockText == "ProbeError") {
-                row.blockReason = MaintenanceBlockReason::ProbeError;
-            } else {
-                row.blockReason = MaintenanceBlockReason::None;
-            }
+            row.result = parseMaintenanceItemResult(items.columnText(3));
+            row.blockReason = parseMaintenanceBlockReason(items.columnText(4));
             row.hresult = static_cast<std::int32_t>(items.columnInt64(5));
             row.nativeError = static_cast<std::uint32_t>(items.columnInt64(6));
             row.recycleParsingName = items.columnText(7);
@@ -1462,16 +1883,26 @@ std::vector<MaintenanceReceipt> CleanupReviewStore::loadMaintenanceReceipts()
                 }
             }
         }
-    } catch (const SqliteError&) {
         return {};
+    } catch (const SqliteError& ex) {
+        out.clear();
+        const auto status = mapWriteError(ex);
+        if (status.error == CleanupReviewError::LockFailed) {
+            return status;
+        }
+        return makeStatus(CleanupReviewError::IoFailed,
+                          "Failed to read Recycle Bin history.");
     }
-    return out;
 }
 
 CleanupReviewStatus CleanupReviewController::open(const std::wstring& dbPath)
 {
     CleanupReviewStore candidate;
     auto status = candidate.open(dbPath);
+    if (!status.ok) {
+        return status;
+    }
+    status = candidate.reconcileIncompleteMaintenance();
     if (!status.ok) {
         return status;
     }
@@ -1666,9 +2097,57 @@ CleanupReviewStatus CleanupReviewController::recordMaintenance(
     return persist;
 }
 
+CleanupReviewStatus CleanupReviewController::beginMaintenance(
+    MaintenanceReceipt& receipt)
+{
+    if (!m_store.isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    return m_store.beginMaintenanceOperation(receipt);
+}
+
+CleanupReviewStatus CleanupReviewController::checkpointMaintenance(
+    std::uint64_t operationId,
+    const MaintenanceItemReceipt& item,
+    ByteSize recycledLogicalBytes)
+{
+    if (!m_store.isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    auto status =
+        m_store.checkpointMaintenanceItem(operationId, item, recycledLogicalBytes);
+    if (!status.ok) {
+        return status;
+    }
+    if (item.result == MaintenanceItemResult::Recycled) {
+        (void)m_review.setLifecycle(item.reviewId, CleanupItemLifecycle::Recycled);
+    }
+    return status;
+}
+
+CleanupReviewStatus CleanupReviewController::completeMaintenance(
+    const MaintenanceReceipt& receipt)
+{
+    if (!m_store.isOpen()) {
+        return makeStatus(CleanupReviewError::NotOpen,
+                          "Cleanup review database is not open.");
+    }
+    return m_store.completeMaintenanceOperation(receipt);
+}
+
+CleanupReviewStatus CleanupReviewController::loadMaintenanceReceipts(
+    std::vector<MaintenanceReceipt>& out)
+{
+    return m_store.loadMaintenanceReceipts(out);
+}
+
 std::vector<MaintenanceReceipt> CleanupReviewController::maintenanceReceipts()
 {
-    return m_store.loadMaintenanceReceipts();
+    std::vector<MaintenanceReceipt> out;
+    (void)m_store.loadMaintenanceReceipts(out);
+    return out;
 }
 
 OrdinaryLocationStatus parseLocationStatus(std::string_view text)
