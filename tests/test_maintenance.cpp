@@ -85,6 +85,30 @@ public:
     }
 };
 
+class MemoryJournal final : public IMaintenanceJournal {
+public:
+    struct Row {
+        std::uint64_t operationId = 0;
+        MaintenanceItemReceipt item{};
+        ByteSize recycledBytes = 0;
+    };
+    std::vector<Row> rows;
+    std::size_t failOn = 0;
+    std::size_t calls = 0;
+
+    bool checkpointItem(std::uint64_t operationId,
+                        const MaintenanceItemReceipt& item,
+                        ByteSize recycledLogicalBytes) override
+    {
+        ++calls;
+        if (failOn != 0 && calls == failOn) {
+            return false;
+        }
+        rows.push_back({operationId, item, recycledLogicalBytes});
+        return true;
+    }
+};
+
 class ScriptedRecycle final : public IRecycleOperation {
 public:
     std::vector<MaintenanceItemResult> script;
@@ -477,4 +501,427 @@ SPACELENS_TEST(Maintenance_declaration_removed_between_preflight_and_final_guard
                          MaintenanceItemResult::BlockedFinalGuard);
     SPACELENS_REQUIRE_EQ(receipt.items.front().blockReason,
                          MaintenanceBlockReason::UnknownLocation);
+}
+
+SPACELENS_TEST(MaintenanceV2_1_successful_single_file_recycle)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"one.bin"), 40, 100);
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    ScriptedRecycle recycle;
+    MemoryJournal journal;
+    const auto receipt = executeMaintenancePlan(
+        plan, reader, recycle, 1, {}, {}, &journal, 9);
+    SPACELENS_REQUIRE_EQ(recycle.calls, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.recycled, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.status, MaintenanceOperationStatus::Completed);
+    SPACELENS_REQUIRE_EQ(journal.rows.front().item.result,
+                         MaintenanceItemResult::Attempting);
+    SPACELENS_REQUIRE_EQ(journal.rows.back().item.result,
+                         MaintenanceItemResult::Recycled);
+}
+
+SPACELENS_TEST(MaintenanceV2_2_successful_multi_file_batch)
+{
+    CleanupReview review;
+    auto a = fileCandidate(ordinaryPath(L"a.bin"), 41, 10);
+    auto b = fileCandidate(ordinaryPath(L"b.bin"), 42, 20);
+    const auto id1 = review.add(a);
+    const auto id2 = review.add(b);
+    MapReader reader;
+    reader.probes[a.path] = presentProbe(a.objectEvidence);
+    reader.probes[b.path] = presentProbe(b.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id1, id2}, reader, "t");
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 2ULL);
+    SPACELENS_REQUIRE_EQ(receipt.recycled, 2ULL);
+    SPACELENS_REQUIRE_EQ(receipt.status, MaintenanceOperationStatus::Completed);
+}
+
+SPACELENS_TEST(MaintenanceV2_3_one_blocked_plus_one_eligible)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"ok.bin"), 43, 10);
+    auto dir = fileCandidate(ordinaryPath(L"folder"), 44, 0);
+    dir.kind = ItemKind::Directory;
+    dir.objectEvidence.kind = ItemKind::Directory;
+    const auto id1 = review.add(file);
+    const auto id2 = review.add(dir);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    reader.probes[dir.path] = presentProbe(dir.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id1, id2}, reader, "t");
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.recycled, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.blocked, 1ULL);
+}
+
+SPACELENS_TEST(MaintenanceV2_4_changed_metadata_after_prepare)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"grow.bin"), 45, 10);
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    auto live = file.objectEvidence;
+    live.logicalSize = 99;
+    reader.probes[file.path] = presentProbe(live);
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().result,
+                         MaintenanceItemResult::BlockedFinalGuard);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().blockReason,
+                         MaintenanceBlockReason::ChangedSinceReview);
+}
+
+SPACELENS_TEST(MaintenanceV2_5_changed_identity_after_prepare)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"swap.bin"), 46, 10);
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    auto live = file.objectEvidence;
+    live.identity = strongId(99);
+    reader.probes[file.path] = presentProbe(live);
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().blockReason,
+                         MaintenanceBlockReason::IdentityMismatch);
+}
+
+SPACELENS_TEST(MaintenanceV2_6_file_disappears_after_prepare)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"gone.bin"), 47, 10);
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    CleanupMetadataProbe missing;
+    missing.outcome = CleanupMetadataProbeOutcome::Missing;
+    reader.probes[file.path] = missing;
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().blockReason,
+                         MaintenanceBlockReason::Missing);
+}
+
+SPACELENS_TEST(MaintenanceV2_7_final_safety_classification_changes)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"now-protected.bin"), 48, 10);
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(
+        plan, reader, recycle, 1, {}, OrdinaryLocationPolicy{});
+    // Path is still Ordinary via classifyLocation of Projects path.
+    // Force Sensitive by using a Sensitive path in the planned item.
+    MaintenancePlan mutated = plan;
+    mutated.items.front().path = L"C:\\Users\\TestUser\\AppData\\Local\\x.bin";
+    reader.probes[mutated.items.front().path] =
+        presentProbe(file.objectEvidence);
+    ScriptedRecycle recycle2;
+    const auto changed = executeMaintenancePlan(
+        mutated, reader, recycle2, 1, {}, OrdinaryLocationPolicy{});
+    SPACELENS_REQUIRE_EQ(recycle2.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(changed.items.front().blockReason,
+                         MaintenanceBlockReason::Sensitive);
+    (void)receipt;
+}
+
+SPACELENS_TEST(MaintenanceV2_8_reparse_appears_after_prepare)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"link.bin"), 49, 10);
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    reader.probes[file.path] = presentProbe(file.objectEvidence, true);
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().blockReason,
+                         MaintenanceBlockReason::ReparsePoint);
+}
+
+SPACELENS_TEST(MaintenanceV2_9_recycle_unavailable_after_prepare)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"nr.bin"), 50, 10);
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(
+        plan, reader, recycle, 1, {}, {}, nullptr, 0,
+        [](const MaintenancePlanItem&, std::string* detail) {
+            if (detail != nullptr) {
+                *detail = "recycle gone";
+            }
+            return false;
+        });
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().result,
+                         MaintenanceItemResult::BlockedFinalGuard);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().blockReason,
+                         MaintenanceBlockReason::RecycleUnavailable);
+}
+
+SPACELENS_TEST(MaintenanceV2_12_cancel_before_first_item)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"first.bin"), 51, 10);
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    ScriptedRecycle recycle;
+    const auto receipt =
+        executeMaintenancePlan(plan, reader, recycle, 1, []() { return true; });
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.cancelled, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().result,
+                         MaintenanceItemResult::Cancelled);
+    SPACELENS_REQUIRE_EQ(receipt.status, MaintenanceOperationStatus::Cancelled);
+}
+
+SPACELENS_TEST(MaintenanceV2_14_recycle_failure_source_remaining_continues)
+{
+    CleanupReview review;
+    auto a = fileCandidate(ordinaryPath(L"fail.bin"), 52, 10);
+    auto b = fileCandidate(ordinaryPath(L"next.bin"), 53, 20);
+    const auto id1 = review.add(a);
+    const auto id2 = review.add(b);
+    MapReader reader;
+    reader.probes[a.path] = presentProbe(a.objectEvidence);
+    reader.probes[b.path] = presentProbe(b.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id1, id2}, reader, "t");
+    ScriptedRecycle recycle;
+    recycle.script = {MaintenanceItemResult::ShellError,
+                      MaintenanceItemResult::Recycled};
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 2ULL);
+    SPACELENS_REQUIRE_EQ(receipt.failed, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.recycled, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.status, MaintenanceOperationStatus::Completed);
+}
+
+SPACELENS_TEST(MaintenanceV2_16_receipt_persist_failure_does_not_retry_recycle)
+{
+    CleanupReview review;
+    auto a = fileCandidate(ordinaryPath(L"mut.bin"), 54, 10);
+    auto b = fileCandidate(ordinaryPath(L"later.bin"), 55, 20);
+    const auto id1 = review.add(a);
+    const auto id2 = review.add(b);
+    MapReader reader;
+    reader.probes[a.path] = presentProbe(a.objectEvidence);
+    reader.probes[b.path] = presentProbe(b.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id1, id2}, reader, "t");
+    ScriptedRecycle recycle;
+    MemoryJournal journal;
+    journal.failOn = 2;
+    const auto receipt = executeMaintenancePlan(
+        plan, reader, recycle, 1, {}, {}, &journal, 3);
+    SPACELENS_REQUIRE_EQ(recycle.calls, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.recycled, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.uncertain, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.status, MaintenanceOperationStatus::Uncertain);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().result,
+                         MaintenanceItemResult::Uncertain);
+    SPACELENS_REQUIRE_EQ(receipt.items.back().result,
+                         MaintenanceItemResult::NotAttempted);
+}
+
+SPACELENS_TEST(MaintenanceV2_16b_attempting_persist_failure_skips_recycle)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"skip.bin"), 56, 10);
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    ScriptedRecycle recycle;
+    MemoryJournal journal;
+    journal.failOn = 1;
+    const auto receipt = executeMaintenancePlan(
+        plan, reader, recycle, 1, {}, {}, &journal, 4);
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(receipt.uncertain, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().result,
+                         MaintenanceItemResult::Uncertain);
+}
+
+SPACELENS_TEST(MaintenanceV2_20_stale_prepared_plan)
+{
+    const FileTimeTicks prepared = 1'000'000;
+    SPACELENS_REQUIRE(
+        !isMaintenancePlanStale(prepared, prepared + 1'000));
+    SPACELENS_REQUIRE(isMaintenancePlanStale(
+        prepared, prepared + kMaintenancePlanMaxAgeTicks + 1));
+    SPACELENS_REQUIRE(isMaintenancePlanStale(0, prepared));
+    SPACELENS_REQUIRE_EQ(
+        evaluateMaintenanceConfirmGate(true, false, true, prepared,
+                                       prepared + kMaintenancePlanMaxAgeTicks + 1),
+        MaintenanceConfirmGate::StalePlan);
+}
+
+SPACELENS_TEST(MaintenanceV2_21_confirmation_double_submit)
+{
+    SPACELENS_REQUIRE_EQ(
+        evaluateMaintenanceConfirmGate(true, true, false, 10, 11),
+        MaintenanceConfirmGate::AlreadyExecuting);
+    SPACELENS_REQUIRE_EQ(
+        evaluateMaintenanceConfirmGate(false, false, false, 10, 11),
+        MaintenanceConfirmGate::NotPrepared);
+    SPACELENS_REQUIRE_EQ(
+        evaluateMaintenanceConfirmGate(true, false, true, 10, 11),
+        MaintenanceConfirmGate::Ok);
+}
+
+SPACELENS_TEST(MaintenanceV2_22_reopening_completed_operation_is_blocked)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"done.bin"), 57, 10);
+    file.lifecycle = CleanupItemLifecycle::Recycled;
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(plan.items.front().blockReason,
+                         MaintenanceBlockReason::AlreadyRecycled);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().result,
+                         MaintenanceItemResult::BlockedPreflight);
+}
+
+SPACELENS_TEST(MaintenanceV2_23_uncertain_identity_cannot_execute_again)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"maybe.bin"), 58, 10);
+    const auto id = review.add(file);
+    MaintenanceReceipt prior;
+    MaintenanceItemReceipt uncertain;
+    uncertain.expectedIdentity = file.objectEvidence.identity;
+    uncertain.result = MaintenanceItemResult::Uncertain;
+    prior.items.push_back(uncertain);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan =
+        prepareMaintenancePlan(review, {id}, reader, "t", {}, {prior});
+    SPACELENS_REQUIRE_EQ(plan.eligibleCount, 0ULL);
+    SPACELENS_REQUIRE_EQ(plan.items.front().blockReason,
+                         MaintenanceBlockReason::UncertainPriorOutcome);
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+}
+
+SPACELENS_TEST(MaintenanceV2_10_same_identity_selected_twice)
+{
+    CleanupReview review;
+    auto a = fileCandidate(ordinaryPath(L"alias-a.bin"), 59, 1000);
+    auto b = fileCandidate(ordinaryPath(L"alias-b.bin"), 59, 1000);
+    a.id = 1;
+    b.id = 2;
+    review.resetTo({a, b}, 3);
+    MapReader reader;
+    reader.probes[a.path] = presentProbe(a.objectEvidence);
+    reader.probes[b.path] = presentProbe(b.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {1, 2}, reader, "t");
+    SPACELENS_REQUIRE_EQ(plan.eligibleCount, 1ULL);
+    bool sawAlias = false;
+    for (const auto& item : plan.items) {
+        if (item.blockReason ==
+            MaintenanceBlockReason::SameIdentityAlreadySelected) {
+            sawAlias = true;
+        }
+    }
+    SPACELENS_REQUIRE(sawAlias);
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.recycled, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.blocked, 1ULL);
+}
+
+SPACELENS_TEST(MaintenanceV2_11_already_recycled_item)
+{
+    CleanupReview review;
+    auto file = fileCandidate(ordinaryPath(L"old.bin"), 60, 10);
+    file.lifecycle = CleanupItemLifecycle::Recycled;
+    const auto id = review.add(file);
+    MapReader reader;
+    reader.probes[file.path] = presentProbe(file.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id}, reader, "t");
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE_EQ(recycle.calls, 0ULL);
+    SPACELENS_REQUIRE_EQ(plan.items.front().blockReason,
+                         MaintenanceBlockReason::AlreadyRecycled);
+    SPACELENS_REQUIRE_EQ(receipt.items.front().result,
+                         MaintenanceItemResult::BlockedPreflight);
+}
+
+SPACELENS_TEST(MaintenanceV2_13_cancel_after_first_success)
+{
+    CleanupReview review;
+    auto first = fileCandidate(ordinaryPath(L"keep.bin"), 61, 10);
+    auto second = fileCandidate(ordinaryPath(L"later.bin"), 62, 20);
+    const auto id1 = review.add(first);
+    const auto id2 = review.add(second);
+    MapReader reader;
+    reader.probes[first.path] = presentProbe(first.objectEvidence);
+    reader.probes[second.path] = presentProbe(second.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id1, id2}, reader, "t");
+    ScriptedRecycle recycle;
+    const auto receipt = executeMaintenancePlan(
+        plan, reader, recycle, 1, [&]() { return recycle.calls >= 1; });
+    SPACELENS_REQUIRE_EQ(recycle.calls, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.recycled, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.cancelled, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.status, MaintenanceOperationStatus::Cancelled);
+    SPACELENS_REQUIRE_EQ(receipt.items.back().result,
+                         MaintenanceItemResult::Cancelled);
+}
+
+SPACELENS_TEST(MaintenanceV2_15_unexpected_permanent_removal_hard_stop)
+{
+    CleanupReview review;
+    auto first = fileCandidate(ordinaryPath(L"one.bin"), 63, 10);
+    auto second = fileCandidate(ordinaryPath(L"two.bin"), 64, 20);
+    const auto id1 = review.add(first);
+    const auto id2 = review.add(second);
+    MapReader reader;
+    reader.probes[first.path] = presentProbe(first.objectEvidence);
+    reader.probes[second.path] = presentProbe(second.objectEvidence);
+    const auto plan = prepareMaintenancePlan(review, {id1, id2}, reader, "t");
+    ScriptedRecycle recycle;
+    recycle.script = {MaintenanceItemResult::UnexpectedPermanentRemoval,
+                      MaintenanceItemResult::Recycled};
+    const auto receipt = executeMaintenancePlan(plan, reader, recycle, 1, {});
+    SPACELENS_REQUIRE(receipt.unexpectedPermanentRemoval);
+    SPACELENS_REQUIRE_EQ(recycle.calls, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.failed, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipt.status, MaintenanceOperationStatus::HardStopped);
+    SPACELENS_REQUIRE_EQ(receipt.items.back().result,
+                         MaintenanceItemResult::NotAttempted);
 }

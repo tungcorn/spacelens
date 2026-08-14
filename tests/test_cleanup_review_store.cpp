@@ -97,6 +97,21 @@ bool tablePresent(const std::wstring& dbPath, const char* name)
     return stmt.step();
 }
 
+bool columnPresent(const std::wstring& dbPath,
+                   const char* table,
+                   const char* column)
+{
+    SqliteDb db(dbPath, SqliteOpen::ReadOnly);
+    const std::string sql = std::string("PRAGMA table_info(") + table + ");";
+    SqliteStmt stmt(db, sql.c_str());
+    while (stmt.step()) {
+        if (stmt.columnText(1) == column) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::size_t userTableCount(const std::wstring& dbPath)
 {
     SqliteDb db(dbPath, SqliteOpen::ReadOnly);
@@ -133,7 +148,7 @@ SPACELENS_TEST(CleanupReviewStore_schema_v1_created)
     SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "review_schema_version"),
                          std::string("1"));
     SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "maintenance_schema_version"),
-                         std::string("1"));
+                         std::string("2"));
     SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "review_items"));
     SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "review_validation"));
     SPACELENS_REQUIRE(tablePresent(dir.dbPath(), "meta"));
@@ -862,4 +877,271 @@ SPACELENS_TEST(CleanupReviewStore_maintenance_receipt_and_lifecycle_round_trip)
                          MaintenanceBlockReason::UnknownLocation);
     SPACELENS_REQUIRE(identitiesEqual(receipts.front().items[0].expectedIdentity,
                                       strongId(30)));
+}
+
+SPACELENS_TEST(MaintenanceV2_17_lifecycle_save_failure_reconstructed_on_reopen)
+{
+    TempDir dir;
+    CleanupReviewController controller;
+    SPACELENS_REQUIRE(controller.open(dir.dbPath()));
+    auto file = fileCandidate(L"C:\\Users\\TestUser\\Projects\\gone.bin", 64, 40);
+    const auto added = controller.addDetailed(std::move(file));
+    SPACELENS_REQUIRE(added.ok);
+
+    MaintenanceReceipt receipt;
+    receipt.requestedAt = 21;
+    receipt.confirmedAt = 22;
+    receipt.completedAt = 23;
+    receipt.attempted = 1;
+    receipt.recycled = 1;
+    receipt.recycledLogicalBytes = 64;
+    receipt.status = MaintenanceOperationStatus::Completed;
+    MaintenanceItemReceipt recycled;
+    recycled.reviewId = added.add.id;
+    recycled.path = L"C:\\Users\\TestUser\\Projects\\gone.bin";
+    recycled.result = MaintenanceItemResult::Recycled;
+    recycled.recycleParsingName = "recycle://v2-17";
+    recycled.expectedIdentity = strongId(40);
+    receipt.items.push_back(std::move(recycled));
+
+    controller.failNextWrite();
+    const auto recorded = controller.recordMaintenance(std::move(receipt));
+    SPACELENS_REQUIRE(!recorded.ok);
+    SPACELENS_REQUIRE_EQ(recorded.error, CleanupReviewError::WriteFailed);
+    SPACELENS_REQUIRE_EQ(
+        controller.review().findById(added.add.id)->lifecycle,
+        CleanupItemLifecycle::Active);
+
+    CleanupReviewController reopened;
+    SPACELENS_REQUIRE(reopened.open(dir.dbPath()));
+    SPACELENS_REQUIRE_EQ(
+        reopened.review().findById(added.add.id)->lifecycle,
+        CleanupItemLifecycle::Recycled);
+    const auto receipts = reopened.maintenanceReceipts();
+    SPACELENS_REQUIRE_EQ(receipts.size(), 1u);
+    SPACELENS_REQUIRE_EQ(receipts.front().items.size(), 1u);
+    SPACELENS_REQUIRE_EQ(receipts.front().items.front().result,
+                         MaintenanceItemResult::Recycled);
+}
+
+SPACELENS_TEST(MaintenanceV2_18_completed_receipt_repairs_stale_lifecycle)
+{
+    TempDir dir;
+    CleanupReviewController controller;
+    SPACELENS_REQUIRE(controller.open(dir.dbPath()));
+    auto file = fileCandidate(L"C:\\Users\\TestUser\\Projects\\stale.bin", 32, 41);
+    const auto added = controller.addDetailed(std::move(file));
+    SPACELENS_REQUIRE(added.ok);
+
+    MaintenanceReceipt receipt;
+    receipt.status = MaintenanceOperationStatus::Completed;
+    receipt.attempted = 1;
+    receipt.recycled = 1;
+    receipt.recycledLogicalBytes = 32;
+    MaintenanceItemReceipt recycled;
+    recycled.reviewId = added.add.id;
+    recycled.path = L"C:\\Users\\TestUser\\Projects\\stale.bin";
+    recycled.result = MaintenanceItemResult::Recycled;
+    recycled.expectedIdentity = strongId(41);
+    receipt.items.push_back(std::move(recycled));
+    SPACELENS_REQUIRE(controller.recordMaintenance(std::move(receipt)).ok);
+    controller.close();
+
+    {
+        SqliteDb db(dir.dbPath(), SqliteOpen::ReadWrite | SqliteOpen::Create);
+        db.exec("UPDATE review_items SET lifecycle = 'Active';");
+    }
+
+    CleanupReviewController reopened;
+    SPACELENS_REQUIRE(reopened.open(dir.dbPath()));
+    SPACELENS_REQUIRE_EQ(
+        reopened.review().findById(added.add.id)->lifecycle,
+        CleanupItemLifecycle::Recycled);
+}
+
+SPACELENS_TEST(MaintenanceV2_19_restart_attempting_is_uncertain_not_recycled)
+{
+    TempDir dir;
+    CleanupReviewController controller;
+    SPACELENS_REQUIRE(controller.open(dir.dbPath()));
+    auto file = fileCandidate(L"C:\\Users\\TestUser\\Projects\\maybe.bin", 16, 42);
+    const auto added = controller.addDetailed(std::move(file));
+    SPACELENS_REQUIRE(added.ok);
+
+    MaintenanceReceipt seed;
+    seed.requestedAt = 31;
+    seed.confirmedAt = 32;
+    seed.selectedCount = 1;
+    seed.eligibleCount = 1;
+    seed.selectedLogicalBytes = 16;
+    seed.eligibleLogicalBytes = 16;
+    SPACELENS_REQUIRE(controller.beginMaintenance(seed).ok);
+    SPACELENS_REQUIRE(seed.operationId != 0);
+
+    MaintenanceItemReceipt attempting;
+    attempting.reviewId = added.add.id;
+    attempting.path = L"C:\\Users\\TestUser\\Projects\\maybe.bin";
+    attempting.result = MaintenanceItemResult::Attempting;
+    attempting.detail = "Recycle in progress";
+    attempting.expectedIdentity = strongId(42);
+    SPACELENS_REQUIRE(
+        controller.checkpointMaintenance(seed.operationId, attempting, 0).ok);
+    SPACELENS_REQUIRE_EQ(
+        controller.review().findById(added.add.id)->lifecycle,
+        CleanupItemLifecycle::Active);
+    controller.close();
+
+    CleanupReviewController reopened;
+    SPACELENS_REQUIRE(reopened.open(dir.dbPath()));
+    SPACELENS_REQUIRE_EQ(
+        reopened.review().findById(added.add.id)->lifecycle,
+        CleanupItemLifecycle::Active);
+    const auto receipts = reopened.maintenanceReceipts();
+    SPACELENS_REQUIRE_EQ(receipts.size(), 1u);
+    SPACELENS_REQUIRE_EQ(receipts.front().status,
+                         MaintenanceOperationStatus::Uncertain);
+    SPACELENS_REQUIRE_EQ(receipts.front().uncertain, 1ULL);
+    SPACELENS_REQUIRE_EQ(receipts.front().items.front().result,
+                         MaintenanceItemResult::Uncertain);
+    SPACELENS_REQUIRE(receipts.front().items.front().detail.find("Uncertain") !=
+                      std::string::npos);
+}
+
+SPACELENS_TEST(MaintenanceV2_v1_tables_migrate_additively_to_schema_2)
+{
+    TempDir dir;
+    {
+        CleanupReviewController bootstrap;
+        SPACELENS_REQUIRE(bootstrap.open(dir.dbPath()));
+    }
+    {
+        SqliteDb db(dir.dbPath(), SqliteOpen::ReadWrite | SqliteOpen::Create);
+        db.exec("DROP TABLE IF EXISTS maintenance_receipt_items;");
+        db.exec("DROP TABLE IF EXISTS maintenance_operations;");
+        db.exec(
+            "CREATE TABLE maintenance_operations ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+            "requested_at INTEGER NOT NULL DEFAULT 0,"
+            "confirmed_at INTEGER NOT NULL DEFAULT 0,"
+            "completed_at INTEGER NOT NULL DEFAULT 0,"
+            "attempted INTEGER NOT NULL DEFAULT 0,"
+            "recycled INTEGER NOT NULL DEFAULT 0,"
+            "blocked INTEGER NOT NULL DEFAULT 0,"
+            "cancelled INTEGER NOT NULL DEFAULT 0,"
+            "failed INTEGER NOT NULL DEFAULT 0,"
+            "recycled_logical_bytes INTEGER NOT NULL DEFAULT 0,"
+            "unexpected_permanent_removal INTEGER NOT NULL DEFAULT 0);");
+        db.exec(
+            "CREATE TABLE maintenance_receipt_items ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,"
+            "operation_id INTEGER NOT NULL,"
+            "review_item_id INTEGER NOT NULL DEFAULT 0,"
+            "path TEXT NOT NULL DEFAULT '',"
+            "result TEXT NOT NULL,"
+            "block_reason TEXT NOT NULL DEFAULT 'None',"
+            "hresult INTEGER NOT NULL DEFAULT 0,"
+            "native_error INTEGER NOT NULL DEFAULT 0,"
+            "recycle_parsing_name TEXT NOT NULL DEFAULT '',"
+            "detail TEXT NOT NULL DEFAULT '',"
+            "identity_source TEXT NOT NULL DEFAULT 'Unavailable',"
+            "identity_volume INTEGER NOT NULL DEFAULT 0,"
+            "identity_file_id_128 TEXT NOT NULL DEFAULT '');");
+        db.exec(
+            "INSERT OR REPLACE INTO meta(key, value) "
+            "VALUES('maintenance_schema_version', '1');");
+    }
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "maintenance_schema_version"),
+                         std::string("1"));
+    SPACELENS_REQUIRE(!columnPresent(dir.dbPath(), "maintenance_operations",
+                                     "status"));
+
+    CleanupReviewController migrated;
+    SPACELENS_REQUIRE(migrated.open(dir.dbPath()));
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "review_schema_version"),
+                         std::string("1"));
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "maintenance_schema_version"),
+                         std::string("2"));
+    SPACELENS_REQUIRE(columnPresent(dir.dbPath(), "maintenance_operations",
+                                    "status"));
+    SPACELENS_REQUIRE(columnPresent(dir.dbPath(), "maintenance_operations",
+                                    "uncertain"));
+    SPACELENS_REQUIRE(columnPresent(dir.dbPath(), "maintenance_operations",
+                                    "selected_count"));
+    SPACELENS_REQUIRE(columnPresent(dir.dbPath(), "maintenance_operations",
+                                    "eligible_count"));
+    SPACELENS_REQUIRE(columnPresent(dir.dbPath(), "maintenance_operations",
+                                    "selected_logical_bytes"));
+    SPACELENS_REQUIRE(columnPresent(dir.dbPath(), "maintenance_operations",
+                                    "eligible_logical_bytes"));
+}
+
+SPACELENS_TEST(MaintenanceV2_newer_maintenance_schema_fail_closed)
+{
+    TempDir dir;
+    {
+        CleanupReviewController bootstrap;
+        SPACELENS_REQUIRE(bootstrap.open(dir.dbPath()));
+        SPACELENS_REQUIRE(
+            bootstrap.add(fileCandidate(L"C:\\Users\\TestUser\\Projects\\keep.bin",
+                                        8, 43))
+                .ok);
+    }
+    {
+        SqliteDb db(dir.dbPath(), SqliteOpen::ReadWrite | SqliteOpen::Create);
+        db.exec(
+            "INSERT OR REPLACE INTO meta(key, value) "
+            "VALUES('maintenance_schema_version', '99');");
+        db.exec(
+            "INSERT OR REPLACE INTO meta(key, value) "
+            "VALUES('keep_me', 'untouched');");
+    }
+
+    CleanupReviewController controller;
+    const auto opened = controller.open(dir.dbPath());
+    SPACELENS_REQUIRE(!opened.ok);
+    SPACELENS_REQUIRE_EQ(opened.error, CleanupReviewError::SchemaUnsupported);
+    SPACELENS_REQUIRE(!controller.isOpen());
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "maintenance_schema_version"),
+                         std::string("99"));
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "keep_me"),
+                         std::string("untouched"));
+    SPACELENS_REQUIRE_EQ(metaValue(dir.dbPath(), "review_schema_version"),
+                         std::string("1"));
+}
+
+SPACELENS_TEST(MaintenanceV2_history_read_failure_is_fail_closed)
+{
+    TempDir dir;
+    CleanupReviewController controller;
+    SPACELENS_REQUIRE(controller.open(dir.dbPath()));
+    auto file = fileCandidate(L"C:\\Users\\TestUser\\Projects\\maybe.bin", 16, 42);
+    const auto added = controller.addDetailed(std::move(file));
+    SPACELENS_REQUIRE(added.ok);
+
+    MaintenanceReceipt seed;
+    seed.requestedAt = 41;
+    seed.confirmedAt = 42;
+    seed.selectedCount = 1;
+    seed.eligibleCount = 1;
+    SPACELENS_REQUIRE(controller.beginMaintenance(seed).ok);
+    MaintenanceItemReceipt uncertain;
+    uncertain.reviewId = added.add.id;
+    uncertain.path = L"C:\\Users\\TestUser\\Projects\\maybe.bin";
+    uncertain.result = MaintenanceItemResult::Uncertain;
+    uncertain.detail = "Interrupted";
+    uncertain.expectedIdentity = strongId(42);
+    SPACELENS_REQUIRE(
+        controller.checkpointMaintenance(seed.operationId, uncertain, 0).ok);
+
+    controller.failNextMaintenanceRead();
+    std::vector<MaintenanceReceipt> history;
+    const auto loaded = controller.loadMaintenanceReceipts(history);
+    SPACELENS_REQUIRE(!loaded.ok);
+    SPACELENS_REQUIRE_EQ(loaded.error, CleanupReviewError::IoFailed);
+    SPACELENS_REQUIRE(history.empty());
+
+    const auto uiCopy = controller.maintenanceReceipts();
+    SPACELENS_REQUIRE_EQ(uiCopy.size(), 1u);
+    SPACELENS_REQUIRE_EQ(uiCopy.front().items.front().result,
+                         MaintenanceItemResult::Uncertain);
 }
