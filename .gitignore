@@ -7,6 +7,8 @@
 /out/
 /dist/
 /stage/
+/*.tgz
+/packaging/npm/native/
 /cmake-build-*/
 /.tmp-*/
 /.vs/

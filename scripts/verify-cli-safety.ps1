@@ -59,6 +59,8 @@ $destructive = @(
     @("wipe"),
     @("recycle"),
     @("restore"),
+    @("maintenance"),
+    @("keep-one"),
     @("cleanup", "--execute"),
     @("duplicates", "--delete"),
     @("trust"),
