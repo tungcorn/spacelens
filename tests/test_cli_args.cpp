@@ -88,3 +88,28 @@ SPACELENS_TEST(CliArgs_duplicates_rejects_delete)
     auto c = parse({L"spacelens", L"duplicates", L"D:\\", L"--keep-one"});
     SPACELENS_REQUIRE(!c.error.empty());
 }
+
+SPACELENS_TEST(CliArgs_overview_and_opportunities)
+{
+    auto o = parse({L"spacelens", L"overview", L"D:\\data", L"--json"});
+    SPACELENS_REQUIRE(o.error.empty());
+    SPACELENS_REQUIRE(o.command == Command::Overview);
+    SPACELENS_REQUIRE(o.limit == 10);
+    SPACELENS_REQUIRE(o.json);
+
+    auto p = parse({L"spacelens", L"opportunities", L"D:\\data", L"--from-index",
+                    L"--min-size", L"1MB", L"--limit", L"5", L"--json"});
+    SPACELENS_REQUIRE(p.error.empty());
+    SPACELENS_REQUIRE(p.command == Command::Opportunities);
+    SPACELENS_REQUIRE(p.fromIndex);
+    SPACELENS_REQUIRE(p.limit == 5);
+    SPACELENS_REQUIRE(p.minSize.has_value());
+
+    auto q = parse({L"spacelens", L"query", L"D:\\data", L"--dirs", L"--under",
+                    L"D:\\data\\Projects", L"--json"});
+    SPACELENS_REQUIRE(q.error.empty());
+    SPACELENS_REQUIRE(q.under == L"D:\\data\\Projects");
+
+    auto bad = parse({L"spacelens", L"scan", L"D:\\", L"--from-index"});
+    SPACELENS_REQUIRE(!bad.error.empty());
+}

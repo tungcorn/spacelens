@@ -93,6 +93,40 @@ SPACELENS_TEST(Index_build_reopen_query)
     SPACELENS_REQUIRE(q2.hits.front().classification == "DownloadedAiModel");
 }
 
+SPACELENS_TEST(Index_query_path_prefix_under_windows_path)
+{
+    const std::wstring root = L"C:\\SpaceLensIndexUnitTestRoot\\under1";
+    auto scan = makeSyntheticScan(root);
+    auto built = buildIndexFromScan(scan, root, {});
+    SPACELENS_REQUIRE(built.state == IndexBuildState::Completed);
+
+    IndexQuerySpec under;
+    under.includeFiles = true;
+    under.includeDirectories = false;
+    under.pathPrefix = root + L"\\node_modules";
+    under.limit = 20;
+    auto q = queryIndex(root, under);
+    SPACELENS_REQUIRE(q.ok);
+    SPACELENS_REQUIRE(q.returned_items >= 1);
+    for (const auto& hit : q.hits) {
+        const bool underNode =
+            hit.path.find(L"\\node_modules\\") != std::wstring::npos ||
+            (hit.path.size() >= under.pathPrefix.size() &&
+             hit.path.compare(0, under.pathPrefix.size(), under.pathPrefix) == 0);
+        SPACELENS_REQUIRE(underNode);
+        SPACELENS_REQUIRE(hit.path.find(L"\\build\\") == std::wstring::npos);
+        SPACELENS_REQUIRE(hit.path.find(L"large.gguf") == std::wstring::npos);
+    }
+
+    IndexQuerySpec missing;
+    missing.includeFiles = true;
+    missing.pathPrefix = root + L"\\does-not-exist";
+    missing.limit = 20;
+    auto none = queryIndex(root, missing);
+    SPACELENS_REQUIRE(none.ok);
+    SPACELENS_REQUIRE_EQ(none.returned_items, 0ULL);
+}
+
 SPACELENS_TEST(Index_missing_returns_not_found)
 {
     const auto r = queryIndex(L"C:\\SpaceLensDefinitelyNotIndexed\\nope",

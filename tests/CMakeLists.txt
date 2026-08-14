@@ -24,6 +24,7 @@ set(SPACELENS_TEST_SOURCES
     test_index_discovery.cpp
     test_treemap_layout.cpp
     test_index_overview.cpp
+    test_storage_intelligence.cpp
     TestRunner.hpp
     FakeFileEnumerator.hpp
 )

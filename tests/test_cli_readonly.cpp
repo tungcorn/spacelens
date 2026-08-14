@@ -39,8 +39,9 @@ SPACELENS_TEST(CliReadonly_registered_commands_only_safe)
     constexpr std::array allowed{
         Command::Help,         Command::Version,      Command::Scan,
         Command::Top,          Command::Find,         Command::Capabilities,
-        Command::Index,        Command::IndexStatus,  Command::IndexList,
-        Command::IndexRefresh, Command::Query,        Command::Duplicates,
+        Command::Index,         Command::IndexStatus,   Command::IndexList,
+        Command::IndexRefresh,  Command::Query,         Command::Duplicates,
+        Command::Overview,      Command::Opportunities,
     };
     SPACELENS_REQUIRE_EQ(kRegisteredCommands.size(), allowed.size());
     for (const Command c : kRegisteredCommands) {
