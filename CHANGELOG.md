@@ -5,6 +5,18 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+### Changed
+
+- Storage Intelligence V2: sibling-aware developer classification (Rust
+  `target`, .NET `bin`/`obj`, Python venv), Known Folder / temp path
+  evidence, confidence-gated opportunity inclusion, High+≥10 MB Moderate
+  ranking, `opportunity_rank_v2` (strength, then confidence, then bytes),
+  compact `evidence`, group `strongest_candidate_strength`, live
+  `overview.opportunity_summary`, and `--classification` /
+  MCP `classification` on opportunities. Schema stays `schema_version: 1`.
+  Version stays 0.1.3. CLI/MCP remain `filesystem_mutation: false`.
+  See [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
+
 ## [0.1.3] — 2026-08-14
 
 AI-ready storage intelligence release. v0.1.2 stays published and

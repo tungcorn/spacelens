@@ -149,16 +149,21 @@ Bounded, ranked review opportunities from existing classification, reclaim,
 activity, and location-safety analysis. Not "safe to delete".
 
 ```text
-spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D] [--limit N] [--json]
+spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D]
+    [--limit N] [--classification CLASS] [--json]
 ```
 
 Default `--limit` is 20. Default `--min-size` is `1MB`. Default `--older-than`
-is 90 days (old-large files only). JSON includes `groups` (non-overlapping
-aggregates), ranked `opportunities` with reason codes, and
-`unique_review_bytes`. Nested directory candidates are listed with
-`overlapped: true` and are not summed twice. Regenerable developer/build/cache
-areas are included even when recent; unknown/user content appears only when it
-is old and large. Protected locations are omitted.
+is 90 days (old-large files only). JSON includes `ranking_policy`
+(`opportunity_rank_v2`), `groups` (non-overlapping aggregates with
+`strongest_candidate_strength`), ranked `opportunities` with reason codes and
+compact `evidence`, and `unique_review_bytes`. Nested directory candidates are
+listed with `overlapped: true` and are not summed twice. Regenerable
+developer/build/cache areas need Medium or High confidence to enter the list
+(name-only `temp` / `cache` / `build` is excluded). High-confidence regenerable
+items ≥ 10 MB rank Moderate even when recent. Unknown/user content appears only
+when it is old and large. Protected locations are omitted. `--classification`
+restricts to one existing SpaceLens class. This command does not hash files.
 
 See [`docs/AGENT_INTERFACE.md`](AGENT_INTERFACE.md).
 

@@ -160,6 +160,7 @@ cmake --build --preset windows-cli-release --target spacelens
 .\build-cli-release\cli\spacelens.exe capabilities --json
 .\build-cli-release\cli\spacelens.exe overview <folder> --json
 .\build-cli-release\cli\spacelens.exe opportunities <folder> --json
+.\build-cli-release\cli\spacelens.exe opportunities <folder> --classification BuildArtifact --json
 .\build-cli-release\cli\spacelens.exe scan <folder> --json
 .\build-cli-release\cli\spacelens.exe top <folder> --dirs --limit 20 --json
 .\build-cli-release\cli\spacelens.exe index <folder> --json

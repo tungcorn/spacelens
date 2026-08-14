@@ -76,7 +76,10 @@ spacelens overview <path> --json
 
 Read `summary.logical_bytes`, `largest_directories`, and `largest_files`.
 Each consumer includes classification, reclaimability, and location safety.
-A 40 GB VM image can appear here without being an opportunity.
+A 40 GB VM image can appear here without being an opportunity. Live
+`overview` also includes a compact `opportunity_summary` (category
+totals). Indexed overview leaves that array empty so it is not a second
+opportunities dump.
 
 `scan` + `top --dirs` + `top --files` still work but each command rescans.
 `overview` is one scan.
@@ -97,6 +100,7 @@ Read `groups` first (aggregate bytes by deterministic class), then
 | `location_safety` | Where it lives (Protected / Sensitive / Ordinary / Unknown) |
 | `candidate_strength` | Review priority (Strong / Moderate / ReviewOnly / None) |
 | `reason_codes` | Stable machine codes (`developer_dependency`, `old_large_file`, …) |
+| `evidence` | Compact `{ecosystem, marker}` that fired the rule |
 | `logical_bytes` | Bytes involved in this item |
 | `overlapped` | Descendant already covered by a selected ancestor directory |
 
@@ -107,8 +111,15 @@ reports set `unique_review_estimated` when the 200-hit fetch was capped.
 
 There is no `safe_to_delete` and no `potential_reclaim_bytes` headline.
 
-Ranking is deterministic: candidate strength DESC, logical bytes DESC,
-normalized path ASC.
+Ranking policy `opportunity_rank_v2`: candidate strength DESC, confidence
+DESC, logical bytes DESC, normalized path ASC. Regenerable classes need
+Medium or High confidence to enter the list (name-only `temp` / `cache` /
+`build` without project context is excluded). High-confidence regenerable
+items ≥ 10 MB rank Moderate even when recent.
+
+Filter: `spacelens opportunities <path> --classification BuildArtifact`.
+Duplicates are a separate command and are **not** hashed from
+`opportunities`.
 
 Default `--limit` is 20. Default `--min-size` is 1 MB. `truncated` is true
 when more candidates existed.
@@ -123,8 +134,13 @@ spacelens query <indexed-root> --dirs --classification DependencyDirectory --jso
 spacelens find <path> --classification BuildArtifact --json
 ```
 
-Classifications are existing SpaceLens rules (`node_modules`, `build`,
-`.cache`, …). Filename guesses are not invented at query time.
+Classifications are existing SpaceLens rules (`node_modules`, CMake
+markers, Rust `target` next to `Cargo.toml`, .NET `bin`/`obj` next to a
+project file, Python `pyvenv.cfg`, `.cache`, …). A folder merely named
+`build` or `temp` is not enough. Filename guesses are not invented at
+query time. Group objects include `strongest_candidate_strength`.
+Overlapped descendants carry `nested_overlap` and are omitted from unique
+bytes.
 
 ### Which old large files deserve review?
 
@@ -178,7 +194,10 @@ an analysis score.
 
 Protected locations never become opportunities. Sensitive locations cap
 strength at Moderate. User / unknown / archive content is never Strong just
-because it is large or old.
+because it is large or old. Old large archives/installers may appear as
+review items with `old_large_archive` / `old_large_installer`; that is
+not a delete recommendation. Downloads location uses the Windows Known
+Folder, not an English path hardcode.
 
 ## Live vs indexed evidence
 
@@ -243,6 +262,61 @@ User: "My D drive is almost full."
 5. Explain to the human what is large, what looks regenerable, what is old,
    what is duplicated, and what is uncertain
 6. Do **not** delete anything
+
+## Storage Intelligence V2
+
+Coverage and ranking improvements over V1. Schema stays `schema_version: 1`
+(additive). Version stays 0.1.3.
+
+### What improved
+
+- Sibling-aware developer classification (Rust `target`, .NET `bin`/`obj`,
+  Python venv) instead of leaf-name-only guesses
+- Name-only `temp` / `tmp` / `cache` / `build` is no longer enough
+- High-confidence regenerable items ≥ 10 MB rank Moderate even when recent
+- Ranking is `opportunity_rank_v2`: strength, then confidence, then bytes
+- Compact `evidence {ecosystem, marker}` and extra reason codes
+- Live `overview.opportunity_summary` category totals
+- `--classification` / MCP `classification` on opportunities
+
+### Categories and evidence
+
+| Class | Typical evidence |
+| --- | --- |
+| `DependencyDirectory` | `node_modules`; `pyvenv.cfg`; `.venv`/`venv` next to a Python project marker |
+| `BuildArtifact` | CMake cache+files; Rust `target` + `Cargo.toml`/`CACHEDIR.TAG`; .NET `bin`/`obj` + project file; `__pycache__` |
+| `PackageCache` | `.nuget` / `.m2` / `.gradle` / pip-cache names; `packages` under NuGet/.NET context |
+| `IdeCache` | `.vs` / `.idea` / `.vscode` |
+| `TemporaryData` | path under `GetTempPathW`; `.cache`; weak name-only `temp`/`tmp`/`cache` (Low, excluded) |
+| `LogData` | `log`/`logs` directory or `.log` file |
+| `Archive` | zip family, `iso`/`img`, `msi`/`msu`/`cab` — review only when old+large |
+| `DownloadedAiModel` | gguf/onnx/pt/pth/safetensors/ckpt |
+| `ApplicationData` | `.git` |
+| `UserData` / `Unknown` | media/docs or no rule |
+
+### No deletion
+
+Classification is not permission. CLI and MCP stay `read_only: true` and
+`filesystem_mutation: false`. There is no `safe_to_delete`,
+`should_delete`, or `deletion_recommended`.
+
+### Aggregation
+
+`unique_review_bytes` and group `logical_bytes` skip `overlapped`
+descendants (`nested_overlap`). A mixed parent such as `D:\Projects` is
+not itself an opportunity unless a classifier matches it. Groups include
+`strongest_candidate_strength`.
+
+### Known limitations
+
+- Custom build systems without CMake/.NET/Rust/Node/Python markers stay
+  Unknown
+- Application-specific caches not in the table are not invented
+- Write timestamps are advisory; LastAccess cannot produce Strong
+- Indexed opportunities use stored classification; ecosystem may be
+  derived from `rule_id` only
+- `opportunities` does not hash files; call `duplicates` separately
+- Persistent hash cache is not a package-cache classification
 
 ## Related
 
