@@ -5,7 +5,28 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+### Added
+
+- Storage Intelligence / Agent Interface V1: CLI `overview` and `opportunities`
+  compose one live scan (or one published index) into a bounded storage
+  summary and ranked review opportunities. Core types live in
+  `spacelens_core` (`StorageIntelligence`) so a future MCP adapter can reuse
+  them. See [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
+- `query --under PATH` restricts indexed results to a subtree. Windows
+  path prefixes now escape `\` / `%` / `_` before `LIKE ? ESCAPE '\'`, so
+  a prefix such as `D:\Projects\app` matches descendants instead of
+  treating every backslash as the LIKE escape character.
+- `scripts/verify-agent-interface.ps1` generates a temp developer-workstation
+  fixture and checks the agent workflow against the built CLI.
+
 ### Changed
+
+- `find --json` now includes classification, location safety, reclaimability,
+  candidate strength, and explanation. Live scan/top/find JSON reports
+  `"source": "live_scan"`.
+- `capabilities --json` advertises `overview`, `opportunities`,
+  `json_contract_version`, and storage-intelligence feature flags.
+  `filesystem_mutation` remains `false`. Version stays 0.1.2.
 
 - GUI UX V1: Live Scan and Indexed are segmented workspaces (no sidebar).
   Page headers, typographic metrics, Filters popups, first-class palette-aware

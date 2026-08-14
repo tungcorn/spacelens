@@ -1,0 +1,237 @@
+# SpaceLens agent interface
+
+SpaceLens provides **deterministic storage evidence**. An external AI reasons
+over that evidence. SpaceLens does not embed a model, accept prompts, or
+mutate analyzed files.
+
+```text
+overview → opportunities → drill-down → specialized queries
+```
+
+Human-authorized Recycle Bin maintenance stays in the GUI. The CLI reports
+`filesystem_mutation: false` and `read_only: true`.
+
+## Why SpaceLens for AI agents
+
+Listing tens of thousands of files and asking a model to "find waste" is
+slow, expensive, and unsafe. SpaceLens scans or queries an index once, then
+returns a **bounded, ranked, structured** picture:
+
+- what is consuming space
+- which areas deserve human review first
+- how many bytes each area involves
+- why each item was surfaced
+- what is unknown or protected
+
+The agent should normally consume tens of JSON objects, not tens of thousands
+of paths.
+
+## Storage investigation workflow
+
+For "My drive is almost full. Find what I should review.":
+
+```powershell
+spacelens capabilities --json
+spacelens index status D:\ --json          # optional: reuse a snapshot?
+spacelens overview D:\ --json              # one live scan
+spacelens opportunities D:\ --json         # ranked review candidates
+spacelens query D:\ --dirs --under D:\Projects\app --limit 20 --json
+spacelens duplicates D:\ --json            # if an index exists
+```
+
+Prefer a published index when `index status` shows an acceptable `age_ms`
+and `status`. Indexed commands take `--from-index` (overview/opportunities)
+or are index-only (`query`, `duplicates`). They never silently refresh.
+
+```powershell
+spacelens overview D:\ --from-index --json
+spacelens opportunities D:\ --from-index --json
+```
+
+Missing index → exit code **6**. Do not treat indexed evidence as live
+filesystem truth.
+
+## Five core questions
+
+### What is consuming the most space?
+
+```text
+spacelens overview <path> --json
+```
+
+Read `summary.logical_bytes`, `largest_directories`, and `largest_files`.
+Each consumer includes classification, reclaimability, and location safety.
+A 40 GB VM image can appear here without being an opportunity.
+
+`scan` + `top --dirs` + `top --files` still work but each command rescans.
+`overview` is one scan.
+
+### What are the strongest review opportunities?
+
+```text
+spacelens opportunities <path> --json
+```
+
+Read `groups` first (aggregate bytes by deterministic class), then
+`opportunities` (ranked items). Fields:
+
+| Field | Meaning |
+| --- | --- |
+| `classification` | What it appears to be |
+| `reclaimability` | Whether that class is typically regenerable |
+| `location_safety` | Where it lives (Protected / Sensitive / Ordinary / Unknown) |
+| `candidate_strength` | Review priority (Strong / Moderate / ReviewOnly / None) |
+| `reason_codes` | Stable machine codes (`developer_dependency`, `old_large_file`, …) |
+| `logical_bytes` | Bytes involved in this item |
+| `overlapped` | Descendant already covered by a selected ancestor directory |
+
+`summary.unique_review_bytes` is the non-overlapping sum of selected
+candidates **before** `--limit`. It is not guaranteed freed space and is
+not the sum of the returned page when `truncated` is true. Indexed
+reports set `unique_review_estimated` when the 200-hit fetch was capped.
+
+There is no `safe_to_delete` and no `potential_reclaim_bytes` headline.
+
+Ranking is deterministic: candidate strength DESC, logical bytes DESC,
+normalized path ASC.
+
+Default `--limit` is 20. Default `--min-size` is 1 MB. `truncated` is true
+when more candidates existed.
+
+### Which developer / generated / cache areas are large?
+
+Use `opportunities` groups `developer_dependencies`, `generated_outputs`,
+`package_cache`, `ide_cache`, and `temporary_data`. Or drill with:
+
+```text
+spacelens query <indexed-root> --dirs --classification DependencyDirectory --json
+spacelens find <path> --classification BuildArtifact --json
+```
+
+Classifications are existing SpaceLens rules (`node_modules`, `build`,
+`.cache`, …). Filename guesses are not invented at query time.
+
+### Which old large files deserve review?
+
+```text
+spacelens opportunities <path> --older-than 90 --min-size 10MB --json
+spacelens find <path> --min-size 10MB --older-than 90 --json
+spacelens query <indexed-root> --files --min-size 10MB --older-than 90 --json
+```
+
+Age is write-based (directory = newest descendant write). Last access is
+advisory and cannot produce Strong. Old ≠ unused.
+
+### Which verified duplicates may represent wasted storage?
+
+```text
+spacelens duplicates <indexed-root> --json
+```
+
+Same-size files are candidates only. Verification is full SHA-256.
+Hard-link aliases of one identity are the same file: redundant logical
+bytes for that identity are 0. `summary.potential_redundant_logical_bytes`
+counts extra **distinct identities** in a verified group, not
+`path_count * size`. `--delete` / `--keep-one` are unknown options.
+
+## Drill-down
+
+After an opportunity such as `D:\Projects\app\node_modules`:
+
+```text
+spacelens overview D:\Projects\app\node_modules --json
+spacelens top D:\Projects\app --dirs --limit 20 --json
+spacelens query D:\ --dirs --under D:\Projects\app --limit 20 --json
+```
+
+`--under` is index-only and restricts `query` to that path and descendants.
+Live drill-down is a scan of the smaller path (not a second full-volume scan).
+
+## Evidence model
+
+These four analysis concepts stay separate:
+
+| Concept | Field | Not the same as |
+| --- | --- | --- |
+| What is it? | `classification` | permission to delete |
+| Is it typically regenerable? | `reclaimability` | "this user does not need it" |
+| Where is it? | `location_safety` | reclaimability |
+| How strongly should a human review it? | `candidate_strength` | authorization to act |
+
+`filesystem_mutation` is a fifth, always-false CLI capability. It is not
+an analysis score.
+
+Protected locations never become opportunities. Sensitive locations cap
+strength at Moderate. User / unknown / archive content is never Strong just
+because it is large or old.
+
+## Live vs indexed evidence
+
+| `source` | Meaning |
+| --- | --- |
+| `live_scan` | Result of a scan that just ran |
+| `persistent_index` | Published snapshot; see `index.age_ms` / `indexed_at` |
+
+`index status --json` reports existence, age, counts, and
+`incremental_refresh` (supported / full rebuild required). The agent
+decides whether to refresh or rebuild. Query never auto-refreshes.
+
+## Bounded results
+
+| Command | Default bound |
+| --- | --- |
+| `overview` | 10 directories + 10 files |
+| `opportunities` | 20 items |
+| `top` / `find` / `query` | 20 |
+| `duplicates` | verified groups only; `--min-size` default 1 MB |
+
+JSON uses integer bytes, stable enums, UTF-8 paths, and `schema_version: 1`.
+Additive fields are forward-compatible. Diagnostics go to stderr.
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success (including zero matches) |
+| 1 | Internal error |
+| 2 | Usage / unknown command |
+| 3 | Inaccessible or missing root |
+| 4 | Scan / query / index failure |
+| 5 | Cancelled |
+| 6 | Published index not found |
+
+Cancelled JSON is still a single object (`state: cancelled`). Partial
+duplicate groups are marked; the index is not corrupted.
+
+## Safety boundary
+
+The CLI cannot delete, recycle, restore, move, rename, purge, or empty the
+Recycle Bin. `capabilities --json` must keep:
+
+```json
+"read_only": true,
+"filesystem_mutation": false
+```
+
+An agent that wants files removed must explain the evidence to a human. The
+human uses Cleanup Review in the GUI and confirms **Move eligible files to
+Recycle Bin**.
+
+## Example external-agent workflow
+
+User: "My D drive is almost full."
+
+1. `spacelens overview D:\ --json` — total size and top consumers
+2. `spacelens opportunities D:\ --json` — groups + ranked review list
+3. `spacelens query D:\ --dirs --under <top-opportunity> --json` — look inside
+4. `spacelens duplicates D:\ --json` if an index exists
+5. Explain to the human what is large, what looks regenerable, what is old,
+   what is duplicated, and what is uncertain
+6. Do **not** delete anything
+
+## Related
+
+- [`docs/CLI.md`](CLI.md) — command contract
+- [`docs/INDEX.md`](INDEX.md) — persistent index
+- [`docs/DUPLICATES.md`](DUPLICATES.md) — verification and hard links
+- [`docs/SAFETY.md`](SAFETY.md) — mutation boundary

@@ -9,10 +9,12 @@ maintenance and ordinary-location declarations exist only in the GUI. See
 [`docs/MAINTENANCE.md`](MAINTENANCE.md) and
 [`docs/LOCATION_SAFETY.md`](LOCATION_SAFETY.md).
 
-The executable wires `scan`, `top`, `find`, `index`, `index refresh`,
-`index status`, `index list`, `query`, `duplicates`, `capabilities`, `help`,
-and `version`. Use `capabilities --json` to discover flags for a particular
-build (including `persistent_index`, `indexed_query`, and `incremental_index`).
+The executable wires `scan`, `top`, `find`, `overview`, `opportunities`,
+`index`, `index refresh`, `index status`, `index list`, `query`, `duplicates`,
+`capabilities`, `help`, and `version`. Use `capabilities --json` to discover
+flags for a particular build (including `storage_overview`,
+`storage_opportunities`, `persistent_index`, `indexed_query`, and
+`incremental_index`).
 
 ## Build
 
@@ -55,7 +57,7 @@ Representative JSON (fields may grow; treat unknown keys as forward-compatible):
 {
   "schema_version": 1,
   "version": "0.1.0",
-  "commands": ["scan", "top", "find", "index", "index status", "index list", "index refresh", "query", "duplicates", "capabilities", "help", "version"],
+  "commands": ["scan", "top", "find", "index", "index status", "index list", "index refresh", "query", "overview", "opportunities", "duplicates", "capabilities", "help", "version"],
   "features": {
     "json": true,
     "cancellation": true,
@@ -64,10 +66,15 @@ Representative JSON (fields may grow; treat unknown keys as forward-compatible):
     "incremental_index": true,
     "filesystem_mutation": false,
     "classification": true,
-    "filters": true
+    "filters": true,
+    "storage_overview": true,
+    "storage_opportunities": true,
+    "duplicate_detection": true,
+    "reclaim_analysis": true
   },
   "read_only": true,
   "filesystem_mutation": false,
+  "json_contract_version": 1,
   "index_schema_version": 2
 }
 ```
@@ -107,13 +114,49 @@ and explanation fields where available.
 
 ```text
 spacelens find <path> [--min-size SIZE] [--older-than DAYS]
-                    [--category CATEGORY] [--files|--dirs]
+                    [--classification CLASS] [--ext EXT]
                     [--limit N] [--json]
 ```
 
-`find` is analysis, not deletion. It does not add results to Cleanup Review
-unless a separate human UI action explicitly chooses to do so. It never changes
-the filesystem. Unlike `query`, `find` always performs a live scan.
+`find` is analysis, not deletion. It returns **files only**. `--files` and
+`--dirs` are rejected (they belong to `top` and `query`). It does not add
+results to Cleanup Review unless a separate human UI action explicitly
+chooses to do so. It never changes the filesystem. Unlike `query`, `find`
+always performs a live scan. JSON results include classification, location
+safety, reclaimability, and candidate strength.
+
+### `overview`
+
+One live scan (or one published index) answering "what is consuming this root?"
+
+```text
+spacelens overview <path> [--from-index] [--limit N] [--json]
+```
+
+Default `--limit` is 10 per list. JSON includes `summary`, `largest_directories`,
+`largest_files`, scan/index provenance, and `source` (`live_scan` or
+`persistent_index`). Largest consumers are not reclaim recommendations.
+`--from-index` requires a published index (exit 6 if missing) and does not
+refresh it.
+
+### `opportunities`
+
+Bounded, ranked review opportunities from existing classification, reclaim,
+activity, and location-safety analysis. Not "safe to delete".
+
+```text
+spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D] [--limit N] [--json]
+```
+
+Default `--limit` is 20. Default `--min-size` is `1MB`. Default `--older-than`
+is 90 days (old-large files only). JSON includes `groups` (non-overlapping
+aggregates), ranked `opportunities` with reason codes, and
+`unique_review_bytes`. Nested directory candidates are listed with
+`overlapped: true` and are not summed twice. Regenerable developer/build/cache
+areas are included even when recent; unknown/user content appears only when it
+is old and large. Protected locations are omitted.
+
+See [`docs/AGENT_INTERFACE.md`](AGENT_INTERFACE.md).
 
 ### `index`
 
@@ -157,7 +200,7 @@ Runs a filtered query against a **published** index only. No live-scan fallback.
 ```text
 spacelens query <path> [--files|--dirs] [--min-size SIZE] [--ext EXT]
                      [--older-than DAYS] [--category CATEGORY]
-                     [--strength STRENGTH] [--limit N] [--json]
+                     [--strength STRENGTH] [--under PATH] [--limit N] [--json]
 ```
 
 Missing index → exit code **6** (`index_not_found`). Successful JSON includes
@@ -201,6 +244,8 @@ scan or mutate the filesystem.
 | `--files` | Include files; with `top`, choose largest files. |
 | `--dirs` | Include directories; with `top`, choose largest directories. |
 | `--limit N` | Return no more than `N` results. |
+| `--under PATH` | Index `query` only: restrict to `PATH` and descendants. |
+| `--from-index` | `overview` / `opportunities`: use a published index (exit 6 if missing). |
 | `--json` | Write machine-readable JSON to stdout. |
 
 Filter behavior is conservative. Filters do not override Protected or Sensitive
@@ -302,7 +347,7 @@ parent before acting.
 | 3 | Inaccessible or missing root path |
 | 4 | Scan or query failure |
 | 5 | Cancelled by Ctrl+C / stop request |
-| 6 | Published index not found (`query`, `duplicates`) |
+| 6 | Published index not found (`query`, `duplicates`, `--from-index`) |
 
 Agents should branch on the exit code before trusting a result as complete. A
 successful empty `results` array means no matches, not an error.

@@ -305,7 +305,12 @@ Freshness labels (display):
 | 3 | Path inaccessible |
 | 4 | Index build / refresh failed |
 | 5 | Cancelled |
-| 6 | Index not found (`query` / refresh) |
+| 6 | Index not found (`query`, `duplicates`, `--from-index`, refresh) |
+
+`query --under PATH` restricts hits to that path and its descendants
+(`path = ? OR path LIKE ? ESCAPE '\'`). The bound LIKE pattern escapes
+`\`, `%`, and `_` so a Windows prefix such as `D:\Projects\app` is a
+literal path, not an escape sequence.
 
 `index refresh` returning `full_rebuild_required` is a soft, expected outcome
 when the journal is unavailable — exit non-zero with structured reason, index

@@ -57,8 +57,9 @@ commands until they resolve from the official WinGet source.
 - **Persistent Index V1+V2:** SQLite full-root index under AppData; CLI
   `index` / `index refresh` / `index status` / `index list` / `query`
   (no live query fallback; USN incremental when volume access allows)
-- CLI: `scan`, `top`, `find`, `index*`, `query`, `duplicates`, `capabilities`,
-  `help`, `version` with versioned JSON and `filesystem_mutation: false`
+- CLI: `scan`, `top`, `find`, `overview`, `opportunities`, `index*`, `query`,
+  `duplicates`, `capabilities`, `help`, `version` with versioned JSON and
+  `filesystem_mutation: false`
 - GUI: Live Scan + **Indexed** storage discovery (presets, search, filters,
   breadcrumb navigation, storage overview, interactive squarified treemap,
   inspector, Explorer/copy, **Find Duplicates**, durable Cleanup Review V2,
@@ -106,7 +107,9 @@ commands until they resolve from the official WinGet source.
   and counted
 
 **Safety contract:** the CLI is read-only by design. See
-[`docs/SAFETY.md`](docs/SAFETY.md). Index design: [`docs/INDEX.md`](docs/INDEX.md).
+[`docs/SAFETY.md`](docs/SAFETY.md). Agent workflow:
+[`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
+Index design: [`docs/INDEX.md`](docs/INDEX.md).
 Cleanup Review: [`docs/CLEANUP_REVIEW.md`](docs/CLEANUP_REVIEW.md).
 Duplicates: [`docs/DUPLICATES.md`](docs/DUPLICATES.md).
 Maintenance: [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md).
@@ -141,6 +144,8 @@ CLI only (no Qt required):
 cmake --preset windows-cli-release
 cmake --build --preset windows-cli-release --target spacelens
 .\build-cli-release\cli\spacelens.exe capabilities --json
+.\build-cli-release\cli\spacelens.exe overview <folder> --json
+.\build-cli-release\cli\spacelens.exe opportunities <folder> --json
 .\build-cli-release\cli\spacelens.exe scan <folder> --json
 .\build-cli-release\cli\spacelens.exe top <folder> --dirs --limit 20 --json
 .\build-cli-release\cli\spacelens.exe index <folder> --json

@@ -55,12 +55,14 @@ than claiming a shipped feature.
   identity/safety guard, and durable Attempting/Recycled/Uncertain checkpoints.
   The Shell adapter lives in `spacelens_maintenance` and is not linked into the
   CLI. See [`docs/MAINTENANCE.md`](MAINTENANCE.md).
-- An agent-safe CLI contract with `capabilities`, `scan`, `top`, and `find`
-  query surfaces, filters, versioned JSON output, and explicit read-only
-  capability reporting.
+- An agent-safe CLI contract with `capabilities`, `scan`, `top`, `find`,
+  `overview`, and `opportunities` surfaces, filters, versioned JSON output,
+  and explicit read-only capability reporting. See
+  [`docs/AGENT_INTERFACE.md`](AGENT_INTERFACE.md).
 
-The CLI wires `scan`, `top`, `find`, `capabilities`, `index`, `index refresh`,
-`index status`, `index list`, `query`, `duplicates`, `help`, and `version`.
+The CLI wires `scan`, `top`, `find`, `overview`, `opportunities`, `capabilities`,
+`index`, `index refresh`, `index status`, `index list`, `query`, `duplicates`,
+`help`, and `version`.
 Analysis filters and versioned JSON (`schema_version: 1`) are implemented. See
 [`docs/CLI.md`](CLI.md), [`docs/INDEX.md`](INDEX.md), and
 [`docs/DUPLICATES.md`](DUPLICATES.md).

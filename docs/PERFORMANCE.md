@@ -169,6 +169,32 @@ single-run generated-tree baseline, not a competitive claim.
 Not run on every pull request. CI CLI-only uses a 2k smoke. Manual 100k+
 is `.github/workflows/quality.yml`.
 
+## Storage Intelligence / Agent Interface V1 (2026-08-14)
+
+Temporary developer-workstation fixture from
+`scripts/verify-agent-interface.ps1` (~96 MiB logical: `node_modules`,
+CMake `build`, `.cache`, old zip, recent 40 MiB VM image, photo,
+independent 2 MiB copies, one hard-link pair). Not the source tree and
+not user data. Same machine family as Dataset A. OS cache likely warm
+after fixture generation.
+
+| Build | Operation | Wall-clock | JSON | Notes |
+|-------|-----------|------------|------|--------|
+| Release `build-release/cli/spacelens.exe` | `overview --json` | **21 ms** | 8283 B | One live scan; 10+10 consumers |
+| Release | `scan` + `top --dirs` + `top --files` | **57 ms** | — | Three separate process launches |
+| Release | `opportunities --json` | (script step) | 6439 B | 8 items; `unique_review_bytes=55578528` |
+| Debug `build-debug/cli/spacelens.exe` | `overview --json` | **27–28 ms** | 8283 B | Same fixture |
+| Debug | `scan` + `top --dirs` + `top --files` | **65–82 ms** | — | Three launches |
+
+`overview` is one scan. `scan` + `top --dirs` + `top --files` rescans
+twice more. The JSON payloads stay in the low kilobytes so an agent can
+read them without enumerating the tree. These are single-run process
+wall-clock numbers, not a competitive claim.
+
+```powershell
+.\scripts\verify-agent-interface.ps1 -CliPath .\build-release\cli\spacelens.exe
+```
+
 ## Interpretation
 
 - Full index cost is dominated by live scan + per-file metadata; SQLite publish is small.
