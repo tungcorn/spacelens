@@ -82,7 +82,7 @@ std::string helpText()
         "  spacelens index refresh <path> [--json]\n"
         "  spacelens query <path> (--files|--dirs) [filters] [--under P] [--limit N] [--json]\n"
         "  spacelens overview <path> [--from-index] [--limit N] [--json]\n"
-        "  spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D] [--limit N] [--json]\n"
+        "  spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D] [--classification C] [--under P] [--limit N] [--json]\n"
         "  spacelens duplicates <path> [--min-size S] [--json]\n"
         "  spacelens capabilities [--json]\n"
         "  spacelens help\n"
@@ -94,7 +94,7 @@ std::string helpText()
         "  --older-than D   Last-write age in whole days\n"
         "  --classification C  Classification name\n"
         "  --strength S     Reclaim candidate strength (query; e.g. Strong)\n"
-        "  --under P        Restrict query results to P and its descendants\n"
+        "  --under P        Restrict query/opportunities to P and descendants\n"
         "\n"
         "Options:\n"
         "  --json          Machine-readable JSON on stdout\n"
@@ -289,8 +289,9 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             continue;
         }
         if (arg == L"--under") {
-            if (out.command != Command::Query) {
-                out.error = "--under is only valid with 'query'.";
+            if (out.command != Command::Query &&
+                out.command != Command::Opportunities) {
+                out.error = "--under is only valid with query/opportunities.";
                 return out;
             }
             if (i + 1 >= argc || argv[i + 1][0] == L'\0') {

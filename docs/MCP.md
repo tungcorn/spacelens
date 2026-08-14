@@ -94,13 +94,17 @@ silent live fallback.
 | `min_size_bytes` | no | Default 1 MiB |
 | `older_than_days` | no | Default 90 |
 | `classification` | no | Existing SpaceLens class name (same as CLI `--classification`). Unrecognized names match nothing. |
+| `under` | no | Subtree prefix (same as CLI `--under`) |
 
 Same inclusion and ranking as CLI `opportunities` (`ranking_policy`:
-`opportunity_rank_v2`). Read `summary.unique_review_bytes` — it is not
-guaranteed reclaim and is not authorization to delete. Nested selected
-directories are `overlapped` and carry `nested_overlap`. Items include
-compact `evidence.ecosystem` / `evidence.marker`. This tool never hashes
-files; use `storage_duplicates` when duplicate evidence is wanted.
+`opportunity_rank_v2`). Indexed `source=persistent_index` retrieves the
+exact top-N across the whole index; filters apply before `limit`.
+`unique_review_estimated` is aggregate-only and does not mean top-N is
+approximate. Read `summary.unique_review_bytes` — it is not guaranteed
+reclaim and is not authorization to delete. Nested selected directories
+are `overlapped` and carry `nested_overlap`. Items include compact
+`evidence.ecosystem` / `evidence.marker`. This tool never hashes files;
+use `storage_duplicates` when duplicate evidence is wanted.
 
 ### `storage_query`
 

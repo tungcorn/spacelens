@@ -1211,6 +1211,7 @@ ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
             request.query.categoryOnly = parseStorageCategory(raw);
         }
     }
+    request.query.pathPrefix = args.under;
     const auto analysis = analyzeOpportunities(request, stop);
     if (args.json) {
         std::cout << analysis.report.toJson();

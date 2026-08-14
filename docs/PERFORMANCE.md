@@ -195,6 +195,31 @@ wall-clock numbers, not a competitive claim.
 .\scripts\verify-agent-interface.ps1 -CliPath .\build-release\cli\spacelens.exe
 ```
 
+## Indexed Intelligence Scaling V1 (2026-08-14)
+
+Exact top-N for indexed `opportunities` (`opportunity_rank_v2` in SQLite,
+filters before `LIMIT`). Isolated temp fixtures / `SPACELENS_DATA_ROOT`
+only — not the source tree and not user AppData. Same machine family as
+Dataset A. Single-run wall-clock, not a competitive claim. Schema stays
+`index_schema_version: 2`; no new SQLite indexes.
+
+| Build | Fixture | Operation | Wall-clock | Notes |
+|-------|---------|-----------|------------|--------|
+| Release `build-release/cli/spacelens.exe` | 250 cmake-build decoys + late `node_modules` (503 files) | `index` | **349 ms** | Real CLI publish |
+| Release | same | `opportunities --from-index --limit 5` | **55 ms** / 5105 B JSON | First row is High `node_modules`, not a larger Medium decoy |
+| Release `spacelens_tests.exe` | 10 003 synthetic SQL rows | oracle vs production top-20 | **984 ms** process | Includes isolated publish |
+| Release | 100 001 synthetic SQL rows + tail `node_modules` | hidden-candidate + JSON bound | **2967 ms** process | JSON under 200 KB; top-N exact; unique estimated only if matches exceed 50k |
+
+```powershell
+.\scripts\verify-indexed-intelligence.ps1 -CliPath .\build-release\cli\spacelens.exe
+$env:SPACELENS_TEST_ONLY = "IndexedIntel_100k"
+.\build-release\tests\spacelens_tests.exe
+```
+
+250k+ physical trees were not required: the 100k gate is synthetic SQL
+rows under an isolated data root. Incremental USN timings are unchanged
+(no schema/index change).
+
 ## Interpretation
 
 - Full index cost is dominated by live scan + per-file metadata; SQLite publish is small.

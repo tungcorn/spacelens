@@ -58,6 +58,8 @@ After a Release build:
 
 ```powershell
 .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
+.\scripts\verify-agent-interface.ps1 -CliPath .\build-release\cli\spacelens.exe
+.\scripts\verify-indexed-intelligence.ps1 -CliPath .\build-release\cli\spacelens.exe
 .\scripts\verify-mcp-safety.ps1 -McpPath .\build-release\mcp\spacelens-mcp.exe
 .\scripts\verify-mcp-wire.ps1   -McpPath .\build-release\mcp\spacelens-mcp.exe
 .\scripts\verify-mcp-parity.ps1 -CliPath .\build-release\cli\spacelens.exe `

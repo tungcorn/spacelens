@@ -21,7 +21,12 @@ inline constexpr std::size_t kDefaultOverviewLimit = 10;
 inline constexpr std::size_t kDefaultOpportunityLimit = 20;
 inline constexpr ByteSize kDefaultOpportunityMinSize = 1024ULL * 1024ULL;
 inline constexpr std::uint64_t kDefaultOldLargeDays = 90;
+/// Historical internal prefetch used before Indexed Intelligence Scaling V1.
+/// Production indexed opportunities no longer fetch this prefix.
 inline constexpr std::size_t kIndexedOpportunityFetchLimit = 200;
+/// Max matching rows materialized for overlap-aware unique_review_bytes.
+/// Top-N retrieval does not use this cap.
+inline constexpr std::size_t kIndexedOpportunityAggregateLimit = 50000;
 
 /// Stable, non-localized reason codes derived from existing analysis semantics.
 namespace reason {
@@ -140,6 +145,15 @@ struct OpportunityQuery {
     std::optional<StorageCategory> categoryOnly;
     /// Unrecognized classification token: include nothing (do not treat as Unknown).
     bool matchNone = false;
+    /// When non-empty, restrict to this path and descendants (normalized).
+    std::wstring pathPrefix;
+};
+
+/// Optional indexed-fetch metadata for exact top-N + aggregate accuracy.
+struct IndexedOpportunityExtras {
+    const std::vector<IndexHit>* aggregateHits = nullptr;
+    bool aggregatesCapped = false;
+    std::uint64_t matchedCount = 0;
 };
 
 struct OpportunityReport {
@@ -192,7 +206,8 @@ struct OpportunityReport {
     const std::wstring& root, ByteSize logicalBytes, std::uint64_t files,
     std::uint64_t directories, const std::vector<IndexHit>& hits,
     const OpportunityQuery& query, std::uint64_t indexAgeMs,
-    std::string indexedAtIso);
+    std::string indexedAtIso,
+    IndexedOpportunityExtras extras = {});
 
 /// Reason codes for an analyzed item. Pure and deterministic.
 [[nodiscard]] std::vector<std::string> reasonCodesFor(

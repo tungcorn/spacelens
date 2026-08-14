@@ -150,7 +150,7 @@ activity, and location-safety analysis. Not "safe to delete".
 
 ```text
 spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D]
-    [--limit N] [--classification CLASS] [--json]
+    [--limit N] [--classification CLASS] [--under PATH] [--json]
 ```
 
 Default `--limit` is 20. Default `--min-size` is `1MB`. Default `--older-than`
@@ -163,9 +163,15 @@ developer/build/cache areas need Medium or High confidence to enter the list
 (name-only `temp` / `cache` / `build` is excluded). High-confidence regenerable
 items ≥ 10 MB rank Moderate even when recent. Unknown/user content appears only
 when it is old and large. Protected locations are omitted. `--classification`
-restricts to one existing SpaceLens class. An unrecognized class name
-matches nothing (it does not silently become `Unknown`). This command
-does not hash files.
+restricts to one existing SpaceLens class. `--under` restricts to a subtree.
+An unrecognized class name matches nothing (it does not silently become
+`Unknown`). This command does not hash files.
+
+Indexed `--from-index` ranks the **entire** published index in SQL
+(`opportunity_rank_v2`) and returns the public top-N. An internal prefetch
+window does not decide which candidates appear. `unique_review_estimated`
+means only the overlap-aware unique-byte aggregate was capped (more than
+50,000 matching rows); top-N is still exact.
 
 See [`docs/AGENT_INTERFACE.md`](AGENT_INTERFACE.md).
 
@@ -255,7 +261,7 @@ scan or mutate the filesystem.
 | `--files` | Include files; with `top`, choose largest files. |
 | `--dirs` | Include directories; with `top`, choose largest directories. |
 | `--limit N` | Return no more than `N` results. |
-| `--under PATH` | Index `query` only: restrict to `PATH` and descendants. |
+| `--under PATH` | `query` / `opportunities`: restrict to `PATH` and descendants. |
 | `--from-index` | `overview` / `opportunities`: use a published index (exit 6 if missing). |
 | `--json` | Write machine-readable JSON to stdout. |
 

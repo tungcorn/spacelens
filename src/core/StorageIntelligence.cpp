@@ -158,6 +158,16 @@ bool isOldLargeFile(const ReclaimCandidate& candidate, const OpportunityQuery& q
                            query.olderThanDays);
 }
 
+bool pathIsUnderPrefix(const std::wstring& path, const std::wstring& prefix)
+{
+    if (prefix.empty()) {
+        return true;
+    }
+    const std::wstring key = normalizePathKey(path);
+    const std::wstring pre = normalizePathKey(prefix);
+    return key == pre || isComponentPrefix(pre, key);
+}
+
 bool includeOpportunity(const ReclaimCandidate& candidate,
                         const OpportunityQuery& query)
 {
@@ -169,6 +179,9 @@ bool includeOpportunity(const ReclaimCandidate& candidate,
         return false;
     }
     if (query.matchNone) {
+        return false;
+    }
+    if (!pathIsUnderPrefix(candidate.path, query.pathPrefix)) {
         return false;
     }
     if (query.categoryOnly &&
@@ -912,7 +925,7 @@ OpportunityReport buildIndexedOpportunities(
     const std::wstring& root, ByteSize logicalBytes, std::uint64_t files,
     std::uint64_t directories, const std::vector<IndexHit>& hits,
     const OpportunityQuery& query, std::uint64_t indexAgeMs,
-    std::string indexedAtIso)
+    std::string indexedAtIso, IndexedOpportunityExtras extras)
 {
     OpportunityReport report;
     report.source = EvidenceSource::PersistentIndex;
@@ -923,9 +936,15 @@ OpportunityReport buildIndexedOpportunities(
     report.indexAgeMs = indexAgeMs;
     report.indexedAtIso = std::move(indexedAtIso);
 
+    const std::vector<IndexHit>* sourceHits = &hits;
+    if (extras.aggregateHits != nullptr && !extras.aggregatesCapped &&
+        !extras.aggregateHits->empty()) {
+        sourceHits = extras.aggregateHits;
+    }
+
     std::vector<OpportunityItem> items;
-    items.reserve(hits.size());
-    for (const auto& hit : hits) {
+    items.reserve(sourceHits->size());
+    for (const auto& hit : *sourceHits) {
         if (normalizePathKey(hit.path) == normalizePathKey(root)) {
             continue;
         }
@@ -940,6 +959,20 @@ OpportunityReport buildIndexedOpportunities(
     markOverlaps(report.opportunities);
     buildGroupsAndUniqueBytes(report);
     assignRanksAndBounds(report, query.limit);
+    if (extras.matchedCount > 0) {
+        report.truncated = extras.matchedCount > query.limit;
+    }
+    if (extras.aggregatesCapped) {
+        report.uniqueReviewEstimated = true;
+        for (auto& group : report.groups) {
+            group.estimated = true;
+        }
+    }
+    if (report.logicalBytes > 0 &&
+        report.uniqueReviewBytes > report.logicalBytes) {
+        report.uniqueReviewBytes = report.logicalBytes;
+        report.uniqueReviewEstimated = true;
+    }
     return report;
 }
 

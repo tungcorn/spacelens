@@ -226,6 +226,9 @@ ToolResult callOpportunities(const JsonValue& args, std::stop_token stop)
                 spacelens::parseStorageCategory(*classification);
         }
     }
+    if (const auto under = args.stringAt("under")) {
+        request.query.pathPrefix = spacelens::wideFromUtf8(*under);
+    }
     if (stop.stop_requested()) {
         ToolResult cancelled;
         cancelled.cancelled = true;
@@ -436,6 +439,7 @@ void registerStorageTools(McpServer& server)
         props.set("min_size_bytes", integerSchema(0, 9'000'000'000'000'000));
         props.set("older_than_days", integerSchema(0, 36500));
         props.set("classification", objectType("string"));
+        props.set("under", objectType("string"));
         tool.inputSchema = requiredPathSchema(std::move(props));
         tool.outputSchema = analysisOutputSchema();
         tool.annotations = readOnlyAnnotations();

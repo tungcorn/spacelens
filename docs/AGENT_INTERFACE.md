@@ -106,8 +106,16 @@ Read `groups` first (aggregate bytes by deterministic class), then
 
 `summary.unique_review_bytes` is the non-overlapping sum of selected
 candidates **before** `--limit`. It is not guaranteed freed space and is
-not the sum of the returned page when `truncated` is true. Indexed
-reports set `unique_review_estimated` when the 200-hit fetch was capped.
+not the sum of the returned page when `truncated` is true.
+
+Indexed top-N is exact across the **whole published index**. Filters
+(classification, `--under`, min-size, age, object type) run in SQL
+**before** `LIMIT`. `--limit 20` means the best 20 matching rows by
+`opportunity_rank_v2`, not the first 20 rows SQLite happens to store.
+A stronger candidate at row 425,000 still wins.
+
+`unique_review_estimated` is only about overlap-aware aggregates when
+more than 50,000 rows match. It never means top-N is approximate.
 
 There is no `safe_to_delete` and no `potential_reclaim_bytes` headline.
 
@@ -118,10 +126,9 @@ Medium or High confidence to enter the list (name-only `temp` / `cache` /
 items ≥ 10 MB rank Moderate even when recent.
 
 Filter: `spacelens opportunities <path> --classification BuildArtifact`.
-Indexed `--from-index` applies the class at fetch time so a 200-hit
-all-class page cannot hide a matching cache. An unrecognized class
-name matches nothing (it does not silently become `Unknown`).
-Duplicates are a separate command and are **not** hashed from
+`--under PATH` restricts live and indexed opportunities to that subtree.
+An unrecognized class name matches nothing (it does not silently become
+`Unknown`). Duplicates are a separate command and are **not** hashed from
 `opportunities`.
 
 Default `--limit` is 20. Default `--min-size` is 1 MB. `truncated` is true

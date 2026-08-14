@@ -42,6 +42,10 @@ analyzed user data.
         index.db.bak          temporary during publish swap
 ```
 
+`SPACELENS_DATA_ROOT` overrides the AppData root (indexes, review state,
+and hash cache). Tests and verify scripts set it to a temp directory so
+they never open the developer’s real `%LOCALAPPDATA%\SpaceLens`.
+
 `state.db` is not an index. Rebuild, USN refresh, and deleting `index.db` must
 not touch review rows.
 
@@ -167,6 +171,16 @@ Agents should treat any non-supported state as **run `index` (full rebuild)**.
 | `index status <path>` | Index age/counts + `incremental_refresh` block |
 | `index list` | List published indexes under AppData |
 | `query <path> …` | Read-only SQL against published DB |
+| `opportunities <path> --from-index` | Exact top-N review candidates across the whole index |
+
+Indexed `opportunities` does **not** prefetch a 200-row prefix and rank
+in C++. `queryIndexedOpportunities` applies the inclusion predicate and
+`opportunity_rank_v2` (`ORDER BY` strength, confidence, size, path) in
+SQL, then `LIMIT N+1`. Classification, `--under`, min-size, and age
+filters run before that limit. Overlap-aware `unique_review_bytes` is
+exact when the matching set is ≤ 50,000 rows; larger sets set
+`unique_review_estimated: true` without making top-N approximate.
+Queries never refresh or rebuild the index.
 
 Capabilities advertise:
 

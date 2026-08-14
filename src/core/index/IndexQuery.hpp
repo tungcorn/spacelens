@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -24,7 +25,8 @@ enum class IndexSortKey {
     Name,                   // leaf name, case-insensitive
     LastWrite,              // activity write ticks
     Classification,         // classification string
-    CandidateStrength       // Strong > Moderate > ReviewOnly > None, then size
+    CandidateStrength,      // Strong > Moderate > ReviewOnly > None, then size
+    OpportunityRank         // opportunity_rank_v2: strength, confidence, size, path
 };
 
 struct IndexQuerySpec {
@@ -93,6 +95,41 @@ struct IndexQueryResult {
 /// Query a published persistent index. Never falls back to a live scan.
 [[nodiscard]] IndexQueryResult queryIndex(const std::wstring& rootPath,
                                           const IndexQuerySpec& spec);
+
+/// Indexed opportunity inclusion + opportunity_rank_v2. Filters and ranking
+/// run in SQL; `limit` is the public top-N (implementation fetches limit+1).
+struct IndexedOpportunitySpec {
+    ByteSize minSize = 1024ULL * 1024ULL;
+    std::uint64_t olderThanDays = 90;
+    FileTimeTicks nowTicks = 0;
+    std::size_t limit = 20;
+    std::optional<std::string> classification;
+    bool matchNone = false;
+    std::wstring pathPrefix;
+    std::wstring excludePath;
+    std::size_t aggregateLimit = 50000;
+};
+
+struct IndexedOpportunityFetch {
+    bool ok = false;
+    std::string error;
+    IndexRootInfo root{};
+    IndexLocation location{};
+    std::uint64_t age_ms = 0;
+    std::uint64_t query_elapsed_ms = 0;
+    std::vector<IndexHit> topHits;
+    std::uint64_t matchedItems = 0;
+    std::vector<IndexHit> aggregateHits;
+    bool aggregatesCapped = false;
+    std::size_t sqlTopRows = 0;
+    std::size_t sqlAggregateRows = 0;
+};
+
+/// Exact top-N opportunity retrieval across the whole published index.
+/// Does not refresh, scan, or write the index.
+[[nodiscard]] IndexedOpportunityFetch queryIndexedOpportunities(
+    const std::wstring& rootPath, const IndexedOpportunitySpec& spec,
+    std::stop_token stop = {});
 
 /// Read status for a root without running a query.
 [[nodiscard]] IndexQueryResult indexStatus(const std::wstring& rootPath);

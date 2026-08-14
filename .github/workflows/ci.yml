@@ -114,6 +114,10 @@ jobs:
         shell: pwsh
         run: .\scripts\verify-agent-interface.ps1 -CliPath .\build-release\cli\spacelens.exe
 
+      - name: Indexed intelligence gate
+        shell: pwsh
+        run: .\scripts\verify-indexed-intelligence.ps1 -CliPath .\build-release\cli\spacelens.exe
+
       - name: MCP safety gate
         shell: pwsh
         run: |

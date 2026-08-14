@@ -221,59 +221,57 @@ OpportunityAnalysis analyzeOpportunities(const OpportunityRequest& request,
             return out;
         }
 
-        std::vector<IndexHit> hits;
-        bool fetchCapped = false;
-        auto appendUnique = [&](const IndexQueryResult& more) {
-            if (more.hits.size() >= kIndexedOpportunityFetchLimit ||
-                more.matched_items > more.returned_items) {
-                fetchCapped = true;
-            }
-            for (const auto& hit : more.hits) {
-                const bool exists = std::any_of(
-                    hits.begin(), hits.end(),
-                    [&](const IndexHit& have) { return have.path == hit.path; });
-                if (!exists) {
-                    hits.push_back(hit);
-                }
-            }
-        };
-        if (!query.matchNone) {
-            const std::vector<std::string> classFilter =
-                query.categoryOnly
-                    ? std::vector<std::string>{toString(*query.categoryOnly)}
-                    : std::vector<std::string>{};
-            const std::vector<std::string>& regenerable =
-                classFilter.empty() ? regenerableOpportunityClassifications()
-                                    : classFilter;
-            appendUnique(queryKind(request.root, true, true,
-                                   kIndexedOpportunityFetchLimit, query.minSize,
-                                   std::nullopt, regenerable));
-            appendUnique(queryKind(request.root, true, true,
-                                   kIndexedOpportunityFetchLimit, query.minSize,
-                                   query.olderThanDays, classFilter));
-            IndexQuerySpec reclaimSpec;
-            reclaimSpec.includeFiles = true;
-            reclaimSpec.includeDirectories = true;
-            reclaimSpec.minSize = query.minSize;
-            reclaimSpec.limit = kIndexedOpportunityFetchLimit;
-            reclaimSpec.candidateStrengths = {"Strong", "Moderate"};
-            reclaimSpec.sortBy = IndexSortKey::CandidateStrength;
-            reclaimSpec.sortDescending = true;
-            if (!classFilter.empty()) {
-                reclaimSpec.classifications = classFilter;
-            }
-            appendUnique(queryIndex(request.root, reclaimSpec));
+        if (stop.stop_requested()) {
+            out.error = AnalysisError::Cancelled;
+            out.report.ok = false;
+            out.report.state = "cancelled";
+            out.report.source = EvidenceSource::PersistentIndex;
+            return out;
         }
+
+        IndexedOpportunitySpec spec;
+        spec.minSize = query.minSize;
+        spec.olderThanDays = query.olderThanDays;
+        spec.nowTicks = query.nowTicks;
+        spec.limit = query.limit;
+        spec.matchNone = query.matchNone;
+        spec.pathPrefix = query.pathPrefix;
+        spec.excludePath = status.location.rootPath.empty() ? request.root
+                                                            : status.location.rootPath;
+        spec.aggregateLimit = kIndexedOpportunityAggregateLimit;
+        if (query.categoryOnly) {
+            spec.classification = toString(*query.categoryOnly);
+        }
+
+        const auto fetched = queryIndexedOpportunities(request.root, spec, stop);
+        if (!fetched.ok) {
+            out.report.ok = false;
+            out.report.source = EvidenceSource::PersistentIndex;
+            out.report.state = fetched.error == "cancelled" ? "cancelled" : "failed";
+            out.report.error =
+                fetched.error.empty() ? "index_query_failed" : fetched.error;
+            if (fetched.error == "cancelled") {
+                out.error = AnalysisError::Cancelled;
+            } else if (fetched.error == "index_not_found") {
+                out.error = AnalysisError::IndexNotFound;
+            } else {
+                out.error = AnalysisError::ScanFailed;
+            }
+            return out;
+        }
+
+        IndexedOpportunityExtras extras;
+        extras.aggregateHits = &fetched.aggregateHits;
+        extras.aggregatesCapped = fetched.aggregatesCapped;
+        extras.matchedCount = fetched.matchedItems;
 
         out.report = buildIndexedOpportunities(
             status.location.rootPath.empty() ? request.root
                                              : status.location.rootPath,
             status.root.logicalBytes, status.root.fileCount,
-            status.root.dirCount, hits, query, status.age_ms,
-            status.root.indexedAtIso);
-        if (fetchCapped) {
-            out.report.uniqueReviewEstimated = true;
-        }
+            status.root.dirCount, fetched.topHits, query, status.age_ms,
+            status.root.indexedAtIso, extras);
+        out.report.elapsedMs = fetched.query_elapsed_ms;
         return out;
     }
 

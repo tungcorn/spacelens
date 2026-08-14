@@ -7,22 +7,19 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ### Changed
 
-- Storage Intelligence V2: sibling-aware developer classification (Rust
-  `target`, .NET `bin`/`obj`, Python venv), Known Folder / temp path
-  evidence, confidence-gated opportunity inclusion, High+≥10 MB Moderate
-  ranking, `opportunity_rank_v2` (strength, then confidence, then bytes),
-  compact `evidence`, group `strongest_candidate_strength`, live
-  `overview.opportunity_summary`, and `--classification` /
-  MCP `classification` on opportunities. Schema stays `schema_version: 1`.
+- Indexed Intelligence Scaling V1: indexed `opportunities` / MCP
+  `storage_opportunities` retrieve the exact public top-N with
+  `opportunity_rank_v2` inside SQLite. Inclusion filters
+  (classification, `--under` / `under`, min-size, age, object type)
+  run before `LIMIT`. A stronger candidate after the old 200-row
+  prefetch window is no longer invisible. `unique_review_estimated`
+  now means only the overlap-aware unique-byte aggregate exceeded
+  50,000 matching rows — never that top-N is approximate. Schema
+  stays `index_schema_version: 2` and JSON `schema_version: 1`.
   Version stays 0.1.3. CLI/MCP remain `filesystem_mutation: false`.
-  See [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
-
-### Fixed
-
-- Indexed `opportunities --classification` / MCP `classification` now
-  apply the class in the 200-hit index fetch, so a larger BuildArtifact
-  pile cannot hide a matching `.cache`. Unrecognized class tokens match
-  nothing instead of silently becoming `Unknown`.
+  Tests may set `SPACELENS_DATA_ROOT` so they never touch the
+  developer AppData index. See [`docs/INDEX.md`](docs/INDEX.md) and
+  [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
 
 ## [0.1.3] — 2026-08-14
 

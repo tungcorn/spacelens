@@ -65,6 +65,13 @@ std::wstring toHex(std::uint64_t value)
 
 std::wstring spaceLensDataRoot()
 {
+    wchar_t overrideBuf[32768]{};
+    const DWORD overrideLen =
+        ::GetEnvironmentVariableW(L"SPACELENS_DATA_ROOT", overrideBuf, 32768);
+    if (overrideLen > 0 && overrideLen < 32768) {
+        return std::wstring(overrideBuf, overrideLen);
+    }
+
     PWSTR path = nullptr;
     const HRESULT hr =
         ::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &path);

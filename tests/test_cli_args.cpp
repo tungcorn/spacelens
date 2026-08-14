@@ -119,4 +119,13 @@ SPACELENS_TEST(CliArgs_overview_and_opportunities)
     SPACELENS_REQUIRE(cls.command == Command::Opportunities);
     SPACELENS_REQUIRE(cls.classification == L"BuildArtifact");
     SPACELENS_REQUIRE(cls.json);
+
+    auto underOpp = parse({L"spacelens", L"opportunities", L"D:\\data",
+                           L"--from-index", L"--under", L"D:\\data\\Projects",
+                           L"--json"});
+    SPACELENS_REQUIRE(underOpp.error.empty());
+    SPACELENS_REQUIRE(underOpp.under == L"D:\\data\\Projects");
+
+    auto underScan = parse({L"spacelens", L"scan", L"D:\\", L"--under", L"D:\\x"});
+    SPACELENS_REQUIRE(!underScan.error.empty());
 }
