@@ -98,6 +98,10 @@ SPACELENS_TEST(StorageIntel_overview_lists_largest_not_root)
         }
     }
     SPACELENS_REQUIRE(sawVm);
+
+    const auto tight = buildLiveOverview(result, 1, kNow);
+    SPACELENS_REQUIRE_EQ(tight.largestDirectories.size(), 1ULL);
+    SPACELENS_REQUIRE(tight.truncatedDirectories);
 }
 
 SPACELENS_TEST(StorageIntel_opportunities_rank_developer_and_skip_recent_unknown)
@@ -257,4 +261,12 @@ SPACELENS_TEST(StorageIntel_reason_codes_are_stable)
     }
     SPACELENS_REQUIRE(hasDep);
     SPACELENS_REQUIRE(hasRegen);
+
+    const auto& regen = regenerableOpportunityClassifications();
+    SPACELENS_REQUIRE(std::find(regen.begin(), regen.end(), "TemporaryData") !=
+                      regen.end());
+    SPACELENS_REQUIRE(std::find(regen.begin(), regen.end(),
+                                "DependencyDirectory") != regen.end());
+    SPACELENS_REQUIRE(std::find(regen.begin(), regen.end(),
+                                "DownloadedAiModel") == regen.end());
 }

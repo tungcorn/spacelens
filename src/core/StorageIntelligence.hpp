@@ -185,4 +185,10 @@ struct OpportunityReport {
 /// regenerable aggregate (old-large / unknown / user content).
 [[nodiscard]] std::string opportunityGroupId(StorageCategory category);
 
+/// Classifications that are typically regenerable and must be fetched for
+/// indexed opportunities. Excludes DownloadedAiModel (not regenerable).
+/// Includes TemporaryData (GUI developer-storage preset omits it).
+[[nodiscard]] const std::vector<std::string>&
+regenerableOpportunityClassifications();
+
 }  // namespace spacelens

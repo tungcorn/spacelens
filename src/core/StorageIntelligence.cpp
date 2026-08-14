@@ -507,6 +507,15 @@ const char* objectTypeName(ItemKind kind) noexcept
     return "file";
 }
 
+const std::vector<std::string>& regenerableOpportunityClassifications()
+{
+    static const std::vector<std::string> kClasses = {
+        "BuildArtifact", "DependencyDirectory", "PackageCache",
+        "IdeCache",      "TemporaryData",       "LogData",
+    };
+    return kClasses;
+}
+
 std::string opportunityGroupId(StorageCategory category)
 {
     switch (category) {
@@ -629,7 +638,9 @@ StorageOverviewReport buildLiveOverview(const ScanResult& result, std::size_t li
     report.root = result.tree.pathOfDirectory(result.tree.root());
     report.logicalBytes = result.tree.dir(result.tree.root()).recursiveSize;
 
-    const auto dirs = topDirectories(result.tree, limit + 1);
+    // Root is always the largest directory. Fetch one extra slot so skipping
+    // it still leaves a sentinel for truncated_directories.
+    const auto dirs = topDirectories(result.tree, limit + 2);
     std::size_t dirMatches = 0;
     for (const auto& item : dirs) {
         if (normalizePathKey(item.path) == normalizePathKey(report.root)) {

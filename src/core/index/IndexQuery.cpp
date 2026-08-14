@@ -160,7 +160,8 @@ void appendCommonFilters(std::ostringstream& sql, const IndexQuerySpec& spec)
         sql << " AND parent_id = (SELECT id FROM entries WHERE root_id = 1 AND "
                "path = ? LIMIT 1)";
     } else if (!spec.pathPrefix.empty()) {
-        sql << " AND (path = ? OR path LIKE ? ESCAPE '\\')";
+        sql << " AND (path = ? COLLATE NOCASE OR path LIKE ? ESCAPE '\\' "
+               "COLLATE NOCASE)";
     }
 }
 
@@ -207,14 +208,24 @@ void bindFilters(SqliteStmt& stmt, int& idx, const IndexQuerySpec& spec,
     if (!spec.browsePath.empty()) {
         stmt.bindText16(idx++, spec.browsePath);
     } else if (!spec.pathPrefix.empty()) {
-        stmt.bindText16(idx++, spec.pathPrefix);
         std::wstring prefix = spec.pathPrefix;
-        while (!prefix.empty() &&
+        for (wchar_t& ch : prefix) {
+            if (ch == L'/') {
+                ch = L'\\';
+            }
+        }
+        while (prefix.size() > 3 &&
                (prefix.back() == L'\\' || prefix.back() == L'/')) {
             prefix.pop_back();
         }
+        stmt.bindText16(idx++, prefix);
         // ESCAPE '\' : `\\` is a literal backslash, `%` is still the wildcard.
-        std::wstring likePat = escapeLikeWide(prefix);
+        std::wstring likeBase = prefix;
+        while (!likeBase.empty() &&
+               (likeBase.back() == L'\\' || likeBase.back() == L'/')) {
+            likeBase.pop_back();
+        }
+        std::wstring likePat = escapeLikeWide(likeBase);
         likePat.push_back(L'\\');
         likePat.push_back(L'\\');
         likePat.push_back(L'%');

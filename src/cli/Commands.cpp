@@ -539,6 +539,7 @@ ExitCode runFind(const ParsedArgs& args, std::stop_token stop)
     auto result = runEngine(args.path, /*topFiles=*/0, stop);
     const FileTimeTicks now = nowFileTime();
     std::vector<FileIndex> matches;
+    bool truncated = false;
     if (result.state == ScanState::Completed ||
         result.state == ScanState::Cancelled) {
         const std::size_t n = result.tree.fileCount();
@@ -558,7 +559,8 @@ ExitCode runFind(const ParsedArgs& args, std::stop_token stop)
                       }
                       return result.tree.pathOfFile(a) < result.tree.pathOfFile(b);
                   });
-        if (all.size() > args.limit) {
+        truncated = args.limit > 0 && all.size() > args.limit;
+        if (truncated) {
             all.resize(args.limit);
         }
         matches = std::move(all);
@@ -573,7 +575,7 @@ ExitCode runFind(const ParsedArgs& args, std::stop_token stop)
         }
         std::cout << ",\"returned_count\":" << jsonUInt(matches.size())
                   << ",\"truncated\":"
-                  << jsonBool(matches.size() == args.limit && args.limit > 0)
+                  << jsonBool(truncated)
                   << ",\"results\":[";
         for (std::size_t i = 0; i < matches.size(); ++i) {
             if (i > 0) {
@@ -1293,7 +1295,7 @@ ExitCode runOverview(const ParsedArgs& args, std::stop_token stop)
                                                      : ExitCode::ScanFailed;
         }
         const auto dirs =
-            queryKind(args.path, false, true, args.limit + 1, std::nullopt,
+            queryKind(args.path, false, true, args.limit + 2, std::nullopt,
                       std::nullopt, {});
         const auto files =
             queryKind(args.path, true, false, args.limit + 1, std::nullopt,
@@ -1380,7 +1382,7 @@ ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
         appendUnique(
             queryKind(args.path, true, true, kIndexedOpportunityFetchLimit,
                       query.minSize, std::nullopt,
-                      developerStorageClassifications()));
+                      regenerableOpportunityClassifications()));
         appendUnique(queryKind(args.path, true, true,
                                kIndexedOpportunityFetchLimit, query.minSize,
                                query.olderThanDays, {}));
@@ -1389,7 +1391,7 @@ ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
         reclaimSpec.includeDirectories = true;
         reclaimSpec.minSize = query.minSize;
         reclaimSpec.limit = kIndexedOpportunityFetchLimit;
-        reclaimSpec.candidateStrengths = {"Strong", "Moderate", "ReviewOnly"};
+        reclaimSpec.candidateStrengths = {"Strong", "Moderate"};
         reclaimSpec.sortBy = IndexSortKey::CandidateStrength;
         reclaimSpec.sortDescending = true;
         appendUnique(queryIndex(args.path, reclaimSpec));

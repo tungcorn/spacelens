@@ -118,6 +118,24 @@ SPACELENS_TEST(Index_query_path_prefix_under_windows_path)
         SPACELENS_REQUIRE(hit.path.find(L"large.gguf") == std::wstring::npos);
     }
 
+    IndexQuerySpec trailing;
+    trailing.includeFiles = true;
+    trailing.includeDirectories = true;
+    trailing.pathPrefix = root + L"\\node_modules\\";
+    trailing.limit = 20;
+    auto qSlash = queryIndex(root, trailing);
+    SPACELENS_REQUIRE(qSlash.ok);
+    SPACELENS_REQUIRE(qSlash.returned_items >= 1);
+
+    IndexQuerySpec folded;
+    folded.includeFiles = true;
+    folded.includeDirectories = false;
+    folded.pathPrefix = root + L"\\NODE_MODULES";
+    folded.limit = 20;
+    auto qCase = queryIndex(root, folded);
+    SPACELENS_REQUIRE(qCase.ok);
+    SPACELENS_REQUIRE(qCase.returned_items >= 1);
+
     IndexQuerySpec missing;
     missing.includeFiles = true;
     missing.pathPrefix = root + L"\\does-not-exist";

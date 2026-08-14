@@ -23,7 +23,12 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 - `find --json` now includes classification, location safety, reclaimability,
   candidate strength, and explanation. Live scan/top/find JSON reports
-  `"source": "live_scan"`.
+  `"source": "live_scan"`. `find` `truncated` is true only when more matches
+  existed than `--limit`.
+- Indexed `opportunities` fetch regenerable classes (including
+  `TemporaryData`, excluding `DownloadedAiModel`) so a large model pile
+  cannot hide recent caches. Overview `truncated_directories` accounts for
+  the scan root always being the largest directory.
 - `capabilities --json` advertises `overview`, `opportunities`,
   `json_contract_version`, and storage-intelligence feature flags.
   `filesystem_mutation` remains `false`. Version stays 0.1.2.
