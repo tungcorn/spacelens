@@ -127,6 +127,15 @@ try {
     Write-SizedFile -Path (Join-Path $fixture "old-backup.zip") -Bytes (9MB) -DaysAgo 400 -Fill 0x41
     Write-SizedFile -Path (Join-Path $fixture "recent-vm.iso") -Bytes (40MB) -DaysAgo 2 -Fill 0x51
     Write-SizedFile -Path (Join-Path $fixture "holiday.jpg") -Bytes (3MB) -DaysAgo 30 -Fill 0x61
+    Write-SizedFile -Path (Join-Path $fixture "old-setup.msi") -Bytes (8MB) -DaysAgo 400 -Fill 0x71
+    Write-SizedFile -Path (Join-Path $fixture "rust-app\Cargo.toml") -Bytes 200 -DaysAgo 20 -Fill 0x81
+    Write-SizedFile -Path (Join-Path $fixture "rust-app\target\app.exe") -Bytes (14MB) -DaysAgo 8 -Fill 0x82
+    Write-SizedFile -Path (Join-Path $fixture "dotnet-app\App.csproj") -Bytes 300 -DaysAgo 20 -Fill 0x83
+    Write-SizedFile -Path (Join-Path $fixture "dotnet-app\bin\App.dll") -Bytes (12MB) -DaysAgo 6 -Fill 0x84
+    Write-SizedFile -Path (Join-Path $fixture "py-app\pyproject.toml") -Bytes 120 -DaysAgo 20 -Fill 0x85
+    Write-SizedFile -Path (Join-Path $fixture "py-app\.venv\pyvenv.cfg") -Bytes 80 -DaysAgo 12 -Fill 0x86
+    Write-SizedFile -Path (Join-Path $fixture "py-app\.venv\lib.bin") -Bytes (11MB) -DaysAgo 12 -Fill 0x87
+    Write-SizedFile -Path (Join-Path $fixture "Photos\build\IMG_001.jpg") -Bytes (12MB) -DaysAgo 400 -Fill 0x91
 
     $dupA = Join-Path $fixture "copies\report-a.bin"
     $dupB = Join-Path $fixture "copies\report-b.bin"
@@ -193,11 +202,22 @@ try {
     Assert-True ($opp.Raw -notmatch "safe_to_delete") "opportunities leaked safe_to_delete"
     Assert-True ($opp.Raw -notmatch "potential_reclaim_bytes") "opportunities leaked potential_reclaim_bytes"
     Assert-True ($null -ne $opp.Json.summary.unique_review_bytes) "unique_review_bytes missing"
+    Assert-True ($opp.Json.ranking_policy -eq "opportunity_rank_v2") "ranking_policy must be opportunity_rank_v2"
     Assert-True (Has-PathNeedle $opp.Json.opportunities "node_modules") "missing node_modules opportunity"
     Assert-True (Has-PathNeedle $opp.Json.opportunities "build") "missing build opportunity"
     Assert-True (Has-PathNeedle $opp.Json.opportunities "old-backup.zip") "missing old zip opportunity"
+    Assert-True (Has-PathNeedle $opp.Json.opportunities "target") "missing rust target opportunity"
+    Assert-True (Has-PathNeedle $opp.Json.opportunities ".venv") "missing python venv opportunity"
+    Assert-True (Has-PathNeedle $opp.Json.opportunities "old-setup.msi") "missing old installer opportunity"
     Assert-True (-not (Has-PathNeedle $opp.Json.opportunities "recent-vm.iso")) "recent VM must not be an opportunity"
     Assert-True (-not (Has-PathNeedle $opp.Json.opportunities "holiday.jpg")) "recent photo must not be an opportunity"
+    foreach ($item in @($opp.Json.opportunities)) {
+        if ($null -ne $item.path -and ($item.path -like "*Photos*build*")) {
+            Assert-True ($item.classification -ne "BuildArtifact") `
+                "Photos\build must not be generated output"
+        }
+        Assert-True ($null -ne $item.evidence) "opportunity missing evidence object"
+    }
     Assert-True ($opp.Json.summary.returned_count -le 20) "opportunities unbounded"
     $oppBytes = [Text.Encoding]::UTF8.GetByteCount($opp.Raw)
     Assert-True ($oppBytes -lt 256KB) "opportunities JSON too large for an agent ($oppBytes)"
@@ -212,6 +232,14 @@ try {
     Assert-True (Has-GroupId $opp.Json.groups "developer_dependencies") "missing developer_dependencies group"
     Assert-True (Has-GroupId $opp.Json.groups "generated_outputs") "missing generated_outputs group"
     Assert-True (Has-GroupId $opp.Json.groups "temporary_data") "missing temporary_data group"
+    foreach ($g in @($opp.Json.groups)) {
+        Assert-True ($null -ne $g.strongest_candidate_strength) "group missing strongest_candidate_strength"
+    }
+    Assert-True ($null -ne $overview.Json.opportunity_summary) "overview missing opportunity_summary"
+
+    $onlyBuild = Invoke-CliJson -Arguments @("opportunities", $fixture, "--classification", "BuildArtifact", "--json")
+    Assert-True (Has-PathNeedle $onlyBuild.Json.opportunities "build") "classification filter missed cmake build"
+    Assert-True (-not (Has-PathNeedle $onlyBuild.Json.opportunities ".venv")) "classification filter leaked venv"
     Write-Host "C groups: $((@($opp.Json.groups) | ForEach-Object { $_.id }) -join ', ')"
 
     # --- nested overlap ---

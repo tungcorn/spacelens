@@ -266,8 +266,10 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         }
         if (arg == L"--classification") {
             if (out.command != Command::Top && out.command != Command::Find &&
-                out.command != Command::Query) {
-                out.error = "--classification is only valid with top/find/query.";
+                out.command != Command::Query &&
+                out.command != Command::Opportunities) {
+                out.error =
+                    "--classification is only valid with top/find/query/opportunities.";
                 return out;
             }
             if (i + 1 >= argc || argv[i + 1][0] == L'\0') {

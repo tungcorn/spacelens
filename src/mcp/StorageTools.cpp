@@ -218,6 +218,10 @@ ToolResult callOpportunities(const JsonValue& args, std::stop_token stop)
         minSize.value_or(spacelens::kDefaultOpportunityMinSize);
     request.query.olderThanDays =
         olderThan.value_or(spacelens::kDefaultOldLargeDays);
+    if (const auto classification = args.stringAt("classification")) {
+        request.query.categoryOnly =
+            spacelens::parseStorageCategory(*classification);
+    }
     if (stop.stop_requested()) {
         ToolResult cancelled;
         cancelled.cancelled = true;
@@ -427,6 +431,7 @@ void registerStorageTools(McpServer& server)
                                                 spacelens::kMaxOpportunityLimit)));
         props.set("min_size_bytes", integerSchema(0, 9'000'000'000'000'000));
         props.set("older_than_days", integerSchema(0, 36500));
+        props.set("classification", objectType("string"));
         tool.inputSchema = requiredPathSchema(std::move(props));
         tool.outputSchema = analysisOutputSchema();
         tool.annotations = readOnlyAnnotations();

@@ -1090,6 +1090,13 @@ void printHumanOverview(const StorageOverviewReport& report)
         }
         return items;
     }());
+    if (!report.opportunitySummary.empty()) {
+        std::cout << "\nReview-oriented groups (not authorization to delete)\n";
+        for (const auto& g : report.opportunitySummary) {
+            std::cout << "  " << SizeFormatter::format(g.logicalBytes) << "  "
+                      << g.id << "  (" << g.itemCount << ")\n";
+        }
+    }
 }
 
 void printHumanOpportunities(const OpportunityReport& report)
@@ -1107,7 +1114,11 @@ void printHumanOpportunities(const OpportunityReport& report)
         std::cout << "\nGROUPS\n";
         for (const auto& g : report.groups) {
             std::cout << "  " << SizeFormatter::format(g.logicalBytes) << "  "
-                      << g.id << "  (" << g.itemCount << ")\n";
+                      << g.id << "  (" << g.itemCount << ")";
+            if (!g.strongestCandidateStrength.empty()) {
+                std::cout << "  " << g.strongestCandidateStrength;
+            }
+            std::cout << "\n";
         }
     }
     std::cout << "\nOPPORTUNITIES\n";
@@ -1192,6 +1203,10 @@ ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
         args.olderThanDays.value_or(kDefaultOldLargeDays);
     request.query.nowTicks = nowFileTime();
     request.query.limit = args.limit;
+    if (!args.classification.empty()) {
+        request.query.categoryOnly =
+            parseStorageCategory(narrowClassification(args.classification));
+    }
     const auto analysis = analyzeOpportunities(request, stop);
     if (args.json) {
         std::cout << analysis.report.toJson();
