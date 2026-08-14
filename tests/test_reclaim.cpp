@@ -96,6 +96,20 @@ SPACELENS_TEST(Reclaim_protected_never_candidate)
     SPACELENS_REQUIRE(cand.strength == CandidateStrength::None);
 }
 
+SPACELENS_TEST(Reclaim_recent_high_large_is_moderate)
+{
+    Classification cls;
+    cls.category = StorageCategory::DependencyDirectory;
+    cls.confidence = Confidence::High;
+    cls.ruleId = "node-modules";
+
+    const auto cand = analyzeItem(
+        L"D:\\proj\\node_modules", ItemKind::Directory, 20ULL << 20, daysAgo(4),
+        cls, LocationSafety::Ordinary, kNow, 0);
+    SPACELENS_REQUIRE(cand.strength == CandidateStrength::Moderate);
+    SPACELENS_REQUIRE(cand.reclaimability == Reclaimability::LikelyRegenerable);
+}
+
 SPACELENS_TEST(Reclaim_last_access_alone_not_strong)
 {
     Classification cls;

@@ -112,4 +112,11 @@ SPACELENS_TEST(CliArgs_overview_and_opportunities)
 
     auto bad = parse({L"spacelens", L"scan", L"D:\\", L"--from-index"});
     SPACELENS_REQUIRE(!bad.error.empty());
+
+    auto cls = parse({L"spacelens", L"opportunities", L"D:\\data",
+                      L"--classification", L"BuildArtifact", L"--json"});
+    SPACELENS_REQUIRE(cls.error.empty());
+    SPACELENS_REQUIRE(cls.command == Command::Opportunities);
+    SPACELENS_REQUIRE(cls.classification == L"BuildArtifact");
+    SPACELENS_REQUIRE(cls.json);
 }

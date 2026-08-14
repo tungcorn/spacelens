@@ -270,3 +270,130 @@ SPACELENS_TEST(StorageIntel_reason_codes_are_stable)
     SPACELENS_REQUIRE(std::find(regen.begin(), regen.end(),
                                 "DownloadedAiModel") == regen.end());
 }
+
+SPACELENS_TEST(StorageIntel_v2_coverage_ranking_and_filters)
+{
+    DirectoryTree tree;
+    const DirIndex root = tree.createRoot(L"D:\\V2Fixture");
+    const DirIndex photos = tree.addDirectory(root, L"Photos");
+    const DirIndex photosBuild = tree.addDirectory(photos, L"build");
+    tree.addFile(photosBuild, L"IMG_001.jpg", 12ULL << 20, daysAgo(400));
+
+    const DirIndex rust = tree.addDirectory(root, L"rust-app");
+    tree.addFile(rust, L"Cargo.toml", 200, daysAgo(20));
+    const DirIndex target = tree.addDirectory(rust, L"target");
+    tree.addFile(target, L"app.exe", 30ULL << 20, daysAgo(8));
+
+    const DirIndex dotnet = tree.addDirectory(root, L"dotnet-app");
+    tree.addFile(dotnet, L"App.csproj", 300, daysAgo(20));
+    const DirIndex bin = tree.addDirectory(dotnet, L"bin");
+    tree.addFile(bin, L"App.dll", 16ULL << 20, daysAgo(6));
+
+    const DirIndex py = tree.addDirectory(root, L"py-app");
+    tree.addFile(py, L"pyproject.toml", 120, daysAgo(20));
+    const DirIndex venv = tree.addDirectory(py, L".venv");
+    tree.addFile(venv, L"pyvenv.cfg", 80, daysAgo(12));
+    tree.addFile(venv, L"lib.bin", 22ULL << 20, daysAgo(12));
+
+    tree.addFile(root, L"old-setup.msi", 14ULL << 20, daysAgo(400));
+    tree.addFile(root, L"recent-vm.iso", 40ULL << 20, daysAgo(2));
+    tree.recomputeAggregates(kNow);
+
+    OpportunityQuery q;
+    q.minSize = 1;
+    q.olderThanDays = 90;
+    q.nowTicks = kNow;
+    q.limit = 20;
+    const auto report = buildLiveOpportunities(tree, q);
+    SPACELENS_REQUIRE(report.ok);
+    SPACELENS_REQUIRE(report.rankingPolicy == kOpportunityRankPolicy);
+    SPACELENS_REQUIRE(hasPathContaining(report.opportunities, L"target"));
+    SPACELENS_REQUIRE(hasPathContaining(report.opportunities, L"\\bin"));
+    SPACELENS_REQUIRE(hasPathContaining(report.opportunities, L".venv"));
+    SPACELENS_REQUIRE(hasPathContaining(report.opportunities, L"old-setup.msi"));
+    SPACELENS_REQUIRE(!hasPathContaining(report.opportunities, L"recent-vm.iso"));
+    for (const auto& item : report.opportunities) {
+        const bool underPhotosBuild =
+            item.path.find(L"Photos") != std::wstring::npos &&
+            item.path.find(L"build") != std::wstring::npos;
+        if (underPhotosBuild) {
+            SPACELENS_REQUIRE(item.classification != "BuildArtifact");
+            SPACELENS_REQUIRE(item.objectType != "directory");
+        }
+    }
+
+    bool sawRustEvidence = false;
+    bool sawInstaller = false;
+    for (const auto& item : report.opportunities) {
+        if (item.path.find(L"target") != std::wstring::npos) {
+            sawRustEvidence = item.ecosystem == "rust" && item.marker == "target";
+            SPACELENS_REQUIRE(item.candidateStrength == "Moderate");
+        }
+        if (item.path.find(L"old-setup.msi") != std::wstring::npos) {
+            sawInstaller = true;
+            SPACELENS_REQUIRE(item.classification == "Archive");
+            SPACELENS_REQUIRE(std::find(item.reasonCodes.begin(), item.reasonCodes.end(),
+                                        reason::kOldLargeInstaller) !=
+                              item.reasonCodes.end());
+        }
+    }
+    SPACELENS_REQUIRE(sawRustEvidence);
+    SPACELENS_REQUIRE(sawInstaller);
+
+    const std::string json = report.toJson();
+    SPACELENS_REQUIRE(json.find("\"ranking_policy\":\"opportunity_rank_v2\"") !=
+                      std::string::npos);
+    SPACELENS_REQUIRE(json.find("\"evidence\":") != std::string::npos);
+    SPACELENS_REQUIRE(json.find("safe_to_delete") == std::string::npos);
+    SPACELENS_REQUIRE(json.find("\"strongest_candidate_strength\"") !=
+                      std::string::npos);
+
+    OpportunityQuery filtered = q;
+    filtered.categoryOnly = StorageCategory::BuildArtifact;
+    const auto onlyBuild = buildLiveOpportunities(tree, filtered);
+    SPACELENS_REQUIRE(hasPathContaining(onlyBuild.opportunities, L"target"));
+    SPACELENS_REQUIRE(!hasPathContaining(onlyBuild.opportunities, L".venv"));
+    SPACELENS_REQUIRE(!hasPathContaining(onlyBuild.opportunities, L"old-setup.msi"));
+}
+
+SPACELENS_TEST(StorageIntel_confidence_breaks_ranking_ties)
+{
+    DirectoryTree tree;
+    const DirIndex root = tree.createRoot(L"D:\\RankFixture");
+    const DirIndex high = tree.addDirectory(root, L"node_modules");
+    tree.addFile(high, L"a.js", 20ULL << 20, daysAgo(10));
+    const DirIndex med = tree.addDirectory(root, L".cache");
+    tree.addFile(med, L"b.dat", 20ULL << 20, daysAgo(10));
+    tree.recomputeAggregates(kNow);
+
+    OpportunityQuery q;
+    q.minSize = 1;
+    q.olderThanDays = 90;
+    q.nowTicks = kNow;
+    q.limit = 10;
+    const auto report = buildLiveOpportunities(tree, q);
+    SPACELENS_REQUIRE(report.opportunities.size() >= 2);
+    SPACELENS_REQUIRE(report.opportunities[0].path.find(L"node_modules") !=
+                      std::wstring::npos);
+    SPACELENS_REQUIRE(report.opportunities[0].confidence == "High");
+}
+
+SPACELENS_TEST(StorageIntel_overview_has_live_opportunity_summary)
+{
+    auto result = scanFromTree(makeFixtureTree());
+    const auto report = buildLiveOverview(result, 5, kNow);
+    SPACELENS_REQUIRE(!report.opportunitySummary.empty());
+    SPACELENS_REQUIRE(hasGroup(
+        [&] {
+            OpportunityReport wrap;
+            wrap.groups = report.opportunitySummary;
+            return wrap;
+        }(),
+        "developer_dependencies"));
+    const std::string json = report.toJson();
+    SPACELENS_REQUIRE(json.find("\"opportunity_summary\"") != std::string::npos);
+
+    StorageOverviewReport indexed;
+    indexed.source = EvidenceSource::PersistentIndex;
+    SPACELENS_REQUIRE(indexed.opportunitySummary.empty());
+}
