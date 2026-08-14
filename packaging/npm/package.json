@@ -1,0 +1,49 @@
+{
+  "name": "@tungcorn/spacelens",
+  "version": "0.1.1",
+  "description": "Native Windows storage intelligence. This package installs the desktop GUI and the read-only CLI.",
+  "license": "MIT",
+  "author": "tungcorn",
+  "homepage": "https://github.com/tungcorn/spacelens",
+  "bugs": {
+    "url": "https://github.com/tungcorn/spacelens/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tungcorn/spacelens.git"
+  },
+  "keywords": [
+    "spacelens",
+    "windows",
+    "storage",
+    "disk",
+    "cli",
+    "gui",
+    "disk-usage"
+  ],
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "spacelens": "bin/spacelens.js",
+    "spacelens-gui": "bin/spacelens-gui.js"
+  },
+  "files": [
+    "bin/",
+    "native/",
+    "licenses/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "type": "commonjs"
+}
