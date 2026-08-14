@@ -190,16 +190,23 @@ Starter notes for implementation. Extend this file when a recurring C++ or Windo
   FILE_READ_ATTRIBUTES`, `FILE_FLAG_OPEN_REPARSE_POINT |
   FILE_FLAG_SEQUENTIAL_SCAN`) and a 1 MiB reusable buffer. The file is not
   mapped whole.
-- **Lifetime:** The handle stays open for the entire read. Metadata and identity
-  are inspected on that handle before and after hashing; the path is re-opened
-  to detect replacement. A size, last-write, or identity change yields
-  `ChangedDuringRead` / `IdentityChanged` / `Missing` instead of a digest.
+- **Lifetime:** The handle stays open for the entire read. Metadata, identity,
+  ChangeTime, and FileUsn are inspected on that handle before and after
+  hashing; the path is re-opened to detect replacement. A size, last-write,
+  ChangeTime, FileUsn, or identity change yields `ChangedDuringRead` /
+  `IdentityChanged` / `Missing` instead of a digest.
 - **Hard links:** Live `CleanupIdentity` collapses aliases before hashing. One
   identity with two or more paths is `same_file_identity` and is not hashed.
   Mixed alias + independent copy hashes once per identity.
+- **Persistent cache:** `HashCacheStore` (`hash-cache.db`) keys on
+  `(volume_serial, file_id_128)` — never path. Reuse requires matching
+  size + ChangeTime + FileUsn + evidence v1. `probe()` is attributes-only.
+  Empty `hashCachePath` disables the cache. Write failures degrade to the
+  fresh digest.
 - **Bug prevented:** Following a reparse point into another file, treating
   same-size or sample-equal files as verified, hashing the same hard-linked
-  object twice, and publishing a digest from a file that changed mid-read.
+  object twice, publishing a digest from a file that changed mid-read, and
+  reusing a hash after `SetFileTime` restored last-write.
 
 ## Duplicate detection session
 

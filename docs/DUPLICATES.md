@@ -1,7 +1,11 @@
-# Duplicate Detection V1
+# Duplicate Detection V2
 
 Duplicate Detection finds **exact file-content copies** and presents them as
 planning evidence. It does not delete, link, move, or replace anything.
+
+V2 adds a **persistent SHA-256 cache** so repeated analysis of unchanged
+files can reuse a previously verified digest. The cache is an accelerator,
+never a source of truth.
 
 ```text
 Persistent index
@@ -15,6 +19,7 @@ Hard-link collapse  (same VolumeSerial + FileId)
 Optional sample fingerprint  (narrowing only)
    ↓
 Full SHA-256 of live contents
+   (or a verified cache hit — see below)
    ↓
 Verified groups  or  skipped / inconclusive
 ```
@@ -50,8 +55,59 @@ Ignored by default:
 - inaccessible, missing, or stale indexed paths
 - files below the minimum logical size (default **1 MiB**)
 
-There is no persistent hash cache in V1. Hashes are computed for the current
-scan only.
+## Persistent hash cache
+
+```text
+FALSE CACHE MISS  = acceptable
+FALSE CACHE HIT   = correctness defect
+When evidence is insufficient: HASH AGAIN.
+```
+
+The cache lives in `%LOCALAPPDATA%\SpaceLens\hash-cache.db`, independent of
+`state.db` and of per-root indexes. It is disposable derived state. Path is
+**never** the cache key. The key is `(volume_serial, file_id_128)`.
+
+A stored digest is reusable only when every evidence-v1 field matches the
+live probe:
+
+- `FILE_ID_128` identity (64-bit fallback is never cached)
+- volume serial
+- logical size
+- `ChangeTime` (`FILE_BASIC_INFO`)
+- per-file USN (`FSCTL_READ_FILE_USN_DATA`)
+- `algorithm = sha256`, `evidence_version = 1`
+- digest length 32
+
+Volume journal ID is stored when available but **not required** for reuse
+(querying the volume journal is often `AccessDenied` without elevation). If
+both the row and the live probe have a journal ID and they differ, the row
+is not reused.
+
+Size + last-write + FileId alone is **not** sufficient. `SetFileTime` can
+restore last-write after a content change; ChangeTime and FileUsn must still
+diverge, forcing a rehash.
+
+Must rehash when: the row is missing, USN/ChangeTime is unavailable, identity
+is FileIndex64, any evidence field mismatches, the filesystem cannot supply
+FileId128+USN (FAT and similar), or the cache file is missing/locked/corrupt.
+Invalid rows (wrong digest length, unknown algorithm/version, incomplete
+identity) are dropped and hashed again.
+
+Never persisted: sample fingerprints, cancelled hashes, `ChangedDuringRead`,
+or 64-bit fallback identities. A cache write failure does not fail the scan;
+the fresh digest is still used.
+
+Empty `hashCachePath` disables the cache (tests). Product callers
+(`analyzeDuplicates`, GUI session) set `spaceLensHashCachePath()`. Tests
+must not open the real AppData file.
+
+`read_only` / `filesystem_mutation: false` mean analyzed user files are not
+mutated. Writing a derived cache under SpaceLens-owned AppData is
+implementation state, not a new mutation class.
+
+Telemetry (additive, does not change group order): `cache_hits`,
+`cache_misses`, `cache_invalidations`, `cache_writes`, `files_fully_hashed`,
+`bytes_fully_hashed`, `bytes_reused_from_cache`.
 
 ## Pipeline
 
@@ -72,11 +128,14 @@ scan only.
 5. **Sample fingerprint.** When logical size is greater than 192 KiB
    (`3 × 64 KiB`), hash little-endian size plus first / middle / last 64 KiB.
    Sample clusters of size 1 are discarded unless they are hard-link aliases.
-6. **Full SHA-256.** Each remaining identity is hashed once, from the first
-   sorted path of that identity. A 1 MiB reusable buffer is used; the file is
-   not mapped whole. The handle stays open for the read. Metadata and identity
-   are re-probed on that handle afterwards, and the path is re-opened to catch
-   replacement. Changed size, last-write, or identity → skip, never verify.
+6. **Full SHA-256 or cache hit.** Each remaining identity is probed for
+   cache evidence. A reusable row supplies the digest without reading file
+   bytes. Otherwise the identity is hashed once, from the first sorted path.
+   A 1 MiB reusable buffer is used; the file is not mapped whole. The handle
+   stays open for the read. Metadata, ChangeTime, FileUsn, and identity are
+   re-probed on that handle afterwards, and the path is re-opened to catch
+   replacement. Changed size, last-write, ChangeTime, FileUsn, or identity →
+   skip, never verify, never persist.
 7. **Publish.** Only clusters with two or more independent identities and a
    matching full hash become `verification = full_sha256` groups. Sample-only
    matches with different full hashes produce no group.
@@ -158,6 +217,7 @@ nothing.
 | Domain types, redundant-byte math, text/JSON | `src/core/Duplicates.*` |
 | Size-bucket query | `src/core/index/IndexQuery.*` |
 | Sequential verification | `src/core/DuplicateDetection.*` |
+| Persistent SHA-256 cache | `src/core/HashCache.*` (`hash-cache.db`) |
 | BCrypt SHA-256, no-follow content open | `src/platform/windows/FileContentHasher.*` |
 | CLI | `spacelens duplicates` |
 | GUI worker | `src/app/DuplicateDetectionSession.*` |

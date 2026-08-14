@@ -8,6 +8,12 @@ cleanup. It does **not** grant automated authority to destroy data.
 > **AI recommendation is not filesystem permission.**
 
 > **SpaceLens CLI and MCP are read-only by design.**
+>
+> `read_only` / `filesystem_mutation: false` mean analyzed user files are not
+> created, deleted, moved, or rewritten. SpaceLens may write its own
+> implementation state under `%LOCALAPPDATA%\SpaceLens\` (indexes, review
+> `state.db`, derived `hash-cache.db`). That is not permission to mutate a
+> scanned root.
 
 Whenever convenience conflicts with filesystem safety, choose safety.
 Whenever AI confidence conflicts with deterministic filesystem policy, choose
@@ -99,7 +105,9 @@ The Indexed tab is discovery, visualization, and planning only:
   fingerprints are never shown as verified copies. Hard-link aliases of one
   identity are not independently reclaimable. There is no Delete / Deduplicate /
   Keep One control. Adding a group to Cleanup Review does not authorize
-  deletion. See [`docs/DUPLICATES.md`](DUPLICATES.md).
+  deletion. A derived SHA-256 cache may be written to
+  `%LOCALAPPDATA%\SpaceLens\hash-cache.db` (never into the scanned tree).
+  See [`docs/DUPLICATES.md`](DUPLICATES.md).
 
 ### Mutation separation
 

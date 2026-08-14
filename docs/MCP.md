@@ -59,6 +59,13 @@ All six tools set `annotations.readOnlyHint=true` and
 `filesystem_mutation: false` where the shared analysis JSON already
 does. There is no `safe_to_delete` and no `recommended_delete`.
 
+`readOnlyHint` describes the analyzed environment, not process I/O.
+`storage_duplicates` may write a derived SHA-256 cache under
+`%LOCALAPPDATA%\SpaceLens\hash-cache.db`. It never writes into the
+scanned root. That cache is an accelerator; a false hit is a defect
+and insufficient evidence hashes again. See
+[`docs/DUPLICATES.md`](DUPLICATES.md).
+
 ### `storage_capabilities`
 
 No arguments. Reports `interface: mcp`, `transport: stdio`, supported
@@ -114,7 +121,8 @@ Index-only. Never live-scans. Never refreshes.
 
 Index-backed, hash-verified, hardlink-aware. Hard-link aliases of one
 identity contribute 0 redundant bytes. Field:
-`summary.potential_redundant_logical_bytes`.
+`summary.potential_redundant_logical_bytes`. Additive cache telemetry
+(`cache_hits`, `cache_misses`, …) does not change group order.
 
 | Argument | Required | Notes |
 | --- | --- | --- |

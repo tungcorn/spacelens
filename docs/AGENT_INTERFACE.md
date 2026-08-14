@@ -198,7 +198,7 @@ decides whether to refresh or rebuild. Query never auto-refreshes.
 | `overview` | 10 directories + 10 files |
 | `opportunities` | 20 items |
 | `top` / `find` / `query` | 20 |
-| `duplicates` | verified groups only; `--min-size` default 1 MB |
+| `duplicates` | verified groups only; `--min-size` default 1 MB; optional derived hash cache in AppData |
 
 JSON uses integer bytes, stable enums, UTF-8 paths, and `schema_version: 1`.
 Additive fields are forward-compatible. Diagnostics go to stderr.

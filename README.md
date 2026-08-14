@@ -69,9 +69,14 @@ commands until they resolve from the official WinGet source.
   overview / opportunities / query / duplicates / index status as typed
   stdio tools. Not included in the published v0.1.2 zip or npm package.
   See [`docs/MCP.md`](docs/MCP.md).
+- **Persistent Content Hash Cache / Duplicate Detection V2:** verified
+  SHA-256 digests may be reused from `%LOCALAPPDATA%\SpaceLens\hash-cache.db`
+  when FileId128 + size + ChangeTime + FileUsn still match. Path is never
+  the key. A false hit is a defect; insufficient evidence hashes again.
+  See [`docs/DUPLICATES.md`](docs/DUPLICATES.md).
 - Not yet: permanent delete, directory recycle, restore from Recycle Bin,
-  auto-refresh on query, journal creation, persistent hash cache, MFT initial
-  scan, product AI, automatic deletion, or CLI/agent/MCP mutation
+  auto-refresh on query, journal creation, MFT initial scan, product AI,
+  automatic deletion, or CLI/agent/MCP mutation
 
 ## Features
 
@@ -103,11 +108,11 @@ commands until they resolve from the official WinGet source.
   logical-size metrics; interactive squarified treemap of immediate children
   (with “Other” aggregation); drill into folders via treemap or breadcrumbs;
   add snapshot-provenance items to durable Cleanup Review
-- **Duplicate Detection V1:** index-backed same-size candidates, live identity
+- **Duplicate Detection V2:** index-backed same-size candidates, live identity
   collapse (hard links are aliases, not copies), sample narrowing, full
-  SHA-256 verification, and planning-only add to Cleanup Review. Same size is
-  not a duplicate. Potential redundant logical bytes are not guaranteed free
-  space.
+  SHA-256 verification, and a derived persistent hash cache under AppData.
+  Same size is not a duplicate. Potential redundant logical bytes are not
+  guaranteed free space. Planning-only add to Cleanup Review.
 - Directory reparse points not followed by default; access errors are non-fatal
   and counted
 

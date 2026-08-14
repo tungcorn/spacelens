@@ -7,6 +7,13 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ### Added
 
+- Persistent Content Hash Cache / Duplicate Detection V2: verified SHA-256
+  digests may be reused from `%LOCALAPPDATA%\SpaceLens\hash-cache.db` when
+  FileId128 + size + ChangeTime + FileUsn still match. Path is never the
+  key. A false cache hit is a defect; insufficient evidence hashes again.
+  Cache write failures do not fail the scan. CLI, MCP, and GUI share the
+  same `spacelens_core` implementation. Version stays 0.1.2.
+  See [`docs/DUPLICATES.md`](docs/DUPLICATES.md).
 - Read-only MCP adapter V1: `spacelens-mcp.exe` is a native stdio Model
   Context Protocol server over `spacelens_core`. Six tools
   (`storage_capabilities`, `storage_overview`, `storage_opportunities`,

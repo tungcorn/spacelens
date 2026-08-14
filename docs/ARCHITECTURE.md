@@ -131,19 +131,22 @@ loads review rows; it does not probe the filesystem. Core JSON helpers live
 in `src/core/Json.*` so CLI and Cleanup Plan share escaping without core
 depending on CLI.
 
-**Duplicate Detection V1** uses the published index only as a same-size
+**Duplicate Detection V2** uses the published index only as a same-size
 accelerator. Live metadata, hard-link identity collapse, optional sample
 fingerprints, and full SHA-256 verification run sequentially in core
 (`Duplicates` / `DuplicateDetection`) with a BCrypt hasher that does not
-follow the final reparse component. GUI work lives in
-`DuplicateDetectionSession` + `DuplicateFilesDialog`. Adding a group to
-Cleanup Review sets `source = "duplicate_detection"` and does not authorize
-deletion. See [`docs/DUPLICATES.md`](DUPLICATES.md).
+follow the final reparse component. A derived SHA-256 cache
+(`%LOCALAPPDATA%\SpaceLens\hash-cache.db`, never `state.db`) may reuse a
+digest when FileId128 + size + ChangeTime + FileUsn still match. A false
+cache hit is a correctness defect; insufficient evidence hashes again.
+GUI work lives in `DuplicateDetectionSession` + `DuplicateFilesDialog`.
+Adding a group to Cleanup Review sets `source = "duplicate_detection"` and
+does not authorize deletion. See [`docs/DUPLICATES.md`](DUPLICATES.md).
 
 Deferred work includes AI inside the product, auto-refresh on query, MFT-based
-initial scan, watch mode, persistent hash cache, MCP, and any automatic
-deletion or movement. A future mutation service, if approved, must be a separately
-permissioned surface rather than an ordinary CLI verb.
+initial scan, watch mode, and any automatic deletion or movement. A future
+mutation service, if approved, must be a separately permissioned surface
+rather than an ordinary CLI verb.
 
 ## Layered architecture
 
@@ -159,14 +162,16 @@ platform/windows (IFileEnumerator, FindHandle, Explorer helpers)
 
 | Layer | Responsibility | Forbidden |
 |-------|----------------|-----------|
-| **core** | Scan algorithms, owned data model, live queries, classification, location policy, activity summaries, read-only reclaim analysis, cleanup-review values, Cleanup Plan, shared JSON/UTF-8 helpers, size formatting, **persistent index**, **durable review state** (`state.db`) | Qt types, interactive prompts, stdout policy, filesystem mutation of analyzed roots |
+| **core** | Scan algorithms, owned data model, live queries, classification, location policy, activity summaries, read-only reclaim analysis, cleanup-review values, Cleanup Plan, shared JSON/UTF-8 helpers, size formatting, **persistent index**, **durable review state** (`state.db`), **derived hash cache** (`hash-cache.db`) | Qt types, interactive prompts, stdout policy, filesystem mutation of analyzed roots |
 | **platform** | Win32 enumeration, volume/USN read-only helpers, file identity (FRN), metadata-only cleanup probes (`FILE_ID_INFO`), path/Explorer integration | Qt, CLI argument parsing, shell-command construction, journal mutation, following reparse points for identity |
 | **cli** | argv parsing, capability declaration, human/JSON rendering, filters, exit codes, Ctrl+C → `stop_token`, index/refresh/query commands | GUI widgets, delete/move/execute commands |
 | **gui/app** | Qt windows, models/views, review planning, `CleanupRevalidationSession`, threads↔signals bridge | Scan algorithms, direct ownership of Win32 enumeration |
 
 Index storage is AppData-only metadata. Core may create/replace files under
-`%LOCALAPPDATA%\SpaceLens\`; it must never delete or move user content under a
-scanned root.
+`%LOCALAPPDATA%\SpaceLens\` (indexes, `state.db`, `hash-cache.db`); it must
+never delete or move user content under a scanned root. `read_only` means
+analyzed user files are not mutated. AppData implementation state is not a
+mutation of the scanned tree.
 
 Dependency direction is strictly **upward only**: core never includes CLI or GUI
 headers. Analysis results are data; neither an AI explanation nor a UI label can
@@ -558,6 +563,6 @@ the same safety distinctions and read-only agent boundary.
 
 ## Deferred
 
-AI product features, MFT scanning, duplicates, watch mode, deletion UX, and
+AI product features, MFT scanning, watch mode, deletion UX, and
 mutation services remain deferred. Keep interfaces replaceable; do not hard-wire
 GUI types or filesystem authority into core analysis.
