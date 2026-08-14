@@ -12,13 +12,16 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
   `opportunity_rank_v2` inside SQLite. Inclusion filters
   (classification, `--under` / `under`, min-size, age, object type)
   run before `LIMIT`. A stronger candidate after the old 200-row
-  prefetch window is no longer invisible. `unique_review_estimated`
-  now means only the overlap-aware unique-byte aggregate exceeded
-  50,000 matching rows — never that top-N is approximate. Schema
-  stays `index_schema_version: 2` and JSON `schema_version: 1`.
-  Version stays 0.1.3. CLI/MCP remain `filesystem_mutation: false`.
-  Tests may set `SPACELENS_DATA_ROOT` so they never touch the
-  developer AppData index. See [`docs/INDEX.md`](docs/INDEX.md) and
+  prefetch window is no longer invisible. Drive-root `--under D:\`
+  / MCP `under` matches descendants (`D:\Users\...`); the LIKE bind
+  no longer escapes the trailing slash into a non-matching pattern.
+  `unique_review_estimated` now means only the overlap-aware
+  unique-byte aggregate exceeded 50,000 matching rows — never that
+  top-N is approximate. Schema stays `index_schema_version: 2` and
+  JSON `schema_version: 1`. Version stays 0.1.3. CLI/MCP remain
+  `filesystem_mutation: false`. Tests may set `SPACELENS_DATA_ROOT`
+  so they never touch the developer AppData index. See
+  [`docs/INDEX.md`](docs/INDEX.md) and
   [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
 
 ## [0.1.3] — 2026-08-14

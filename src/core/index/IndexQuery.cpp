@@ -76,6 +76,34 @@ std::wstring escapeLikeWide(std::wstring_view text)
     return out;
 }
 
+/// Exact bind keeps a drive-root trailing slash (`D:\`). LIKE is built from
+/// the slash-stripped base (`D:`) so ESCAPE '\' yields `D:\\%` and matches
+/// `D:\Users\...`. Binding the unstripped `D:\` would LIKE-escape into
+/// `D:\\\\%` and match nothing.
+void bindPathPrefix(SqliteStmt& stmt, int& idx, std::wstring prefix)
+{
+    for (wchar_t& ch : prefix) {
+        if (ch == L'/') {
+            ch = L'\\';
+        }
+    }
+    while (prefix.size() > 3 &&
+           (prefix.back() == L'\\' || prefix.back() == L'/')) {
+        prefix.pop_back();
+    }
+    stmt.bindText16(idx++, prefix);
+    std::wstring likeBase = prefix;
+    while (!likeBase.empty() &&
+           (likeBase.back() == L'\\' || likeBase.back() == L'/')) {
+        likeBase.pop_back();
+    }
+    std::wstring likePat = escapeLikeWide(likeBase);
+    likePat.push_back(L'\\');
+    likePat.push_back(L'\\');
+    likePat.push_back(L'%');
+    stmt.bindText16(idx++, likePat);
+}
+
 void appendInList(std::ostringstream& sql, const char* column,
                   const std::vector<std::string>& values)
 {
@@ -218,28 +246,7 @@ void bindFilters(SqliteStmt& stmt, int& idx, const IndexQuerySpec& spec,
     if (!spec.browsePath.empty()) {
         stmt.bindText16(idx++, spec.browsePath);
     } else if (!spec.pathPrefix.empty()) {
-        std::wstring prefix = spec.pathPrefix;
-        for (wchar_t& ch : prefix) {
-            if (ch == L'/') {
-                ch = L'\\';
-            }
-        }
-        while (prefix.size() > 3 &&
-               (prefix.back() == L'\\' || prefix.back() == L'/')) {
-            prefix.pop_back();
-        }
-        stmt.bindText16(idx++, prefix);
-        // ESCAPE '\' : `\\` is a literal backslash, `%` is still the wildcard.
-        std::wstring likeBase = prefix;
-        while (!likeBase.empty() &&
-               (likeBase.back() == L'\\' || likeBase.back() == L'/')) {
-            likeBase.pop_back();
-        }
-        std::wstring likePat = escapeLikeWide(likeBase);
-        likePat.push_back(L'\\');
-        likePat.push_back(L'\\');
-        likePat.push_back(L'%');
-        stmt.bindText16(idx++, likePat);
+        bindPathPrefix(stmt, idx, spec.pathPrefix);
     }
 }
 
@@ -312,22 +319,7 @@ void bindOpportunityFilters(SqliteStmt& stmt, int& idx,
         stmt.bindText(idx++, *spec.classification);
     }
     if (!spec.pathPrefix.empty()) {
-        std::wstring prefix = spec.pathPrefix;
-        for (wchar_t& ch : prefix) {
-            if (ch == L'/') {
-                ch = L'\\';
-            }
-        }
-        while (prefix.size() > 3 &&
-               (prefix.back() == L'\\' || prefix.back() == L'/')) {
-            prefix.pop_back();
-        }
-        stmt.bindText16(idx++, prefix);
-        std::wstring likePat = escapeLikeWide(prefix);
-        likePat.push_back(L'\\');
-        likePat.push_back(L'\\');
-        likePat.push_back(L'%');
-        stmt.bindText16(idx++, likePat);
+        bindPathPrefix(stmt, idx, spec.pathPrefix);
     }
     if (!spec.excludePath.empty()) {
         std::wstring exclude = spec.excludePath;

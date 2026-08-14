@@ -654,6 +654,74 @@ SPACELENS_TEST(IndexedIntel_unicode_case_and_refresh_rank)
     removeRootDir(root);
 }
 
+SPACELENS_TEST(IndexedIntel_drive_root_under_matches_descendants)
+{
+    IsolatedDataRoot data;
+    // Synthetic drive letter — never created or scanned. Isolated data root
+    // keeps this out of the developer AppData catalog.
+    const std::wstring root = L"Q:\\";
+    std::vector<SynthRow> rows;
+    rows.push_back(hiddenDep(L"Users\\late\\node_modules", 12ULL * 1024ULL * 1024ULL));
+    rows.push_back(oldLargeFile(L"Users\\decoy.bin", 50ULL * 1024ULL * 1024ULL));
+    publishSynthetic(root, rows);
+
+    IndexedOpportunitySpec spec;
+    spec.minSize = 1;
+    spec.olderThanDays = 90;
+    spec.nowTicks = kNow;
+    spec.limit = 20;
+    spec.pathPrefix = L"Q:\\";
+    spec.excludePath = indexedRoot(root);
+
+    const auto fetch = queryIndexedOpportunities(root, spec, {});
+    SPACELENS_REQUIRE(fetch.ok);
+    SPACELENS_REQUIRE(fetch.error.empty());
+    SPACELENS_REQUIRE(fetch.topHits.size() >= 2);
+    SPACELENS_REQUIRE(fetch.matchedItems >= 2);
+
+    bool sawNode = false;
+    bool sawDecoy = false;
+    for (const auto& hit : fetch.topHits) {
+        SPACELENS_REQUIRE(hit.path.size() >= 3);
+        SPACELENS_REQUIRE((hit.path[0] == L'Q' || hit.path[0] == L'q') &&
+                          hit.path[1] == L':');
+        if (hit.path.find(L"node_modules") != std::wstring::npos) {
+            sawNode = true;
+        }
+        if (hit.path.find(L"decoy.bin") != std::wstring::npos) {
+            sawDecoy = true;
+        }
+    }
+    SPACELENS_REQUIRE(sawNode);
+    SPACELENS_REQUIRE(sawDecoy);
+
+    OpportunityQuery query;
+    query.minSize = 1;
+    query.olderThanDays = 90;
+    query.nowTicks = kNow;
+    query.limit = 20;
+    query.pathPrefix = L"Q:\\";
+    const auto expected =
+        oracleFromRows(root, 62ULL * 1024ULL * 1024ULL, rows, query);
+    SPACELENS_REQUIRE(reportHasPath(expected, L"node_modules"));
+    SPACELENS_REQUIRE(reportHasPath(expected, L"decoy.bin"));
+    SPACELENS_REQUIRE_EQ(expected.opportunities.size(), 2ULL);
+    SPACELENS_REQUIRE(fetch.topHits.size() >= expected.opportunities.size());
+    for (std::size_t i = 0; i < expected.opportunities.size(); ++i) {
+        SPACELENS_REQUIRE(fetch.topHits[i].path == expected.opportunities[i].path);
+    }
+
+    spec.pathPrefix = L"Q:";
+    const auto noSlash = queryIndexedOpportunities(root, spec, {});
+    SPACELENS_REQUIRE(noSlash.ok);
+    SPACELENS_REQUIRE(noSlash.topHits.size() >= 2);
+
+    spec.pathPrefix = L"R:\\";
+    const auto otherDrive = queryIndexedOpportunities(root, spec, {});
+    SPACELENS_REQUIRE(otherDrive.ok);
+    SPACELENS_REQUIRE(otherDrive.topHits.empty());
+}
+
 SPACELENS_TEST(IndexedIntel_100k_hidden_candidate_scaling)
 {
     IsolatedDataRoot data;

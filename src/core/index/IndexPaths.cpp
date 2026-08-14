@@ -15,6 +15,7 @@
 #include <cwctype>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 namespace spacelens {
 namespace {
@@ -65,11 +66,14 @@ std::wstring toHex(std::uint64_t value)
 
 std::wstring spaceLensDataRoot()
 {
-    wchar_t overrideBuf[32768]{};
-    const DWORD overrideLen =
-        ::GetEnvironmentVariableW(L"SPACELENS_DATA_ROOT", overrideBuf, 32768);
-    if (overrideLen > 0 && overrideLen < 32768) {
-        return std::wstring(overrideBuf, overrideLen);
+    // Heap: MAX_PATH is not enough for a long override, and 32k wchars on the
+    // stack trips MSVC /analyze C6262 (first-party warning gate).
+    std::vector<wchar_t> overrideBuf(32768);
+    const DWORD overrideLen = ::GetEnvironmentVariableW(
+        L"SPACELENS_DATA_ROOT", overrideBuf.data(),
+        static_cast<DWORD>(overrideBuf.size()));
+    if (overrideLen > 0 && overrideLen < overrideBuf.size()) {
+        return std::wstring(overrideBuf.data(), overrideLen);
     }
 
     PWSTR path = nullptr;

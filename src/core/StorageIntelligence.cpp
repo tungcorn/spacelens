@@ -24,6 +24,11 @@ std::wstring normalizePathKey(std::wstring path)
     while (path.size() > 3 && path.back() == L'\\') {
         path.pop_back();
     }
+    // Drive root "d:\" is a component prefix of "d:\users\...". Keeping the
+    // trailing slash makes isComponentPrefix look for "d:\\" and match nothing.
+    if (path.size() == 3 && path[1] == L':' && path[2] == L'\\') {
+        path.pop_back();
+    }
     return path;
 }
 
