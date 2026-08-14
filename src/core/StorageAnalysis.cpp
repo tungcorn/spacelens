@@ -299,6 +299,7 @@ DuplicateDetectionResult analyzeDuplicates(const DuplicateRequest& request,
     DuplicateScanOptions options;
     options.minimumSize = request.minSize;
     options.userProfilePath = userProfilePath();
+    options.hashCachePath = spaceLensHashCachePath();
     const auto candidates =
         queryDuplicateSizeCandidates(request.root, options.minimumSize);
     if (!candidates.ok) {

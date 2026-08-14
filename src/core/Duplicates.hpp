@@ -45,6 +45,9 @@ struct DuplicateScanOptions {
     ByteSize minimumSize = kDefaultDuplicateMinSize;
     std::wstring userProfilePath;
     std::string generatedAt;
+    /// Empty disables the persistent hash cache (tests). Product callers set
+    /// spaceLensHashCachePath(). Path is never a cache key.
+    std::wstring hashCachePath;
 };
 
 struct DuplicateIndexCandidate {
@@ -115,6 +118,12 @@ struct DuplicateScanProgress {
     std::uint64_t filesFingerprinted = 0;
     std::uint64_t filesFullyHashed = 0;
     ByteSize bytesRead = 0;
+    ByteSize bytesFullyHashed = 0;
+    ByteSize bytesReusedFromCache = 0;
+    std::uint64_t cacheHits = 0;
+    std::uint64_t cacheMisses = 0;
+    std::uint64_t cacheInvalidations = 0;
+    std::uint64_t cacheWrites = 0;
     std::uint64_t verifiedGroups = 0;
     std::uint64_t skippedFiles = 0;
 };
@@ -127,6 +136,13 @@ struct DuplicateDetectionSummary {
     ByteSize potentialRedundantLogicalBytes = 0;
     bool redundantBytesSaturated = false;
     ByteSize bytesRead = 0;
+    ByteSize bytesFullyHashed = 0;
+    ByteSize bytesReusedFromCache = 0;
+    std::uint64_t cacheHits = 0;
+    std::uint64_t cacheMisses = 0;
+    std::uint64_t cacheInvalidations = 0;
+    std::uint64_t cacheWrites = 0;
+    std::uint64_t filesFullyHashed = 0;
     std::uint64_t candidateFiles = 0;
     ByteSize candidateBytes = 0;
     std::uint64_t skippedFiles = 0;
@@ -199,15 +215,54 @@ struct ContentHashResult {
     CleanupIdentity identity{};
     ByteSize logicalSize = 0;
     FileTimeTicks lastWrite = 0;
+    FileTimeTicks changeTime = 0;
+    std::int64_t fileUsn = 0;
+    std::uint64_t journalId = 0;
     std::uint32_t attributes = 0;
     std::uint32_t nativeError = 0;
+    bool persistable = false;
     std::string detail;
 };
+
+/// Live evidence for cache lookup. Path is intentionally absent — never a key.
+struct ContentHashEvidence {
+    CleanupIdentity identity{};
+    ByteSize logicalSize = 0;
+    FileTimeTicks lastWrite = 0;
+    FileTimeTicks changeTime = 0;
+    std::int64_t fileUsn = 0;
+    std::uint64_t journalId = 0;
+    bool persistable = false;
+    DuplicateFileStatus status = DuplicateFileStatus::Unsupported;
+    std::string detail;
+};
+
+[[nodiscard]] inline ContentHashEvidence evidenceFrom(
+    const ContentHashResult& result) noexcept
+{
+    ContentHashEvidence evidence;
+    evidence.identity = result.identity;
+    evidence.logicalSize = result.logicalSize;
+    evidence.lastWrite = result.lastWrite;
+    evidence.changeTime = result.changeTime;
+    evidence.fileUsn = result.fileUsn;
+    evidence.journalId = result.journalId;
+    evidence.persistable = result.persistable;
+    evidence.status = result.status;
+    evidence.detail = result.detail;
+    return evidence;
+}
 
 class IFileContentHasher {
 public:
     virtual ~IFileContentHasher() = default;
     [[nodiscard]] virtual ContentHashResult hash(const ContentHashRequest& request) = 0;
+    /// Default is non-persistable so fake hashers never open AppData.
+    [[nodiscard]] virtual ContentHashEvidence probe(const std::wstring& path)
+    {
+        (void)path;
+        return {};
+    }
 };
 
 }  // namespace spacelens

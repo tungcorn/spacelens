@@ -2,6 +2,7 @@
 
 #include "core/DuplicateDetection.hpp"
 #include "core/SizeFormatter.hpp"
+#include "core/index/IndexPaths.hpp"
 #include "core/index/IndexQuery.hpp"
 #include "platform/windows/CleanupMetadataReader.hpp"
 #include "platform/windows/FileContentHasher.hpp"
@@ -59,6 +60,10 @@ bool DuplicateDetectionSession::start(std::wstring rootPath,
         m_lastResult = {};
     }
 
+    if (options.hashCachePath.empty()) {
+        options.hashCachePath = spaceLensHashCachePath();
+    }
+
     m_worker = std::jthread([this, rootPath = std::move(rootPath),
                              options = std::move(options)](std::stop_token stop) {
         const auto candidates =
@@ -112,6 +117,10 @@ bool DuplicateDetectionSession::start(std::wstring rootPath,
                           .arg(result.summary.verifiedGroups)
                           .arg(QString::fromStdString(SizeFormatter::format(
                               result.summary.potentialRedundantLogicalBytes)));
+            if (result.summary.cacheHits > 0) {
+                message += QStringLiteral(" Cache hits: %1.")
+                               .arg(result.summary.cacheHits);
+            }
         }
 
         QMetaObject::invokeMethod(

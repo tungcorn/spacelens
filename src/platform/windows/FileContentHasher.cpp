@@ -1,6 +1,8 @@
 #include "platform/windows/FileContentHasher.hpp"
 
 #include "core/CleanupReview.hpp"
+#include "core/HashCache.hpp"
+#include "platform/windows/UsnJournal.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -10,6 +12,7 @@
 #endif
 #include <Windows.h>
 #include <bcrypt.h>
+#include <winioctl.h>
 
 #include <array>
 #include <cstring>
@@ -207,6 +210,52 @@ bool readAndHash(HANDLE handle,
     return true;
 }
 
+bool readFileUsn(HANDLE handle, std::int64_t& usnOut)
+{
+    READ_FILE_USN_DATA input{};
+    input.MinMajorVersion = 2;
+    input.MaxMajorVersion = 3;
+    alignas(8) std::uint8_t buffer[1024]{};
+    DWORD bytes = 0;
+    if (!::DeviceIoControl(handle, FSCTL_READ_FILE_USN_DATA, &input,
+                           sizeof(input), buffer, sizeof(buffer), &bytes,
+                           nullptr)) {
+        return false;
+    }
+    if (bytes < 8) {
+        return false;
+    }
+    struct UsnHeader {
+        DWORD RecordLength;
+        WORD MajorVersion;
+        WORD MinorVersion;
+    };
+    const auto* header = reinterpret_cast<const UsnHeader*>(buffer);
+    if (header->MajorVersion == 2 && bytes >= sizeof(USN_RECORD_V2)) {
+        usnOut = reinterpret_cast<const USN_RECORD_V2*>(buffer)->Usn;
+        return usnOut != 0;
+    }
+    if (header->MajorVersion == 3 && bytes >= sizeof(USN_RECORD_V3)) {
+        usnOut = reinterpret_cast<const USN_RECORD_V3*>(buffer)->Usn;
+        return usnOut != 0;
+    }
+    return false;
+}
+
+void applyCacheEvidence(HANDLE handle, ContentHashResult& observed)
+{
+    FILE_BASIC_INFO basic{};
+    if (::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic,
+                                       sizeof(basic))) {
+        observed.changeTime =
+            static_cast<FileTimeTicks>(basic.ChangeTime.QuadPart);
+    }
+    std::int64_t usn = 0;
+    if (readFileUsn(handle, usn)) {
+        observed.fileUsn = usn;
+    }
+}
+
 ContentHashResult inspectHandle(HANDLE handle)
 {
     FILE_ID_INFO idInfo{};
@@ -226,6 +275,7 @@ ContentHashResult inspectHandle(HANDLE handle)
     size.LowPart = info.nFileSizeLow;
     observed.logicalSize = size.QuadPart;
     observed.lastWrite = fileTimeToU64(info.ftLastWriteTime);
+    applyCacheEvidence(handle, observed);
 
     if ((info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
         observed.status = DuplicateFileStatus::ReparsePoint;
@@ -369,7 +419,11 @@ ContentHashResult WindowsFileContentHasher::hash(const ContentHashRequest& reque
         return after;
     }
     if (after.logicalSize != before.logicalSize ||
-        after.lastWrite != before.lastWrite) {
+        after.lastWrite != before.lastWrite ||
+        (before.changeTime != 0 && after.changeTime != 0 &&
+         before.changeTime != after.changeTime) ||
+        (before.fileUsn != 0 && after.fileUsn != 0 &&
+         before.fileUsn != after.fileUsn)) {
         after.status = DuplicateFileStatus::ChangedDuringRead;
         after.detail = "File metadata changed while hashing";
         after.bytesRead = bytesRead;
@@ -421,7 +475,66 @@ ContentHashResult WindowsFileContentHasher::hash(const ContentHashRequest& reque
     after.digest = digest;
     after.bytesRead = bytesRead;
     after.identity = before.identity;
+    after.changeTime = after.changeTime != 0 ? after.changeTime : before.changeTime;
+    after.fileUsn = after.fileUsn != 0 ? after.fileUsn : before.fileUsn;
+    if (after.identity.source == CleanupIdentitySource::FileId128) {
+        after.journalId = journalIdFor(request.path, after.identity.volumeSerial);
+    }
+    // Sample fingerprints must never be cacheable as a full digest.
+    after.persistable = request.kind == ContentHashKind::Full &&
+                        isHashCachePersistable(evidenceFrom(after));
     return after;
+}
+
+ContentHashEvidence WindowsFileContentHasher::probe(const std::wstring& path)
+{
+    ContentHashEvidence evidence;
+    if (path.empty()) {
+        evidence.detail = "Empty path";
+        return evidence;
+    }
+
+    UniqueHandle handle(::CreateFileW(
+        path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+        nullptr));
+    if (!handle.valid()) {
+        evidence.detail = "CreateFileW failed";
+        return evidence;
+    }
+
+    const ContentHashResult observed = inspectHandle(handle.get());
+    evidence = evidenceFrom(observed);
+    if (observed.status == DuplicateFileStatus::Verified &&
+        observed.identity.source == CleanupIdentitySource::FileId128) {
+        evidence.journalId =
+            journalIdFor(path, observed.identity.volumeSerial);
+    }
+    evidence.persistable = isHashCachePersistable(evidence);
+    return evidence;
+}
+
+std::uint64_t WindowsFileContentHasher::journalIdFor(const std::wstring& path,
+                                                     std::uint64_t volumeSerial)
+{
+    if (volumeSerial == 0) {
+        return 0;
+    }
+    const auto it = m_journalByVolume.find(volumeSerial);
+    if (it != m_journalByVolume.end()) {
+        return it->second;
+    }
+    std::uint64_t journalId = 0;
+    UsnJournalReader reader;
+    if (UsnJournalReader::tryOpen(path, reader) == UsnCapability::Supported) {
+        UsnJournalState state{};
+        if (reader.query(state) == UsnCapability::Supported) {
+            journalId = state.journalId;
+        }
+    }
+    m_journalByVolume.emplace(volumeSerial, journalId);
+    return journalId;
 }
 
 }  // namespace spacelens

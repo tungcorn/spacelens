@@ -31,6 +31,10 @@ struct IndexLocation {
 /// Independent of replaceable per-root indexes/*/index.db files.
 [[nodiscard]] std::wstring spaceLensReviewStatePath();
 
+/// %LOCALAPPDATA%\SpaceLens\hash-cache.db — derived SHA-256 cache.
+/// Independent of state.db and of per-root indexes. Disposable.
+[[nodiscard]] std::wstring spaceLensHashCachePath();
+
 /// Normalize a root path for indexing (native separators, strip trailing slash
 /// except drive roots). Does not touch the filesystem.
 [[nodiscard]] std::wstring normalizeIndexRoot(std::wstring_view path);

@@ -1,5 +1,6 @@
 #include "core/DuplicateDetection.hpp"
 
+#include "core/HashCache.hpp"
 #include "core/Json.hpp"
 #include "core/index/IndexStore.hpp"
 
@@ -160,6 +161,9 @@ DuplicateDetectionResult detectDuplicates(
     }
     result.progress.candidateFiles = candidates.candidateFiles;
     result.progress.candidateBytes = candidates.candidateBytes;
+
+    HashCacheStore cache = HashCacheStore::tryOpen(options.hashCachePath);
+    const bool useCache = cache.available();
 
     if (!candidates.ok) {
         result.error = candidates.error.empty() ? "index_query_failed"
@@ -322,11 +326,45 @@ DuplicateDetectionResult detectDuplicates(
                               "Scan cancelled");
                     continue;
                 }
+                bool usedCache = false;
+                if (useCache) {
+                    const ContentHashEvidence evidence =
+                        hasher.probe(work->files.front()->index.path);
+                    const bool identityOk =
+                        !isIdentityAvailable(work->identity) ||
+                        !isIdentityAvailable(evidence.identity) ||
+                        identitiesEqual(work->identity, evidence.identity);
+                    if (evidence.persistable && identityOk) {
+                        const HashCacheLookup looked = cache.lookup(evidence);
+                        if (looked.disposition == HashCacheDisposition::Reusable) {
+                            work->full = looked.digest;
+                            work->hasFull = true;
+                            ++result.progress.cacheHits;
+                            result.progress.bytesReusedFromCache +=
+                                bucket.logicalSize;
+                            fullGroups[sha256ToHex(looked.digest)].push_back(work);
+                            emitProgress(onProgress, result.progress);
+                            usedCache = true;
+                        } else if (looked.disposition ==
+                                   HashCacheDisposition::Invalid) {
+                            ++result.progress.cacheInvalidations;
+                        } else {
+                            ++result.progress.cacheMisses;
+                        }
+                    } else {
+                        ++result.progress.cacheMisses;
+                    }
+                }
+                if (usedCache) {
+                    continue;
+                }
+
                 const ContentHashResult hashed =
                     hashIdentity(hasher, *work, bucket.logicalSize,
                                  ContentHashKind::Full, cancelled);
                 result.progress.bytesRead += hashed.bytesRead;
                 ++result.progress.filesFullyHashed;
+                result.progress.bytesFullyHashed += hashed.bytesRead;
                 emitProgress(onProgress, result.progress);
                 if (hashed.status != DuplicateFileStatus::Verified) {
                     work->status = hashed.status;
@@ -335,6 +373,10 @@ DuplicateDetectionResult detectDuplicates(
                 }
                 work->full = hashed.digest;
                 work->hasFull = true;
+                if (useCache && hashed.persistable &&
+                    cache.store(evidenceFrom(hashed), hashed.digest)) {
+                    ++result.progress.cacheWrites;
+                }
                 fullGroups[sha256ToHex(hashed.digest)].push_back(work);
             }
             if (result.cancelled) {

@@ -93,6 +93,11 @@ std::wstring spaceLensReviewStatePath()
     return joinPath(spaceLensDataRoot(), L"state.db");
 }
 
+std::wstring spaceLensHashCachePath()
+{
+    return joinPath(spaceLensDataRoot(), L"hash-cache.db");
+}
+
 std::wstring normalizeIndexRoot(std::wstring_view path)
 {
     // Reuse policy normalizer (drive roots, trailing slash strip).

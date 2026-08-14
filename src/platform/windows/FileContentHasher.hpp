@@ -2,6 +2,10 @@
 
 #include "core/Duplicates.hpp"
 
+#include <cstdint>
+#include <map>
+#include <string>
+
 namespace spacelens {
 
 /// Bounded SHA-256 reader. Opens without following the final reparse component,
@@ -15,9 +19,14 @@ public:
     WindowsFileContentHasher& operator=(const WindowsFileContentHasher&) = delete;
 
     [[nodiscard]] ContentHashResult hash(const ContentHashRequest& request) override;
+    [[nodiscard]] ContentHashEvidence probe(const std::wstring& path) override;
 
 private:
+    [[nodiscard]] std::uint64_t journalIdFor(const std::wstring& path,
+                                             std::uint64_t volumeSerial);
+
     void* m_algorithm = nullptr;
+    std::map<std::uint64_t, std::uint64_t> m_journalByVolume;
 };
 
 }  // namespace spacelens

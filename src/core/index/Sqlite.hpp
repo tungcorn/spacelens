@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 struct sqlite3;
 struct sqlite3_stmt;
@@ -65,6 +66,7 @@ public:
     void bindInt64(int index, std::int64_t value);
     void bindText(int index, std::string_view value);
     void bindText16(int index, std::wstring_view value);
+    void bindBlob(int index, const void* data, std::size_t size);
 
     /// Returns true when a row is available (SQLITE_ROW).
     [[nodiscard]] bool step();
@@ -73,6 +75,7 @@ public:
     [[nodiscard]] std::int64_t columnInt64(int index) const;
     [[nodiscard]] std::string columnText(int index) const;
     [[nodiscard]] std::wstring columnText16(int index) const;
+    [[nodiscard]] std::vector<std::uint8_t> columnBlob(int index) const;
 
     void finalize() noexcept;
 

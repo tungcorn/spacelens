@@ -10,6 +10,7 @@
 #endif
 #include <Windows.h>
 
+#include <limits>
 #include <sstream>
 #include <vector>
 
@@ -231,6 +232,18 @@ void SqliteStmt::bindText16(int index, std::wstring_view value)
     }
 }
 
+void SqliteStmt::bindBlob(int index, const void* data, std::size_t size)
+{
+    if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        throw SqliteError("bindBlob: blob too large");
+    }
+    const int rc = sqlite3_bind_blob(m_stmt, index, data, static_cast<int>(size),
+                                     SQLITE_TRANSIENT);
+    if (rc != SQLITE_OK) {
+        throw SqliteError(errorFrom(m_db, rc, "bindBlob"));
+    }
+}
+
 bool SqliteStmt::step()
 {
     const int rc = sqlite3_step(m_stmt);
@@ -276,6 +289,17 @@ std::wstring SqliteStmt::columnText16(int index) const
     }
     return std::wstring(static_cast<const wchar_t*>(text),
                         static_cast<std::size_t>(bytes / sizeof(wchar_t)));
+}
+
+std::vector<std::uint8_t> SqliteStmt::columnBlob(int index) const
+{
+    const void* data = sqlite3_column_blob(m_stmt, index);
+    const int bytes = sqlite3_column_bytes(m_stmt, index);
+    if (data == nullptr || bytes <= 0) {
+        return {};
+    }
+    const auto* begin = static_cast<const std::uint8_t*>(data);
+    return std::vector<std::uint8_t>(begin, begin + bytes);
 }
 
 SqliteTxn::SqliteTxn(SqliteDb& db)

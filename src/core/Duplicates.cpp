@@ -206,6 +206,13 @@ void accumulateDuplicateSummary(DuplicateDetectionResult& result) noexcept
     result.summary.candidateFiles = result.progress.candidateFiles;
     result.summary.candidateBytes = result.progress.candidateBytes;
     result.summary.bytesRead = result.progress.bytesRead;
+    result.summary.bytesFullyHashed = result.progress.bytesFullyHashed;
+    result.summary.bytesReusedFromCache = result.progress.bytesReusedFromCache;
+    result.summary.cacheHits = result.progress.cacheHits;
+    result.summary.cacheMisses = result.progress.cacheMisses;
+    result.summary.cacheInvalidations = result.progress.cacheInvalidations;
+    result.summary.cacheWrites = result.progress.cacheWrites;
+    result.summary.filesFullyHashed = result.progress.filesFullyHashed;
     result.summary.skippedFiles = result.skipped.size();
     result.summary.verifiedGroups = result.groups.size();
 
@@ -319,6 +326,16 @@ std::string DuplicateDetectionResult::toText(const DuplicateScanOptions& options
         os << " (saturated)";
     }
     os << "\n";
+    if (summary.cacheHits != 0 || summary.cacheMisses != 0 ||
+        summary.cacheWrites != 0 || summary.cacheInvalidations != 0) {
+        os << "Hash cache: " << summary.cacheHits << " hit(s), "
+           << summary.cacheMisses << " miss(es), " << summary.cacheWrites
+           << " write(s)";
+        if (summary.cacheInvalidations != 0) {
+            os << ", " << summary.cacheInvalidations << " invalid row(s)";
+        }
+        os << "\n";
+    }
     os << "Same-size groups are not duplicates. Sample fingerprints are not "
           "proof of equality.\n\n";
 
@@ -396,6 +413,15 @@ std::string DuplicateDetectionResult::toJson(const DuplicateScanOptions& options
        << "\"redundant_bytes_saturated\":" << jsonBool(summary.redundantBytesSaturated)
        << ","
        << "\"bytes_read\":" << jsonUInt(summary.bytesRead) << ","
+       << "\"bytes_fully_hashed\":" << jsonUInt(summary.bytesFullyHashed) << ","
+       << "\"bytes_reused_from_cache\":"
+       << jsonUInt(summary.bytesReusedFromCache) << ","
+       << "\"cache_hits\":" << jsonUInt(summary.cacheHits) << ","
+       << "\"cache_misses\":" << jsonUInt(summary.cacheMisses) << ","
+       << "\"cache_invalidations\":" << jsonUInt(summary.cacheInvalidations)
+       << ","
+       << "\"cache_writes\":" << jsonUInt(summary.cacheWrites) << ","
+       << "\"files_fully_hashed\":" << jsonUInt(summary.filesFullyHashed) << ","
        << "\"candidate_files\":" << jsonUInt(summary.candidateFiles) << ","
        << "\"candidate_bytes\":" << jsonUInt(summary.candidateBytes) << ","
        << "\"skipped_files\":" << jsonUInt(summary.skippedFiles) << "},"
