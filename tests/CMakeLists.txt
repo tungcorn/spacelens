@@ -16,6 +16,7 @@ set(SPACELENS_TEST_SOURCES
     test_cleanup_revalidation.cpp
     test_maintenance.cpp
     test_duplicates.cpp
+    test_hash_cache.cpp
     test_reclaim.cpp
     test_index.cpp
     test_index_refresh.cpp
