@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <queue>
 #include <thread>
@@ -74,8 +75,16 @@ void writeStdoutLine(const std::string& line)
 void setBinaryStdio()
 {
 #ifdef _WIN32
-    _setmode(_fileno(stdin), _O_BINARY);
-    _setmode(_fileno(stdout), _O_BINARY);
+    const int inFd = _fileno(stdin);
+    const int outFd = _fileno(stdout);
+    if (inFd < 0 || _setmode(inFd, _O_BINARY) == -1) {
+        std::fputs("spacelens-mcp: failed to set stdin binary mode\n", stderr);
+        std::exit(1);
+    }
+    if (outFd < 0 || _setmode(outFd, _O_BINARY) == -1) {
+        std::fputs("spacelens-mcp: failed to set stdout binary mode\n", stderr);
+        std::exit(1);
+    }
 #endif
 }
 
