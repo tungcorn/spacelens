@@ -110,6 +110,10 @@ jobs:
         shell: pwsh
         run: .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
 
+      - name: Agent interface gate
+        shell: pwsh
+        run: .\scripts\verify-agent-interface.ps1 -CliPath .\build-release\cli\spacelens.exe
+
       - name: Package staging (no publish)
         shell: pwsh
         run: |
@@ -165,6 +169,10 @@ jobs:
       - name: CLI safety gate
         shell: pwsh
         run: .\scripts\verify-cli-safety.ps1 -CliPath .\build-cli-release\cli\spacelens.exe
+
+      - name: Agent interface gate
+        shell: pwsh
+        run: .\scripts\verify-agent-interface.ps1 -CliPath .\build-cli-release\cli\spacelens.exe
 
       - name: Distribution gate selftest
         shell: pwsh
