@@ -109,8 +109,69 @@ const char* toString(MaintenanceBlockReason reason) noexcept
         return "ProbeError";
     case MaintenanceBlockReason::RequiresElevation:
         return "RequiresElevation";
+    case MaintenanceBlockReason::UncertainPriorOutcome:
+        return "UncertainPriorOutcome";
     }
     return "ProbeError";
+}
+
+MaintenanceBlockReason parseMaintenanceBlockReason(std::string_view text) noexcept
+{
+    if (text == "UnsupportedType") {
+        return MaintenanceBlockReason::UnsupportedType;
+    }
+    if (text == "ReparsePoint") {
+        return MaintenanceBlockReason::ReparsePoint;
+    }
+    if (text == "IdentityUnavailable") {
+        return MaintenanceBlockReason::IdentityUnavailable;
+    }
+    if (text == "IdentityMismatch") {
+        return MaintenanceBlockReason::IdentityMismatch;
+    }
+    if (text == "ChangedSinceReview") {
+        return MaintenanceBlockReason::ChangedSinceReview;
+    }
+    if (text == "Missing") {
+        return MaintenanceBlockReason::Missing;
+    }
+    if (text == "AccessDenied") {
+        return MaintenanceBlockReason::AccessDenied;
+    }
+    if (text == "Protected") {
+        return MaintenanceBlockReason::Protected;
+    }
+    if (text == "Sensitive") {
+        return MaintenanceBlockReason::Sensitive;
+    }
+    if (text == "UnknownLocation") {
+        return MaintenanceBlockReason::UnknownLocation;
+    }
+    if (text == "EmptyPath") {
+        return MaintenanceBlockReason::EmptyPath;
+    }
+    if (text == "RootPath") {
+        return MaintenanceBlockReason::RootPath;
+    }
+    if (text == "RecycleUnavailable") {
+        return MaintenanceBlockReason::RecycleUnavailable;
+    }
+    if (text == "SameIdentityAlreadySelected") {
+        return MaintenanceBlockReason::SameIdentityAlreadySelected;
+    }
+    if (text == "AlreadyRecycled") {
+        return MaintenanceBlockReason::AlreadyRecycled;
+    }
+    if (text == "RequiresElevation") {
+        return MaintenanceBlockReason::RequiresElevation;
+    }
+    if (text == "UncertainPriorOutcome") {
+        return MaintenanceBlockReason::UncertainPriorOutcome;
+    }
+    if (text == "ProbeError") {
+        return MaintenanceBlockReason::ProbeError;
+    }
+    return MaintenanceBlockReason::None;
 }
 
 const char* toString(MaintenanceItemResult result) noexcept
@@ -134,10 +195,139 @@ const char* toString(MaintenanceItemResult result) noexcept
         return "OperationAborted";
     case MaintenanceItemResult::UnexpectedPermanentRemoval:
         return "UnexpectedPermanentRemoval";
+    case MaintenanceItemResult::Attempting:
+        return "Attempting";
+    case MaintenanceItemResult::Uncertain:
+        return "Uncertain";
     case MaintenanceItemResult::UnknownResult:
         return "UnknownResult";
     }
     return "UnknownResult";
+}
+
+MaintenanceItemResult parseMaintenanceItemResult(std::string_view text) noexcept
+{
+    if (text == "Recycled") {
+        return MaintenanceItemResult::Recycled;
+    }
+    if (text == "BlockedPreflight") {
+        return MaintenanceItemResult::BlockedPreflight;
+    }
+    if (text == "BlockedFinalGuard") {
+        return MaintenanceItemResult::BlockedFinalGuard;
+    }
+    if (text == "Cancelled") {
+        return MaintenanceItemResult::Cancelled;
+    }
+    if (text == "NotAttempted") {
+        return MaintenanceItemResult::NotAttempted;
+    }
+    if (text == "AccessDenied") {
+        return MaintenanceItemResult::AccessDenied;
+    }
+    if (text == "ShellError") {
+        return MaintenanceItemResult::ShellError;
+    }
+    if (text == "OperationAborted") {
+        return MaintenanceItemResult::OperationAborted;
+    }
+    if (text == "UnexpectedPermanentRemoval") {
+        return MaintenanceItemResult::UnexpectedPermanentRemoval;
+    }
+    if (text == "Attempting") {
+        return MaintenanceItemResult::Attempting;
+    }
+    if (text == "Uncertain") {
+        return MaintenanceItemResult::Uncertain;
+    }
+    return MaintenanceItemResult::UnknownResult;
+}
+
+const char* toString(MaintenanceOperationStatus status) noexcept
+{
+    switch (status) {
+    case MaintenanceOperationStatus::Executing:
+        return "Executing";
+    case MaintenanceOperationStatus::Completed:
+        return "Completed";
+    case MaintenanceOperationStatus::Cancelled:
+        return "Cancelled";
+    case MaintenanceOperationStatus::HardStopped:
+        return "HardStopped";
+    case MaintenanceOperationStatus::Uncertain:
+        return "Uncertain";
+    }
+    return "Uncertain";
+}
+
+MaintenanceOperationStatus parseMaintenanceOperationStatus(
+    std::string_view text) noexcept
+{
+    if (text == "Executing") {
+        return MaintenanceOperationStatus::Executing;
+    }
+    if (text == "Completed") {
+        return MaintenanceOperationStatus::Completed;
+    }
+    if (text == "Cancelled") {
+        return MaintenanceOperationStatus::Cancelled;
+    }
+    if (text == "HardStopped") {
+        return MaintenanceOperationStatus::HardStopped;
+    }
+    return MaintenanceOperationStatus::Uncertain;
+}
+
+bool isMaintenancePlanStale(FileTimeTicks preparedAt,
+                            FileTimeTicks now,
+                            FileTimeTicks maxAge) noexcept
+{
+    if (preparedAt == 0 || now == 0 || maxAge == 0) {
+        return true;
+    }
+    if (now < preparedAt) {
+        return true;
+    }
+    return (now - preparedAt) > maxAge;
+}
+
+MaintenanceConfirmGate evaluateMaintenanceConfirmGate(
+    bool running,
+    bool executing,
+    bool awaitingConfirm,
+    FileTimeTicks preparedAt,
+    FileTimeTicks now,
+    FileTimeTicks maxAge) noexcept
+{
+    if (executing) {
+        return MaintenanceConfirmGate::AlreadyExecuting;
+    }
+    if (!running || !awaitingConfirm) {
+        return MaintenanceConfirmGate::NotPrepared;
+    }
+    if (isMaintenancePlanStale(preparedAt, now, maxAge)) {
+        return MaintenanceConfirmGate::StalePlan;
+    }
+    return MaintenanceConfirmGate::Ok;
+}
+
+bool identityHasUncertainHistory(
+    const CleanupIdentity& identity,
+    const std::vector<MaintenanceReceipt>& history) noexcept
+{
+    if (!isStrongIdentity(identity)) {
+        return false;
+    }
+    for (const auto& receipt : history) {
+        for (const auto& item : receipt.items) {
+            if ((item.result == MaintenanceItemResult::Uncertain ||
+                 item.result == MaintenanceItemResult::Attempting) &&
+                identitiesEqual(item.expectedIdentity, identity)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 std::vector<const MaintenancePlanItem*> MaintenancePlan::eligibleItems() const
@@ -311,7 +501,8 @@ MaintenancePlan prepareMaintenancePlan(
     const std::vector<std::uint64_t>& selectedIds,
     ICleanupMetadataReader& reader,
     const std::string& generatedAt,
-    const OrdinaryLocationPolicy& locationPolicy)
+    const OrdinaryLocationPolicy& locationPolicy,
+    const std::vector<MaintenanceReceipt>& history)
 {
     MaintenancePlan plan;
     plan.generatedAt = generatedAt.empty() ? "1970-01-01T00:00:00Z" : generatedAt;
@@ -355,6 +546,12 @@ MaintenancePlan prepareMaintenancePlan(
                 item.blockReason = MaintenanceBlockReason::SameIdentityAlreadySelected;
                 item.detail =
                     "Another selected path is a hard-link alias of this file";
+            } else if (identityHasUncertainHistory(item.expectedIdentity,
+                                                   history)) {
+                item.eligible = false;
+                item.blockReason = MaintenanceBlockReason::UncertainPriorOutcome;
+                item.detail =
+                    "A prior Recycle Bin attempt for this identity is Uncertain";
             }
         }
 
@@ -458,11 +655,38 @@ MaintenanceReceipt executeMaintenancePlan(
     IRecycleOperation& recycle,
     FileTimeTicks confirmedAt,
     const std::function<bool()>& cancelled,
-    const OrdinaryLocationPolicy& locationPolicy)
+    const OrdinaryLocationPolicy& locationPolicy,
+    IMaintenanceJournal* journal,
+    std::uint64_t operationId,
+    const std::function<bool(const MaintenancePlanItem&, std::string*)>&
+        canRecycle)
 {
     MaintenanceReceipt receipt;
+    receipt.operationId = operationId;
+    receipt.status = MaintenanceOperationStatus::Executing;
     receipt.confirmedAt = confirmedAt;
     receipt.requestedAt = confirmedAt;
+    receipt.selectedCount = plan.selectedCount;
+    receipt.eligibleCount = plan.eligibleCount;
+    receipt.selectedLogicalBytes = plan.selectedLogicalBytes;
+    receipt.eligibleLogicalBytes = plan.eligibleLogicalBytes;
+
+    const auto persist = [&](const MaintenanceItemReceipt& row,
+                             ByteSize recycledBytes = 0) -> bool {
+        if (journal == nullptr) {
+            return true;
+        }
+        return journal->checkpointItem(operationId, row, recycledBytes);
+    };
+
+    const auto markUncertain = [&](MaintenanceItemReceipt& row,
+                                   std::string detail) {
+        row.result = MaintenanceItemResult::Uncertain;
+        row.detail = std::move(detail);
+        ++receipt.uncertain;
+        persist(row);
+        receipt.status = MaintenanceOperationStatus::Uncertain;
+    };
 
     bool stop = false;
     for (const auto& item : plan.items) {
@@ -474,6 +698,7 @@ MaintenanceReceipt executeMaintenancePlan(
         if (stop) {
             row.result = MaintenanceItemResult::NotAttempted;
             row.detail = "Not attempted after a critical stop";
+            persist(row);
             receipt.items.push_back(std::move(row));
             continue;
         }
@@ -482,6 +707,7 @@ MaintenanceReceipt executeMaintenancePlan(
             row.blockReason = item.blockReason;
             row.detail = item.detail;
             ++receipt.blocked;
+            persist(row);
             receipt.items.push_back(std::move(row));
             continue;
         }
@@ -490,6 +716,7 @@ MaintenanceReceipt executeMaintenancePlan(
             row.detail = "Cancelled before this file started";
             ++receipt.cancelled;
             stop = true;
+            persist(row);
             receipt.items.push_back(std::move(row));
             continue;
         }
@@ -503,6 +730,31 @@ MaintenanceReceipt executeMaintenancePlan(
             row.blockReason = guard;
             row.detail = "Final guard blocked the recycle";
             ++receipt.blocked;
+            persist(row);
+            receipt.items.push_back(std::move(row));
+            continue;
+        }
+        if (canRecycle) {
+            std::string detail;
+            if (!canRecycle(item, &detail)) {
+                row.result = MaintenanceItemResult::BlockedFinalGuard;
+                row.blockReason = MaintenanceBlockReason::RecycleUnavailable;
+                row.detail = detail.empty()
+                                 ? "Recycle Bin is not available for this path"
+                                 : std::move(detail);
+                ++receipt.blocked;
+                persist(row);
+                receipt.items.push_back(std::move(row));
+                continue;
+            }
+        }
+
+        row.result = MaintenanceItemResult::Attempting;
+        row.detail = "Recycle in progress";
+        if (!persist(row)) {
+            markUncertain(row,
+                          "Failed to persist Attempting before recycle");
+            stop = true;
             receipt.items.push_back(std::move(row));
             continue;
         }
@@ -515,6 +767,15 @@ MaintenanceReceipt executeMaintenancePlan(
         executed.expectedIdentity = item.expectedIdentity;
         switch (executed.result) {
         case MaintenanceItemResult::Recycled:
+            if (!persist(executed, item.logicalSize)) {
+                markUncertain(
+                    executed,
+                    "Recycle evidence existed but the receipt could not be "
+                    "persisted");
+                stop = true;
+                receipt.items.push_back(std::move(executed));
+                continue;
+            }
             ++receipt.recycled;
             {
                 bool saturated = false;
@@ -526,21 +787,43 @@ MaintenanceReceipt executeMaintenancePlan(
         case MaintenanceItemResult::NotAttempted:
             ++receipt.cancelled;
             stop = true;
+            persist(executed);
             break;
         case MaintenanceItemResult::UnexpectedPermanentRemoval:
             ++receipt.failed;
             receipt.unexpectedPermanentRemoval = true;
             stop = true;
+            persist(executed);
             break;
         case MaintenanceItemResult::OperationAborted:
             ++receipt.failed;
             stop = true;
+            persist(executed);
+            break;
+        case MaintenanceItemResult::Uncertain:
+            ++receipt.uncertain;
+            receipt.status = MaintenanceOperationStatus::Uncertain;
+            stop = true;
+            persist(executed);
             break;
         default:
             ++receipt.failed;
+            persist(executed);
             break;
         }
         receipt.items.push_back(std::move(executed));
+    }
+
+    if (receipt.status == MaintenanceOperationStatus::Executing) {
+        if (receipt.unexpectedPermanentRemoval) {
+            receipt.status = MaintenanceOperationStatus::HardStopped;
+        } else if (receipt.uncertain > 0) {
+            receipt.status = MaintenanceOperationStatus::Uncertain;
+        } else if (receipt.cancelled > 0) {
+            receipt.status = MaintenanceOperationStatus::Cancelled;
+        } else {
+            receipt.status = MaintenanceOperationStatus::Completed;
+        }
     }
     return receipt;
 }
