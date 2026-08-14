@@ -170,6 +170,10 @@ jobs:
         shell: pwsh
         run: .\scripts\verify-distribution-selftest.ps1
 
+      - name: npm template and launcher tests
+        shell: pwsh
+        run: .\scripts\verify-npm-template.ps1
+
       - name: Stress smoke (2k entries)
         shell: pwsh
         run: |
@@ -225,3 +229,37 @@ jobs:
           path: analyze.log
           if-no-files-found: warn
           retention-days: 14
+
+  npm-package:
+    name: npm / Package
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Template and launcher tests
+        shell: pwsh
+        run: .\scripts\verify-npm-template.ps1
+
+      - name: Stage npm package from published v0.1.1
+        shell: pwsh
+        run: .\scripts\package-npm.ps1
+
+      - name: Validate tarball and isolated install
+        shell: pwsh
+        run: .\scripts\verify-npm-package.ps1
+
+      - name: Upload npm tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-tarball
+          path: dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
