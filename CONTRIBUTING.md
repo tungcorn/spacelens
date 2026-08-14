@@ -30,7 +30,11 @@ cmake --preset windows-debug
 cmake --build --preset windows-debug
 ctest --preset windows-debug
 .\build-debug\tests\spacelens_tests.exe
+.\scripts\dev.ps1
 ```
+
+`scripts/dev.ps1` configures if needed, builds the local GUI, and launches
+`build-*/gui/spacelens-gui.exe`. It does not publish or download a release.
 
 Release (GUI + CLI):
 

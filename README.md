@@ -157,16 +157,20 @@ The CLI is read-only; `capabilities --json` must report
 `scripts/verify-cli-safety.ps1`.
 
 GUI (Windows output name is `spacelens-gui.exe` — not `spacelens.exe`, because
-NTFS is case-insensitive and those names would collide):
+NTFS is case-insensitive and those names would collide). Build and launch the
+local tree only:
 
 ```powershell
-.\build-release\gui\spacelens-gui.exe
+.\scripts\dev.ps1
 ```
+
+Or run `.\build-release\gui\spacelens-gui.exe` after a Release build. See
+[`docs/GUI.md`](docs/GUI.md).
 
 ### Indexed storage discovery (GUI)
 
-1. **Index Folder…** (or CLI `index <root>`) to publish a snapshot under AppData.
-2. Open the **Indexed** tab and select a root — header shows age, freshness,
+1. **Index Folder** (or CLI `index <root>`) to publish a snapshot under AppData.
+2. Open the **Indexed** workspace and select a root — header shows age, freshness,
    file/folder counts, and **indexed logical size**.
 3. Read the **storage overview** and **treemap** for the current location
    (immediate children by logical size; double-click a folder to drill down).

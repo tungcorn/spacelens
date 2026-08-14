@@ -20,7 +20,10 @@ it is not a filesystem mutation service.
 The **CLI is a first-class product interface**. AI coding agents and automation
 scripts can use deterministic, machine-readable output without receiving a file
 delete or file-move capability. The GUI is an optional interactive surface over
-the same core snapshot and analysis types.
+the same core snapshot and analysis types. See [`docs/GUI.md`](GUI.md) for the
+Qt Widgets shell: two top-level workspaces (Live Scan, Indexed), system
+palette, no permanent sidebar. Recycle Bin maintenance stays a confirmed GUI
+workflow; CLI `filesystem_mutation` remains false.
 
 ## Scope: safety + storage intelligence milestone
 
@@ -78,7 +81,7 @@ never `record.usn+1`; empty tails are not discontinuities. Journal
 create/resize/delete is never used. Access denied or journal discontinuity
 → `full_rebuild_required` without guessing.
 
-**Index Browser V2** (GUI Indexed tab) maps UI state into core
+**Index Browser V2** (GUI Indexed workspace) maps UI state into core
 `IndexDiscoveryPreset` + `IndexQuerySpec` (`searchText`, filters, sort,
 `browsePath`). All SQL remains in `IndexQuery`; the Qt layer uses
 `IndexHitTableModel` and never opens SQLite. Queries run off the UI thread;

@@ -5,6 +5,14 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+### Changed
+
+- GUI UX V1: Live Scan and Indexed are segmented workspaces (no sidebar).
+  Page headers, typographic metrics, Filters popups, first-class palette-aware
+  treemap, and a command hierarchy replace the previous equal-weight toolbar
+  chrome. Cleanup Review confirmation remains **Move eligible files to Recycle
+  Bin**. Analysis stays read-only. Launch the local GUI with `.\scripts\dev.ps1`.
+
 ## [0.1.2] — 2026-08-14
 
 First normal (non-prerelease) GitHub Release. Version remains
