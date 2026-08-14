@@ -2,6 +2,7 @@
 
 #include "app/CleanupRevalidationSession.hpp"
 #include "app/MaintenanceSession.hpp"
+#include "ui/MaintenanceHistoryDialog.hpp"
 #include "core/CleanupPlan.hpp"
 #include "core/CleanupReview.hpp"
 #include "core/CleanupReviewStore.hpp"
@@ -226,6 +227,8 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     m_clearButton = new QPushButton(QStringLiteral("Clear Review"), this);
     m_recycleButton =
         new QPushButton(QStringLiteral("Move to Recycle Bin…"), this);
+    m_historyButton =
+        new QPushButton(QStringLiteral("Maintenance History"), this);
     auto* copyBtn = new QPushButton(QStringLiteral("Copy Plan"), this);
     auto* exportBtn = new QPushButton(QStringLiteral("Export JSON"), this);
     auto* closeBtn = new QPushButton(QStringLiteral("Close"), this);
@@ -237,6 +240,7 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
     buttons->addWidget(m_removeButton);
     buttons->addWidget(m_clearButton);
     buttons->addWidget(m_recycleButton);
+    buttons->addWidget(m_historyButton);
     buttons->addWidget(copyBtn);
     buttons->addWidget(exportBtn);
     buttons->addStretch(1);
@@ -261,6 +265,8 @@ CleanupReviewDialog::CleanupReviewDialog(CleanupReviewController& controller,
             &CleanupReviewDialog::onClear);
     connect(m_recycleButton, &QPushButton::clicked, this,
             &CleanupReviewDialog::onMoveToRecycleBin);
+    connect(m_historyButton, &QPushButton::clicked, this,
+            &CleanupReviewDialog::onMaintenanceHistory);
     connect(copyBtn, &QPushButton::clicked, this,
             &CleanupReviewDialog::onCopyPlan);
     connect(exportBtn, &QPushButton::clicked, this,
@@ -549,6 +555,14 @@ void CleanupReviewDialog::confirmAndExecute()
         return;
     }
 
+    QStringList blocked;
+    for (const auto& item : plan.items) {
+        if (!item.eligible) {
+            blocked << QStringLiteral("%1 — %2")
+                           .arg(QString::fromStdWString(item.path))
+                           .arg(QString::fromUtf8(toString(item.blockReason)));
+        }
+    }
     QMessageBox box(this);
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle(QStringLiteral("Move to Recycle Bin"));
@@ -556,23 +570,26 @@ void CleanupReviewDialog::confirmAndExecute()
                     .arg(plan.eligibleCount));
     box.setInformativeText(
         QStringLiteral(
-            "Selected: %1 file(s) — %2\n"
-            "Eligible: %3 file(s) — %4\n"
-            "Blocked: %5 file(s)\n\n"
-            "The Recycle Bin still occupies storage. This is not permanent "
-            "deletion. SpaceLens will not empty the Recycle Bin.\n"
-            "Directories, reparse points, protected/sensitive/unknown "
-            "locations, and items without a matching strong identity are "
-            "never recycled.")
+            "Selected files: %1 — %2\n"
+            "Eligible files: %3 — %4\n"
+            "Blocked files: %5\n\n"
+            "Files will be moved to the Windows Recycle Bin.\n"
+            "This is not permanent deletion.\n"
+            "Recycle Bin contents still occupy disk space.\n"
+            "SpaceLens will not empty the Recycle Bin.\n\n"
+            "Blocked reasons:\n%6")
             .arg(plan.selectedCount)
             .arg(QString::fromStdString(
                 SizeFormatter::format(plan.selectedLogicalBytes)))
             .arg(plan.eligibleCount)
             .arg(QString::fromStdString(
                 SizeFormatter::format(plan.eligibleLogicalBytes)))
-            .arg(plan.blockedCount));
-    auto* moveButton = box.addButton(QStringLiteral("Move to Recycle Bin"),
-                                     QMessageBox::AcceptRole);
+            .arg(plan.blockedCount)
+            .arg(blocked.isEmpty() ? QStringLiteral("(none)")
+                                   : blocked.join(QStringLiteral("\n"))));
+    auto* moveButton =
+        box.addButton(QStringLiteral("Move eligible files to Recycle Bin"),
+                      QMessageBox::AcceptRole);
     box.addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
     box.exec();
     if (box.clickedButton() != moveButton) {
@@ -600,6 +617,50 @@ void CleanupReviewDialog::onMaintenanceProgress(quint64 done, quint64 total)
     m_progress->setValue(static_cast<int>(done));
 }
 
+void CleanupReviewDialog::onMaintenanceHistory()
+{
+    MaintenanceHistoryDialog dialog(m_controller, this);
+    dialog.exec();
+}
+
+void CleanupReviewDialog::showCompletionSummary()
+{
+    const auto receipt = m_maintenance.lastReceipt();
+    QMessageBox box(this);
+    box.setWindowTitle(QStringLiteral("Recycle Bin result"));
+    box.setIcon(receipt.unexpectedPermanentRemoval ||
+                        receipt.status == MaintenanceOperationStatus::Uncertain
+                    ? QMessageBox::Warning
+                    : QMessageBox::Information);
+    box.setText(QStringLiteral("Recycle Bin operation %1")
+                    .arg(QString::fromUtf8(toString(receipt.status))));
+    box.setInformativeText(
+        QStringLiteral(
+            "Recycled: %1\n"
+            "Blocked before mutation: %2\n"
+            "Failed: %3\n"
+            "Cancelled: %4\n"
+            "Uncertain: %5\n"
+            "Recycled logical size: %6\n\n"
+            "The Recycle Bin still occupies storage. This is not space freed.")
+            .arg(receipt.recycled)
+            .arg(receipt.blocked)
+            .arg(receipt.failed)
+            .arg(receipt.cancelled)
+            .arg(receipt.uncertain)
+            .arg(QString::fromStdString(
+                SizeFormatter::format(receipt.recycledLogicalBytes))));
+    auto* details = box.addButton(QStringLiteral("View details"),
+                                  QMessageBox::ActionRole);
+    box.addButton(QStringLiteral("Close"), QMessageBox::AcceptRole);
+    box.exec();
+    if (box.clickedButton() == details) {
+        MaintenanceHistoryDialog dialog(m_controller, this);
+        dialog.selectOperation(receipt.operationId);
+        dialog.exec();
+    }
+}
+
 void CleanupReviewDialog::onMaintenanceFinished(bool completed,
                                                const QString& message)
 {
@@ -608,13 +669,8 @@ void CleanupReviewDialog::onMaintenanceFinished(bool completed,
     if (!completed) {
         QMessageBox::warning(this, QStringLiteral("Move to Recycle Bin"),
                              message);
-    } else if (m_maintenance.lastReceipt().unexpectedPermanentRemoval) {
-        QMessageBox::critical(
-            this, QStringLiteral("Move to Recycle Bin"),
-            QStringLiteral(
-                "A file left its source path without Recycle Bin item "
-                "evidence. Remaining files were not attempted.\n\n%1")
-                .arg(message));
+    } else {
+        showCompletionSummary();
     }
     refresh();
 }
@@ -697,6 +753,9 @@ void CleanupReviewDialog::updateActionState()
     m_removeButton->setEnabled(!busy && any);
     m_clearButton->setEnabled(!busy && hasItems);
     m_recycleButton->setEnabled(!busy && any);
+    if (m_historyButton != nullptr) {
+        m_historyButton->setEnabled(!m_maintenance.isExecuting());
+    }
 }
 
 void CleanupReviewDialog::showStatus(const QString& message)

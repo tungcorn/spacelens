@@ -5,6 +5,8 @@
 
 #include <QObject>
 
+#include <atomic>
+#include <functional>
 #include <mutex>
 #include <stop_token>
 #include <thread>
@@ -49,11 +51,14 @@ signals:
 
 private:
     void joinWorker();
+    void startWorker(std::function<void(std::stop_token)> body);
+    void expirePreparedPlan();
     void onPrepareFinished(MaintenancePlan plan, QString message, bool cancelled);
     void onExecuteFinished(MaintenanceReceipt receipt, QString message);
 
     CleanupReviewController& m_controller;
     std::jthread m_worker;
+    std::atomic<bool> m_workerFinished{true};
     mutable std::mutex m_mutex;
     bool m_running = false;
     bool m_executing = false;
@@ -61,6 +66,7 @@ private:
     quint64 m_progressed = 0;
     quint64 m_total = 0;
     FileTimeTicks m_requestedAt = 0;
+    std::uint64_t m_operationId = 0;
     MaintenancePlan m_plan{};
     MaintenanceReceipt m_receipt{};
 };

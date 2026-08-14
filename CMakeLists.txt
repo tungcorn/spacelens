@@ -238,6 +238,8 @@ if(SPACELENS_BUILD_GUI)
         src/ui/TreemapWidget.cpp
         src/ui/CleanupReviewDialog.hpp
         src/ui/CleanupReviewDialog.cpp
+        src/ui/MaintenanceHistoryDialog.hpp
+        src/ui/MaintenanceHistoryDialog.cpp
         src/ui/DuplicateFilesDialog.hpp
         src/ui/DuplicateFilesDialog.cpp
         src/ui/OrdinaryLocationsDialog.hpp

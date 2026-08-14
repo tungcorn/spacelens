@@ -42,6 +42,7 @@ private slots:
     void onRevalidateAll();
     void onCancelRevalidate();
     void onMoveToRecycleBin();
+    void onMaintenanceHistory();
     void onSelectionChanged();
     void onRevalidationProgress(quint64 probed, quint64 total);
     void onRevalidationFinished(bool completed, const QString& message);
@@ -55,6 +56,7 @@ private:
     void updateActionState();
     void showStatus(const QString& message);
     void confirmAndExecute();
+    void showCompletionSummary();
 
     CleanupReviewController& m_controller;
     CleanupRevalidationSession& m_session;
@@ -73,6 +75,7 @@ private:
     QPushButton* m_removeButton = nullptr;
     QPushButton* m_clearButton = nullptr;
     QPushButton* m_recycleButton = nullptr;
+    QPushButton* m_historyButton = nullptr;
 };
 
 }  // namespace spacelens
