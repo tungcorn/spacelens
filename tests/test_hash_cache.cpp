@@ -159,6 +159,8 @@ public:
 class ScriptHasher final : public IFileContentHasher {
 public:
     ContentHashEvidence probeEvidence{};
+    ContentHashEvidence confirmEvidence{};
+    bool confirmDiffers = false;
     ContentHashResult fullResult{};
     int hashCalls = 0;
     int probeCalls = 0;
@@ -167,6 +169,9 @@ public:
     ContentHashEvidence probe(const std::wstring&) override
     {
         ++probeCalls;
+        if (confirmDiffers && probeCalls >= 2) {
+            return confirmEvidence;
+        }
         return probeEvidence;
     }
 
@@ -557,6 +562,59 @@ SPACELENS_TEST(HashCache_changed_during_read_not_persisted)
     options.minimumSize = 1;
     const auto result = detectDuplicates(candidates, reader, hasher, options);
     SPACELENS_REQUIRE_EQ(result.summary.cacheWrites, 0ULL);
+}
+
+SPACELENS_TEST(HashCache_probe_drift_after_lookup_hashes_again)
+{
+    const TempDir dir("drift");
+    const auto idA = strongId(1);
+    const auto idB = strongId(2);
+    const ByteSize size = 100;
+    const auto live = persistableEvidence(1, size, 50, 8);
+    {
+        auto store = HashCacheStore::tryOpen(dir.dbPath());
+        SPACELENS_REQUIRE(store.store(live, digestOf(99)));
+    }
+
+    MapReader reader;
+    reader.probes[L"C:\\a.bin"] = presentFile(idA, size);
+    reader.probes[L"C:\\b.bin"] = presentFile(idB, size);
+
+    ScriptHasher hasher;
+    hasher.probeEvidence = live;
+    hasher.probeEvidence.identity = idA;
+    hasher.confirmDiffers = true;
+    hasher.confirmEvidence = live;
+    hasher.confirmEvidence.identity = idA;
+    hasher.confirmEvidence.fileUsn = 9;
+    hasher.fullResult.status = DuplicateFileStatus::Verified;
+    hasher.fullResult.digest = digestOf(20);
+    hasher.fullResult.identity = idA;
+    hasher.fullResult.logicalSize = size;
+    hasher.fullResult.changeTime = 50;
+    hasher.fullResult.fileUsn = 9;
+    hasher.fullResult.persistable = true;
+
+    DuplicateCandidateQueryResult candidates;
+    candidates.ok = true;
+    DuplicateSizeBucket bucket;
+    bucket.logicalSize = size;
+    bucket.files.push_back(cand(L"C:\\a.bin", size));
+    bucket.files.push_back(cand(L"C:\\b.bin", size));
+    candidates.buckets.push_back(std::move(bucket));
+    candidates.candidateFiles = 2;
+
+    DuplicateScanOptions options;
+    options.hashCachePath = dir.dbPath();
+    options.minimumSize = 1;
+    const auto result = detectDuplicates(candidates, reader, hasher, options);
+    SPACELENS_REQUIRE(result.completed);
+    SPACELENS_REQUIRE(hasher.hashCalls >= 1);
+    SPACELENS_REQUIRE_EQ(result.summary.cacheHits, 0ULL);
+    if (!result.groups.empty()) {
+        SPACELENS_REQUIRE(result.groups.front().contentSha256Hex !=
+                          sha256ToHex(digestOf(99)));
+    }
 }
 
 SPACELENS_TEST(HashCache_default_options_do_not_touch_appdata)

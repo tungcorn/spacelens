@@ -129,8 +129,10 @@ Telemetry (additive, does not change group order): `cache_hits`,
    (`3 × 64 KiB`), hash little-endian size plus first / middle / last 64 KiB.
    Sample clusters of size 1 are discarded unless they are hard-link aliases.
 6. **Full SHA-256 or cache hit.** Each remaining identity is probed for
-   cache evidence. A reusable row supplies the digest without reading file
-   bytes. Otherwise the identity is hashed once, from the first sorted path.
+   cache evidence. A reusable row is accepted only if a second probe still
+   matches FileId + size + ChangeTime + FileUsn (and the live size still
+   matches the bucket). Otherwise the identity is hashed once, from the
+   first sorted path.
    A 1 MiB reusable buffer is used; the file is not mapped whole. The handle
    stays open for the read. Metadata, ChangeTime, FileUsn, and identity are
    re-probed on that handle afterwards, and the path is re-opened to catch

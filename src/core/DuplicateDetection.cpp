@@ -328,23 +328,43 @@ DuplicateDetectionResult detectDuplicates(
                 }
                 bool usedCache = false;
                 if (useCache) {
-                    const ContentHashEvidence evidence =
-                        hasher.probe(work->files.front()->index.path);
+                    const std::wstring& probePath = work->files.front()->index.path;
+                    const ContentHashEvidence evidence = hasher.probe(probePath);
                     const bool identityOk =
                         !isIdentityAvailable(work->identity) ||
                         !isIdentityAvailable(evidence.identity) ||
                         identitiesEqual(work->identity, evidence.identity);
-                    if (evidence.persistable && identityOk) {
+                    if (evidence.persistable && identityOk &&
+                        evidence.logicalSize == bucket.logicalSize) {
                         const HashCacheLookup looked = cache.lookup(evidence);
                         if (looked.disposition == HashCacheDisposition::Reusable) {
-                            work->full = looked.digest;
-                            work->hasFull = true;
-                            ++result.progress.cacheHits;
-                            result.progress.bytesReusedFromCache +=
-                                bucket.logicalSize;
-                            fullGroups[sha256ToHex(looked.digest)].push_back(work);
-                            emitProgress(onProgress, result.progress);
-                            usedCache = true;
+                            // Re-probe after lookup. The first probe closed its
+                            // handle; a same-size overwrite in that window must
+                            // not publish the stored digest. FALSE HIT is a defect.
+                            const ContentHashEvidence confirm =
+                                hasher.probe(probePath);
+                            const bool still =
+                                confirm.persistable &&
+                                confirm.logicalSize == evidence.logicalSize &&
+                                confirm.changeTime == evidence.changeTime &&
+                                confirm.fileUsn == evidence.fileUsn &&
+                                (!isIdentityAvailable(evidence.identity) ||
+                                 !isIdentityAvailable(confirm.identity) ||
+                                 identitiesEqual(evidence.identity,
+                                                 confirm.identity));
+                            if (still) {
+                                work->full = looked.digest;
+                                work->hasFull = true;
+                                ++result.progress.cacheHits;
+                                result.progress.bytesReusedFromCache +=
+                                    bucket.logicalSize;
+                                fullGroups[sha256ToHex(looked.digest)].push_back(
+                                    work);
+                                emitProgress(onProgress, result.progress);
+                                usedCache = true;
+                            } else {
+                                ++result.progress.cacheMisses;
+                            }
                         } else if (looked.disposition ==
                                    HashCacheDisposition::Invalid) {
                             ++result.progress.cacheInvalidations;
