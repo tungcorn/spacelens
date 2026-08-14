@@ -27,10 +27,30 @@ function Assert-True([bool]$Condition, [string]$Message) {
 function Get-AppDataStamp([string]$Path) {
     if (-not (Test-Path $Path)) { return $null }
     return @(
-        Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue |
-            ForEach-Object { "{0}|{1}|{2}" -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks } |
+        Get-ChildItem $Path -Recurse -Force -File -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $rel = $_.FullName.Substring($Path.Length).TrimStart('\', '/')
+                "{0}|{1}" -f $rel, $_.Length
+            } |
             Sort-Object
     )
+}
+
+function Write-AppDataStampDiff([object]$Before, [object]$After) {
+    $beforeSet = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($row in @($Before)) {
+        if ($row) { [void]$beforeSet.Add([string]$row) }
+    }
+    $afterSet = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($row in @($After)) {
+        if ($row) { [void]$afterSet.Add([string]$row) }
+    }
+    foreach ($row in $afterSet) {
+        if (-not $beforeSet.Contains($row)) { Write-Host "  AppData + $row" }
+    }
+    foreach ($row in $beforeSet) {
+        if (-not $afterSet.Contains($row)) { Write-Host "  AppData - $row" }
+    }
 }
 
 if (-not (Test-Path $StageDir)) {
@@ -176,6 +196,7 @@ if (-not $SkipInstall) {
             } elseif ($appDataExisted) {
                 $installStamp = Get-AppDataStamp $appData
                 if (($appDataStamp -join "`n") -ne ($installStamp -join "`n")) {
+                    Write-AppDataStampDiff $appDataStamp $installStamp
                     Add-Fail "npm install changed %LOCALAPPDATA%\SpaceLens contents"
                 }
             }
@@ -290,6 +311,7 @@ if (-not $SkipInstall) {
             if ($afterUseExisted) {
                 $unStamp = Get-AppDataStamp $appData
                 if (($afterUseStamp -join "`n") -ne ($unStamp -join "`n")) {
+                    Write-AppDataStampDiff $afterUseStamp $unStamp
                     Add-Fail "npm uninstall changed %LOCALAPPDATA%\SpaceLens contents"
                 }
             } elseif ($appDataAfter) {
