@@ -18,7 +18,6 @@
 
 class QListWidget;
 class QListWidgetItem;
-class QTextEdit;
 class QLabel;
 class QPushButton;
 class QLineEdit;
@@ -30,6 +29,7 @@ class QToolButton;
 class QShortcut;
 class QHBoxLayout;
 class QWidget;
+class QStackedWidget;
 
 namespace spacelens {
 
@@ -149,6 +149,9 @@ private:
     void applyQueryResult(PendingBrowsePayload payload, quint64 generation);
     void selectTablePath(const std::wstring& path);
     void showOtherInspector(const TreemapDisplayItem& item);
+    void fillInspectorFromHit(const IndexHit& hit, const QString& source);
+    void showExploreState(const QString& title, const QString& body,
+                          bool showAction);
 
     CleanupReviewController& m_review;
     IndexSession* m_session = nullptr;
@@ -177,13 +180,14 @@ private:
     QListWidget* m_rootsList = nullptr;
     QTableView* m_hitsView = nullptr;
     TreemapWidget* m_treemap = nullptr;
-    QTextEdit* m_inspector = nullptr;
+    class PropertyInspector* m_inspector = nullptr;
     QLabel* m_rootTitle = nullptr;
     QLabel* m_rootMeta = nullptr;
     QLabel* m_overviewLabel = nullptr;
     QLabel* m_queryMeta = nullptr;
     QLabel* m_selectionMeta = nullptr;
-    QLabel* m_emptyLabel = nullptr;
+    class EmptyStateWidget* m_exploreEmpty = nullptr;
+    QStackedWidget* m_hitsStack = nullptr;
     QWidget* m_breadcrumbBar = nullptr;
     QHBoxLayout* m_breadcrumbLayout = nullptr;
     QWidget* m_exploreHost = nullptr;

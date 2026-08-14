@@ -18,9 +18,8 @@
 class QLineEdit;
 class QPushButton;
 class QLabel;
-class QListWidget;
-class QListWidgetItem;
-class QTextEdit;
+class QTableWidget;
+class QTableWidgetItem;
 class QComboBox;
 class QHBoxLayout;
 class QWidget;
@@ -47,7 +46,7 @@ private slots:
     void onScanFinished(spacelens::ScanState state);
     void onNavigateUp();
     void onBreadcrumbClicked(int segmentIndex);
-    void onItemActivated(QListWidgetItem* item);
+    void onListingActivated();
     void onSelectionChanged();
     void onFilterChanged();
     void onOpen();
@@ -94,7 +93,10 @@ private:
     [[nodiscard]] int liveActiveFilterCount() const;
     [[nodiscard]] std::vector<RowRef> selectedRows() const;
     [[nodiscard]] std::optional<RowRef> singleSelectedRow() const;
-    [[nodiscard]] RowRef rowFromItem(const QListWidgetItem* item) const;
+    [[nodiscard]] RowRef rowFromItem(const QTableWidgetItem* item) const;
+    void appendListingRow(QTableWidget* table, const RowRef& row,
+                          const QString& type, const QString& classification,
+                          const QString& modified);
     [[nodiscard]] bool rowPassesFilter(const RowRef& row,
                                        const Classification& cls) const;
     void copyText(const QString& text);
@@ -142,9 +144,9 @@ private:
     QLabel* m_trustLabel = nullptr;
     QToolButton* m_itemMoreButton = nullptr;
 
-    QListWidget* m_listing = nullptr;
-    QListWidget* m_largestList = nullptr;
-    QTextEdit* m_details = nullptr;
+    QTableWidget* m_listing = nullptr;
+    QTableWidget* m_largestList = nullptr;
+    class PropertyInspector* m_details = nullptr;
 
     QPushButton* m_openButton = nullptr;
     QPushButton* m_openFolderButton = nullptr;

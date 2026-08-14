@@ -4,7 +4,7 @@
 
 namespace spacelens {
 
-/// Three-line indexed-root row: path, size · age, textual health.
+/// Three-line indexed-root row: folder name, size · age, textual health.
 class IndexedRootDelegate final : public QStyledItemDelegate {
     Q_OBJECT
 

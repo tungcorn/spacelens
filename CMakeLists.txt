@@ -255,6 +255,8 @@ if(SPACELENS_BUILD_GUI)
         src/ui/FilterPopup.cpp
         src/ui/IndexedRootDelegate.hpp
         src/ui/IndexedRootDelegate.cpp
+        src/ui/PropertyInspector.hpp
+        src/ui/PropertyInspector.cpp
     )
 
     add_executable(SpaceLens

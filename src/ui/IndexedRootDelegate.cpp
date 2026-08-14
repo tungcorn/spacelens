@@ -30,16 +30,24 @@ void IndexedRootDelegate::paint(QPainter* painter,
     const bool unavailable = index.data(UnavailableRole).toBool();
     const QColor titleColor =
         selected ? pal.color(QPalette::HighlightedText)
-                 : pal.color(unavailable ? QPalette::Mid : QPalette::WindowText);
+                 : (unavailable ? mutedTextColor(pal)
+                                : pal.color(QPalette::WindowText));
     QColor metaColor =
         selected ? pal.color(QPalette::HighlightedText) : mutedTextColor(pal);
     if (selected) {
-        metaColor.setAlpha(220);
+        metaColor.setAlpha(230);
     }
 
     const QString path = index.data(Qt::DisplayRole).toString();
+    const QString title = displayFolderName(path);
     const QString meta = index.data(MetaRole).toString();
     const QString status = index.data(StatusRole).toString();
+
+    if (selected) {
+        const QRect accent(opt.rect.left(), opt.rect.top() + 6, 3,
+                           opt.rect.height() - 12);
+        painter->fillRect(accent, pal.color(QPalette::HighlightedText));
+    }
 
     QRect textRect = opt.rect.adjusted(kUiSpace12, 7, -kUiSpace12, -7);
     QFont titleFont = opt.font;
@@ -52,8 +60,8 @@ void IndexedRootDelegate::paint(QPainter* painter,
     painter->save();
     painter->setPen(titleColor);
     painter->setFont(titleFont);
-    const QString elided = opt.fontMetrics.elidedText(
-        path, Qt::ElideMiddle, textRect.width());
+    const QString elided =
+        QFontMetrics(titleFont).elidedText(title, Qt::ElideRight, textRect.width());
     painter->drawText(textRect, Qt::AlignTop | Qt::AlignLeft, elided);
 
     painter->setPen(metaColor);
