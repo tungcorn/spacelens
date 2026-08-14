@@ -6,8 +6,11 @@
 #include "core/Duplicates.hpp"
 #include "core/FileTime.hpp"
 #include "core/Query.hpp"
+#include "core/ReclaimAnalysis.hpp"
 #include "core/ScanEngine.hpp"
 #include "core/SizeFormatter.hpp"
+#include "core/StorageIntelligence.hpp"
+#include "core/index/IndexCatalog.hpp"
 #include "core/index/IndexBuilder.hpp"
 #include "core/index/IndexPaths.hpp"
 #include "core/index/IndexQuery.hpp"
@@ -199,6 +202,7 @@ void writeCommonJsonFields(std::ostream& os,
        << "\"reparse_skipped\":" << jsonUInt(pr.reparsePointsSkipped) << ","
        << "\"other_errors\":" << jsonUInt(pr.otherErrors) << ","
        << "\"state\":" << jsonString(stateString(result.state)) << ","
+       << "\"source\":\"live_scan\","
        << "\"scan\":{"
        << "\"files\":" << jsonUInt(pr.filesSeen) << ","
        << "\"directories\":" << jsonUInt(pr.directoriesSeen) << ","
@@ -534,16 +538,78 @@ ExitCode runFind(const ParsedArgs& args, std::stop_token stop)
 
     auto result = runEngine(args.path, /*topFiles=*/0, stop);
     const FileTimeTicks now = nowFileTime();
-    std::vector<PathSizeItem> items;
+    std::vector<FileIndex> matches;
     if (result.state == ScanState::Completed ||
         result.state == ScanState::Cancelled) {
-        items = findFiles(result.tree, args, now);
+        const std::size_t n = result.tree.fileCount();
+        std::vector<FileIndex> all;
+        for (std::size_t i = 0; i < n; ++i) {
+            const FileIndex idx = static_cast<FileIndex>(i);
+            if (filePassesFilters(result.tree, idx, args, now)) {
+                all.push_back(idx);
+            }
+        }
+        std::sort(all.begin(), all.end(),
+                  [&](FileIndex a, FileIndex b) {
+                      const ByteSize sa = result.tree.file(a).size;
+                      const ByteSize sb = result.tree.file(b).size;
+                      if (sa != sb) {
+                          return sa > sb;
+                      }
+                      return result.tree.pathOfFile(a) < result.tree.pathOfFile(b);
+                  });
+        if (all.size() > args.limit) {
+            all.resize(args.limit);
+        }
+        matches = std::move(all);
     }
 
     if (args.json) {
-        printJsonResults(std::cout, "find", args.path, result, items,
-                         /*includeTotal=*/true);
+        const bool ok = result.state == ScanState::Completed;
+        writeCommonJsonFields(std::cout, "find", args.path, result, ok);
+        if (!result.tree.empty()) {
+            std::cout << ",\"total_size_bytes\":"
+                      << jsonUInt(result.tree.dir(result.tree.root()).recursiveSize);
+        }
+        std::cout << ",\"returned_count\":" << jsonUInt(matches.size())
+                  << ",\"truncated\":"
+                  << jsonBool(matches.size() == args.limit && args.limit > 0)
+                  << ",\"results\":[";
+        for (std::size_t i = 0; i < matches.size(); ++i) {
+            if (i > 0) {
+                std::cout << ",";
+            }
+            const FileIndex idx = matches[i];
+            const auto& file = result.tree.file(idx);
+            const std::wstring path = result.tree.pathOfFile(idx);
+            const auto cand =
+                analyzeItem(path, ItemKind::File, file.size, file.lastWriteTime,
+                            classifyFile(file.name, path), classifyLocation(path),
+                            now, file.lastAccessTime);
+            std::cout << "{\"path\":" << jsonString(path)
+                      << ",\"object_type\":\"file\""
+                      << ",\"size_bytes\":" << jsonUInt(file.size)
+                      << ",\"classification\":"
+                      << jsonString(toString(cand.classification.category))
+                      << ",\"confidence\":"
+                      << jsonString(toString(cand.classification.confidence))
+                      << ",\"location_safety\":" << jsonString(toString(cand.safety))
+                      << ",\"reclaimability\":"
+                      << jsonString(toString(cand.reclaimability))
+                      << ",\"candidate_strength\":"
+                      << jsonString(toString(cand.strength))
+                      << ",\"inactive_days\":" << jsonUInt(cand.inactiveDays)
+                      << ",\"explanation\":" << jsonString(cand.explanation)
+                      << "}";
+        }
+        std::cout << "]}\n";
     } else {
+        std::vector<PathSizeItem> items;
+        items.reserve(matches.size());
+        for (const FileIndex idx : matches) {
+            items.push_back(PathSizeItem{result.tree.pathOfFile(idx),
+                                         result.tree.file(idx).size});
+        }
         printHumanTable(items);
         std::cerr << "matches=" << items.size()
                   << " files_scanned=" << result.progress.filesSeen << "\n";
@@ -969,6 +1035,9 @@ ExitCode runQuery(const ParsedArgs& args)
         }
     }
     spec.limit = args.limit;
+    if (!args.under.empty()) {
+        spec.pathPrefix = args.under;
+    }
 
     const auto result = queryIndex(args.path, spec);
 
@@ -1102,15 +1171,285 @@ ExitCode runDuplicates(const ParsedArgs& args, std::stop_token stop)
     return ExitCode::Success;
 }
 
+namespace {
+
+void printHumanOverview(const StorageOverviewReport& report)
+{
+    std::cout << "Root:        " << narrow(report.root) << "\n"
+              << "Source:      " << toString(report.source) << "\n"
+              << "State:       " << report.state << "\n"
+              << "Files:       " << report.files << "\n"
+              << "Directories: " << report.directories << "\n"
+              << "Total size:  " << SizeFormatter::format(report.logicalBytes)
+              << "\n";
+    if (report.source == EvidenceSource::PersistentIndex) {
+        std::cout << "Index age:   " << report.indexAgeMs << " ms\n";
+    }
+    std::cout << "\nLargest directories\n";
+    printHumanTable([&] {
+        std::vector<PathSizeItem> items;
+        for (const auto& c : report.largestDirectories) {
+            items.push_back(PathSizeItem{c.path, c.logicalBytes});
+        }
+        return items;
+    }());
+    std::cout << "\nLargest files\n";
+    printHumanTable([&] {
+        std::vector<PathSizeItem> items;
+        for (const auto& c : report.largestFiles) {
+            items.push_back(PathSizeItem{c.path, c.logicalBytes});
+        }
+        return items;
+    }());
+}
+
+void printHumanOpportunities(const OpportunityReport& report)
+{
+    std::cout << "Root:        " << narrow(report.root) << "\n"
+              << "Source:      " << toString(report.source) << "\n"
+              << "State:       " << report.state << "\n"
+              << "Total size:  " << SizeFormatter::format(report.logicalBytes)
+              << "\n"
+              << "Review bytes (unique, non-overlapping): "
+              << SizeFormatter::format(report.uniqueReviewBytes)
+              << (report.uniqueReviewEstimated ? " (estimated)" : "") << "\n"
+              << "Planning only — not authorization to delete.\n";
+    if (!report.groups.empty()) {
+        std::cout << "\nGROUPS\n";
+        for (const auto& g : report.groups) {
+            std::cout << "  " << SizeFormatter::format(g.logicalBytes) << "  "
+                      << g.id << "  (" << g.itemCount << ")\n";
+        }
+    }
+    std::cout << "\nOPPORTUNITIES\n";
+    std::cout << "RANK  SIZE           STRENGTH     CLASS                 PATH\n";
+    for (const auto& item : report.opportunities) {
+        std::cout << item.opportunityRank << "     "
+                  << SizeFormatter::format(item.logicalBytes);
+        const std::string size = SizeFormatter::format(item.logicalBytes);
+        if (size.size() < 14) {
+            std::cout << std::string(14 - size.size(), ' ');
+        } else {
+            std::cout << ' ';
+        }
+        std::cout << item.candidateStrength;
+        if (item.candidateStrength.size() < 13) {
+            std::cout << std::string(13 - item.candidateStrength.size(), ' ');
+        }
+        std::cout << item.classification;
+        if (item.classification.size() < 22) {
+            std::cout << std::string(22 - item.classification.size(), ' ');
+        }
+        std::cout << narrow(item.path)
+                  << (item.overlapped ? "  [overlapped]\n" : "\n");
+    }
+}
+
+IndexQueryResult queryKind(const std::wstring& root, bool files, bool dirs,
+                           std::size_t limit, std::optional<ByteSize> minSize,
+                           std::optional<std::uint64_t> olderThan,
+                           const std::vector<std::string>& classifications)
+{
+    IndexQuerySpec spec;
+    spec.includeFiles = files;
+    spec.includeDirectories = dirs;
+    spec.limit = limit;
+    spec.minSize = minSize;
+    spec.olderThanDays = olderThan;
+    spec.classifications = classifications;
+    spec.sortBy = IndexSortKey::Size;
+    spec.sortDescending = true;
+    return queryIndex(root, spec);
+}
+
+}  // namespace
+
+ExitCode runOverview(const ParsedArgs& args, std::stop_token stop)
+{
+    if (!pathExists(args.path) || !pathIsDirectory(args.path)) {
+        std::cerr << "error: path is not an accessible directory\n";
+        if (args.json) {
+            writeErrorJson("overview", args.path, "inaccessible_root");
+        }
+        return ExitCode::InaccessibleRoot;
+    }
+
+    if (args.fromIndex) {
+        const auto status = indexStatus(args.path);
+        if (!status.ok) {
+            if (args.json) {
+                StorageOverviewReport failed;
+                failed.ok = false;
+                failed.source = EvidenceSource::PersistentIndex;
+                failed.root = args.path;
+                failed.state = "failed";
+                failed.error = status.error.empty() ? "index_not_found"
+                                                    : status.error;
+                std::cout << failed.toJson();
+            } else {
+                std::cerr << "overview: " << status.error << "\n";
+            }
+            return status.error == "index_not_found" ? ExitCode::IndexNotFound
+                                                     : ExitCode::ScanFailed;
+        }
+        const auto dirs =
+            queryKind(args.path, false, true, args.limit + 1, std::nullopt,
+                      std::nullopt, {});
+        const auto files =
+            queryKind(args.path, true, false, args.limit + 1, std::nullopt,
+                      std::nullopt, {});
+        auto report = buildIndexedOverview(
+            status.location.rootPath.empty() ? args.path
+                                             : status.location.rootPath,
+            status.root.logicalBytes, status.root.fileCount,
+            status.root.dirCount, dirs.hits, files.hits, status.age_ms,
+            status.root.indexedAtIso, args.limit);
+        if (args.json) {
+            std::cout << report.toJson();
+        } else {
+            printHumanOverview(report);
+        }
+        return ExitCode::Success;
+    }
+
+    const std::size_t topFiles = std::max<std::size_t>(args.limit, 100);
+    auto result = runEngine(args.path, topFiles, stop);
+    auto report = buildLiveOverview(result, args.limit, nowFileTime());
+    report.accessDenied = result.progress.accessDenied;
+    report.reparseSkipped = result.progress.reparsePointsSkipped;
+    report.otherErrors = result.progress.otherErrors;
+    if (args.json) {
+        std::cout << report.toJson();
+    } else {
+        printHumanOverview(report);
+    }
+    return mapState(result);
+}
+
+ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
+{
+    if (!pathExists(args.path) || !pathIsDirectory(args.path)) {
+        std::cerr << "error: path is not an accessible directory\n";
+        if (args.json) {
+            writeErrorJson("opportunities", args.path, "inaccessible_root");
+        }
+        return ExitCode::InaccessibleRoot;
+    }
+
+    OpportunityQuery query;
+    query.minSize = args.minSize.value_or(kDefaultOpportunityMinSize);
+    query.olderThanDays = args.olderThanDays.value_or(kDefaultOldLargeDays);
+    query.nowTicks = nowFileTime();
+    query.limit = args.limit;
+
+    if (args.fromIndex) {
+        const auto status = indexStatus(args.path);
+        if (!status.ok) {
+            if (args.json) {
+                OpportunityReport failed;
+                failed.ok = false;
+                failed.source = EvidenceSource::PersistentIndex;
+                failed.root = args.path;
+                failed.state = "failed";
+                failed.error = status.error.empty() ? "index_not_found"
+                                                    : status.error;
+                std::cout << failed.toJson();
+            } else {
+                std::cerr << "opportunities: " << status.error << "\n";
+            }
+            return status.error == "index_not_found" ? ExitCode::IndexNotFound
+                                                     : ExitCode::ScanFailed;
+        }
+
+        std::vector<IndexHit> hits;
+        bool fetchCapped = false;
+        auto appendUnique = [&](const IndexQueryResult& more) {
+            if (more.hits.size() >= kIndexedOpportunityFetchLimit ||
+                more.matched_items > more.returned_items) {
+                fetchCapped = true;
+            }
+            for (const auto& hit : more.hits) {
+                const bool exists = std::any_of(
+                    hits.begin(), hits.end(),
+                    [&](const IndexHit& have) { return have.path == hit.path; });
+                if (!exists) {
+                    hits.push_back(hit);
+                }
+            }
+        };
+        appendUnique(
+            queryKind(args.path, true, true, kIndexedOpportunityFetchLimit,
+                      query.minSize, std::nullopt,
+                      developerStorageClassifications()));
+        appendUnique(queryKind(args.path, true, true,
+                               kIndexedOpportunityFetchLimit, query.minSize,
+                               query.olderThanDays, {}));
+        IndexQuerySpec reclaimSpec;
+        reclaimSpec.includeFiles = true;
+        reclaimSpec.includeDirectories = true;
+        reclaimSpec.minSize = query.minSize;
+        reclaimSpec.limit = kIndexedOpportunityFetchLimit;
+        reclaimSpec.candidateStrengths = {"Strong", "Moderate", "ReviewOnly"};
+        reclaimSpec.sortBy = IndexSortKey::CandidateStrength;
+        reclaimSpec.sortDescending = true;
+        appendUnique(queryIndex(args.path, reclaimSpec));
+
+        auto report = buildIndexedOpportunities(
+            status.location.rootPath.empty() ? args.path
+                                             : status.location.rootPath,
+            status.root.logicalBytes, status.root.fileCount,
+            status.root.dirCount, hits, query, status.age_ms,
+            status.root.indexedAtIso);
+        if (fetchCapped) {
+            report.uniqueReviewEstimated = true;
+        }
+        if (args.json) {
+            std::cout << report.toJson();
+        } else {
+            printHumanOpportunities(report);
+        }
+        return ExitCode::Success;
+    }
+
+    auto result = runEngine(args.path, /*topFiles=*/0, stop);
+    OpportunityReport report;
+    if (result.state == ScanState::Completed ||
+        result.state == ScanState::Cancelled) {
+        report = buildLiveOpportunities(result.tree, query);
+        report.state = result.state == ScanState::Cancelled ? "cancelled"
+                                                            : "completed";
+        report.ok = result.state == ScanState::Completed;
+    } else {
+        report.ok = false;
+        report.state = "failed";
+        report.root = args.path;
+    }
+    report.accessDenied = result.progress.accessDenied;
+    report.reparseSkipped = result.progress.reparsePointsSkipped;
+    report.otherErrors = result.progress.otherErrors;
+    if (result.progress.elapsedSeconds > 0.0) {
+        report.elapsedMs = static_cast<std::uint64_t>(
+            result.progress.elapsedSeconds * 1000.0 + 0.5);
+    }
+    if (args.json) {
+        std::cout << report.toJson();
+    } else {
+        printHumanOpportunities(report);
+    }
+    return mapState(result);
+}
+
 ExitCode runCapabilities(const ParsedArgs& args)
 {
     if (args.json) {
         std::cout << "{"
                   << "\"schema_version\":" << kSchemaVersion << ","
                   << "\"version\":" << jsonString(SPACELENS_VERSION_STRING) << ","
+                  << "\"json_contract_version\":" << kSchemaVersion << ","
                   << "\"commands\":[\"scan\",\"top\",\"find\",\"index\","
                      "\"index status\",\"index list\",\"index refresh\",\"query\","
-                     "\"duplicates\",\"capabilities\",\"help\",\"version\"],"
+                     "\"overview\",\"opportunities\",\"duplicates\","
+                     "\"capabilities\",\"help\",\"version\"],"
                   << "\"features\":{"
                   << "\"json\":true,"
                   << "\"cancellation\":true,"
@@ -1119,7 +1458,11 @@ ExitCode runCapabilities(const ParsedArgs& args)
                   << "\"incremental_index\":true,"
                   << "\"filesystem_mutation\":false,"
                   << "\"classification\":true,"
-                  << "\"filters\":true"
+                  << "\"filters\":true,"
+                  << "\"storage_overview\":true,"
+                  << "\"storage_opportunities\":true,"
+                  << "\"duplicate_detection\":true,"
+                  << "\"reclaim_analysis\":true"
                   << "},"
                   << "\"read_only\":true,"
                   << "\"filesystem_mutation\":false,"
@@ -1128,12 +1471,14 @@ ExitCode runCapabilities(const ParsedArgs& args)
     } else {
         std::cout << "spacelens " << SPACELENS_VERSION_STRING << "\n"
                   << "commands: scan top find index index-refresh query "
-                     "duplicates capabilities help version\n"
+                     "overview opportunities duplicates capabilities help version\n"
                   << "read_only: true\n"
                   << "filesystem_mutation: false\n"
                   << "features: json, cancellation, classification, filters, "
-                     "persistent_index, indexed_query, incremental_index\n"
-                  << "not available: incremental_index, filesystem_mutation\n"
+                     "persistent_index, indexed_query, incremental_index, "
+                     "storage_overview, storage_opportunities, "
+                     "duplicate_detection, reclaim_analysis\n"
+                  << "not available: filesystem_mutation\n"
                   << "index_schema_version: " << kIndexSchemaVersion << "\n";
     }
     return ExitCode::Success;

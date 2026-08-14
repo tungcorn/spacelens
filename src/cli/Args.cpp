@@ -61,7 +61,8 @@ std::wstring normalizeExtension(std::wstring value)
 bool isFilterCommand(Command c)
 {
     return c == Command::Top || c == Command::Find || c == Command::Query ||
-           c == Command::Duplicates;
+           c == Command::Duplicates || c == Command::Opportunities ||
+           c == Command::Overview;
 }
 
 }  // namespace
@@ -79,24 +80,28 @@ std::string helpText()
         "  spacelens index status <path> [--json]\n"
         "  spacelens index list [--json]\n"
         "  spacelens index refresh <path> [--json]\n"
-        "  spacelens query <path> (--files|--dirs) [filters] [--limit N] [--json]\n"
+        "  spacelens query <path> (--files|--dirs) [filters] [--under P] [--limit N] [--json]\n"
+        "  spacelens overview <path> [--from-index] [--limit N] [--json]\n"
+        "  spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D] [--limit N] [--json]\n"
         "  spacelens duplicates <path> [--min-size S] [--json]\n"
         "  spacelens capabilities [--json]\n"
         "  spacelens help\n"
         "  spacelens version\n"
         "\n"
-        "Filters (top/find/query):\n"
+        "Filters (top/find/query/opportunities):\n"
         "  --min-size S     Minimum logical size (binary units, e.g. 10MB)\n"
         "  --ext EXT        File extension, with or without a leading dot\n"
         "  --older-than D   Last-write age in whole days\n"
         "  --classification C  Classification name\n"
         "  --strength S     Reclaim candidate strength (query; e.g. Strong)\n"
+        "  --under P        Restrict query results to P and its descendants\n"
         "\n"
         "Options:\n"
         "  --json          Machine-readable JSON on stdout\n"
         "  --files         Files mode (top/query)\n"
         "  --dirs          Directories mode (top/query)\n"
-        "  --limit N       Number of results (default 20)\n"
+        "  --from-index    Use a published index (overview/opportunities)\n"
+        "  --limit N       Number of results (default 20; overview default 10)\n"
         "  -h, --help      Show this help\n"
         "\n"
         "Index notes:\n"
@@ -143,6 +148,11 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         out.command = Command::Query;
     } else if (cmd == L"duplicates") {
         out.command = Command::Duplicates;
+    } else if (cmd == L"overview") {
+        out.command = Command::Overview;
+        out.limit = 10;
+    } else if (cmd == L"opportunities") {
+        out.command = Command::Opportunities;
     } else if (cmd == L"index") {
         // index | index status | index list | index refresh
         if (argc >= 3 && std::wstring_view(argv[2]) == L"status") {
@@ -202,7 +212,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         }
         if (arg == L"--min-size") {
             if (!isFilterCommand(out.command)) {
-                out.error = "--min-size is only valid with top/find/query/duplicates.";
+                out.error =
+                "--min-size is only valid with top/find/query/duplicates/opportunities.";
                 return out;
             }
             if (i + 1 >= argc) {
@@ -236,8 +247,9 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         }
         if (arg == L"--older-than") {
             if (out.command != Command::Top && out.command != Command::Find &&
-                out.command != Command::Query) {
-                out.error = "--older-than is only valid with top/find/query.";
+                out.command != Command::Query &&
+                out.command != Command::Opportunities) {
+                out.error = "--older-than is only valid with top/find/query/opportunities.";
                 return out;
             }
             if (i + 1 >= argc) {
@@ -263,6 +275,27 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
                 return out;
             }
             out.classification = argv[++i];
+            continue;
+        }
+        if (arg == L"--from-index") {
+            if (out.command != Command::Overview &&
+                out.command != Command::Opportunities) {
+                out.error = "--from-index is only valid with overview/opportunities.";
+                return out;
+            }
+            out.fromIndex = true;
+            continue;
+        }
+        if (arg == L"--under") {
+            if (out.command != Command::Query) {
+                out.error = "--under is only valid with 'query'.";
+                return out;
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == L'\0') {
+                out.error = "--under requires a path.";
+                return out;
+            }
+            out.under = argv[++i];
             continue;
         }
         if (arg == L"--strength") {
@@ -300,7 +333,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         out.command == Command::Find || out.command == Command::Index ||
         out.command == Command::IndexStatus ||
         out.command == Command::IndexRefresh || out.command == Command::Query ||
-        out.command == Command::Duplicates) {
+        out.command == Command::Duplicates || out.command == Command::Overview ||
+        out.command == Command::Opportunities) {
         if (out.path.empty()) {
             out.error = "Missing path argument.";
             return out;

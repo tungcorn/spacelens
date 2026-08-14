@@ -24,11 +24,13 @@ enum class Command {
     IndexRefresh,
     Query,
     Duplicates,
+    Overview,
+    Opportunities,
 };
 
 /// Commands intentionally exposed by the read-only CLI. Keep this list explicit
 /// so destructive verbs cannot be registered accidentally.
-inline constexpr std::array<Command, 12> kRegisteredCommands{
+inline constexpr std::array<Command, 14> kRegisteredCommands{
     Command::Scan,
     Command::Top,
     Command::Find,
@@ -39,6 +41,8 @@ inline constexpr std::array<Command, 12> kRegisteredCommands{
     Command::IndexRefresh,
     Command::Query,
     Command::Duplicates,
+    Command::Overview,
+    Command::Opportunities,
     Command::Help,
     Command::Version,
 };
@@ -60,6 +64,8 @@ struct ParsedArgs {
     std::optional<std::uint64_t> olderThanDays;
     std::wstring classification;
     std::wstring strength;  // CandidateStrength name for query
+    std::wstring under;     // query path prefix (descendants of this path)
+    bool fromIndex = false;
     std::string error;      // non-empty => usage error
 };
 

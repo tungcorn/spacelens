@@ -97,6 +97,12 @@ int wmain(int argc, wchar_t** argv)
         case spacelens::cli::Command::Duplicates:
             code = spacelens::cli::runDuplicates(args, stopSource.get_token());
             break;
+        case spacelens::cli::Command::Overview:
+            code = spacelens::cli::runOverview(args, stopSource.get_token());
+            break;
+        case spacelens::cli::Command::Opportunities:
+            code = spacelens::cli::runOpportunities(args, stopSource.get_token());
+            break;
         default:
             code = spacelens::cli::ExitCode::InternalError;
             break;
