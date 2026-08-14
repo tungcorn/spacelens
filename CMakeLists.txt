@@ -96,6 +96,8 @@ add_library(spacelens_core STATIC
     src/core/DuplicateDetection.cpp
     src/core/ReclaimAnalysis.hpp
     src/core/ReclaimAnalysis.cpp
+    src/core/StorageIntelligence.hpp
+    src/core/StorageIntelligence.cpp
     src/core/index/Sqlite.hpp
     src/core/index/Sqlite.cpp
     src/core/index/IndexPaths.hpp

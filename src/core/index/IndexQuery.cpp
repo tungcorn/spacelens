@@ -13,6 +13,7 @@
 #include <chrono>
 #include <limits>
 #include <sstream>
+#include <string_view>
 
 namespace spacelens {
 namespace {
@@ -53,6 +54,21 @@ std::string escapeLike(std::string_view text)
     for (char ch : text) {
         if (ch == '%' || ch == '_' || ch == '\\') {
             out.push_back('\\');
+        }
+        out.push_back(ch);
+    }
+    return out;
+}
+
+/// Same escaping for UTF-16 paths. Required because Windows paths contain `\`
+/// and pathPrefix uses `LIKE ? ESCAPE '\'`.
+std::wstring escapeLikeWide(std::wstring_view text)
+{
+    std::wstring out;
+    out.reserve(text.size() * 2);
+    for (wchar_t ch : text) {
+        if (ch == L'%' || ch == L'_' || ch == L'\\') {
+            out.push_back(L'\\');
         }
         out.push_back(ch);
     }
@@ -192,11 +208,14 @@ void bindFilters(SqliteStmt& stmt, int& idx, const IndexQuerySpec& spec,
         stmt.bindText16(idx++, spec.browsePath);
     } else if (!spec.pathPrefix.empty()) {
         stmt.bindText16(idx++, spec.pathPrefix);
-        std::wstring likePat = spec.pathPrefix;
-        while (!likePat.empty() &&
-               (likePat.back() == L'\\' || likePat.back() == L'/')) {
-            likePat.pop_back();
+        std::wstring prefix = spec.pathPrefix;
+        while (!prefix.empty() &&
+               (prefix.back() == L'\\' || prefix.back() == L'/')) {
+            prefix.pop_back();
         }
+        // ESCAPE '\' : `\\` is a literal backslash, `%` is still the wildcard.
+        std::wstring likePat = escapeLikeWide(prefix);
+        likePat.push_back(L'\\');
         likePat.push_back(L'\\');
         likePat.push_back(L'%');
         stmt.bindText16(idx++, likePat);
