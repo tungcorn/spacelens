@@ -7,6 +7,19 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ### Changed
 
+- Exact Indexed Opportunity Aggregates V1: indexed `opportunities` /
+  MCP `storage_opportunities` stream overlap-aware
+  `unique_review_bytes` across the whole matching set. The historical
+  50,000-row aggregate ceiling is gone. Top-N stays exact
+  `opportunity_rank_v2` + `LIMIT N+1`. Aggregates use a path-ordered
+  SQL stream and an O(depth) ancestor stack — they do not materialize
+  every matching Opportunity DTO. `unique_review_estimated` is true
+  only on `uint64` overflow (saturated), never because the match
+  count is large and never because top-N is approximate.
+  `unique_review_bytes` is exact logical review bytes on published
+  index evidence, not guaranteed freed disk space. Schema stays
+  `index_schema_version: 2` and JSON `schema_version: 1`. Version
+  stays 0.1.3. CLI/MCP remain `filesystem_mutation: false`.
 - Indexed Intelligence Scaling V1: indexed `opportunities` / MCP
   `storage_opportunities` retrieve the exact public top-N with
   `opportunity_rank_v2` inside SQLite. Inclusion filters
@@ -15,13 +28,10 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
   prefetch window is no longer invisible. Drive-root `--under D:\`
   / MCP `under` matches descendants (`D:\Users\...`); the LIKE bind
   no longer escapes the trailing slash into a non-matching pattern.
-  `unique_review_estimated` now means only the overlap-aware
-  unique-byte aggregate exceeded 50,000 matching rows — never that
-  top-N is approximate. Schema stays `index_schema_version: 2` and
-  JSON `schema_version: 1`. Version stays 0.1.3. CLI/MCP remain
-  `filesystem_mutation: false`. Tests may set `SPACELENS_DATA_ROOT`
-  so they never touch the developer AppData index. See
-  [`docs/INDEX.md`](docs/INDEX.md) and
+  Schema stays `index_schema_version: 2` and JSON `schema_version: 1`.
+  Version stays 0.1.3. CLI/MCP remain `filesystem_mutation: false`.
+  Tests may set `SPACELENS_DATA_ROOT` so they never touch the
+  developer AppData index. See [`docs/INDEX.md`](docs/INDEX.md) and
   [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
 
 ## [0.1.3] — 2026-08-14

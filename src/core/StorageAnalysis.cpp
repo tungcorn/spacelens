@@ -261,9 +261,26 @@ OpportunityAnalysis analyzeOpportunities(const OpportunityRequest& request,
         }
 
         IndexedOpportunityExtras extras;
-        extras.aggregateHits = &fetched.aggregateHits;
-        extras.aggregatesCapped = fetched.aggregatesCapped;
         extras.matchedCount = fetched.matchedItems;
+        extras.hasStreamedAggregate = true;
+        extras.uniqueReviewBytes = fetched.uniqueReviewBytes;
+        extras.uniqueReviewEstimated = fetched.uniqueReviewEstimated;
+        extras.aggregateOverflow = fetched.aggregateOverflow;
+        extras.overlappedPathKeys = fetched.overlappedTopKeys;
+        extras.rowsStreamed = fetched.rowsStreamed;
+        extras.maxActiveDepth = fetched.maxActiveDepth;
+        extras.groups.reserve(fetched.groups.size());
+        for (const auto& group : fetched.groups) {
+            OpportunityGroup copy;
+            copy.id = group.id;
+            copy.classification = group.classification;
+            copy.logicalBytes = group.logicalBytes;
+            copy.itemCount = group.itemCount;
+            copy.estimated = group.estimated;
+            copy.strongestCandidateStrength = group.strongestCandidateStrength;
+            copy.reasonCodes = group.reasonCodes;
+            extras.groups.push_back(std::move(copy));
+        }
 
         out.report = buildIndexedOpportunities(
             status.location.rootPath.empty() ? request.root

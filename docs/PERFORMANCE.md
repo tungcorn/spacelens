@@ -208,7 +208,7 @@ Dataset A. Single-run wall-clock, not a competitive claim. Schema stays
 | Release `build-release/cli/spacelens.exe` | 250 cmake-build decoys + late `node_modules` (503 files) | `index` | **349 ms** | Real CLI publish |
 | Release | same | `opportunities --from-index --limit 5` | **55 ms** / 5105 B JSON | First row is High `node_modules`, not a larger Medium decoy |
 | Release `spacelens_tests.exe` | 10 003 synthetic SQL rows | oracle vs production top-20 | **984 ms** process | Includes isolated publish |
-| Release | 100 001 synthetic SQL rows + tail `node_modules` | hidden-candidate + JSON bound | **2967 ms** process | JSON under 200 KB; top-N exact; unique estimated only if matches exceed 50k |
+| Release | 100 001 synthetic SQL rows + tail `node_modules` | hidden-candidate + JSON bound | **2967 ms** process | JSON under 200 KB; top-N exact; `unique_review_estimated` is overflow-only |
 
 ```powershell
 .\scripts\verify-indexed-intelligence.ps1 -CliPath .\build-release\cli\spacelens.exe
@@ -219,6 +219,47 @@ $env:SPACELENS_TEST_ONLY = "IndexedIntel_100k"
 250k+ physical trees were not required: the 100k gate is synthetic SQL
 rows under an isolated data root. Incremental USN timings are unchanged
 (no schema/index change).
+
+## Exact Indexed Opportunity Aggregates V1 (2026-08-15)
+
+Exact overlap-aware `unique_review_bytes` for the whole matching set
+(Design A: exact by default). Top-N stays `opportunity_rank_v2` +
+`LIMIT N+1`. Aggregates are a second SQL stream with a separator-rewritten
+preorder key and an O(depth) ancestor stack. Isolated temp fixtures /
+`SPACELENS_DATA_ROOT` only. Same machine family as Dataset A. Single-run
+wall-clock, not a competitive claim. Schema stays `index_schema_version: 2`;
+no new SQLite indexes. `unique_review_estimated` stayed false at every
+size below; the public total is exact logical review bytes on published
+evidence, not guaranteed freed disk.
+
+Release `spacelens_tests.exe` (`SPACELENS_BENCH_AGG=1`), synthetic sibling
+files (`bulk\f-i.bin` size 2) plus one tail `node_modules` (size 40).
+Query time is `queryIndexedOpportunities` only (after publish).
+
+| Matching rows | Publish | Query | Unique bytes | Estimated | Max depth |
+|---------------|---------|-------|--------------|-----------|-----------|
+| 10 001 | 185 ms | **53 ms** | 20 040 | false | 1 |
+| 50 001 | 575 ms | **208 ms** | 100 040 | false | 1 |
+| 100 001 | 967 ms | **512 ms** | 200 040 | false | 1 |
+| 250 001 | 3848 ms | **1735 ms** | 500 040 | false | 1 |
+| 500 001 | 7871 ms | **3688 ms** | 1 000 040 | false | 1 |
+| 1 000 001 | 11519 ms | **8061 ms** | 2 000 040 | false | 1 |
+
+Release `ExactAgg_500k_exact_release` (publish + `analyzeOpportunities`)
+query portion: **3685 ms**; JSON under 200 KB; hidden `node_modules`
+still in top-20.
+
+Query time is roughly linear in match count (~8 µs/row at 1M). An 8 s
+exact scan of 1M matching rows is acceptable for a planning command, so
+there is no `--exact-aggregates` fast-default split. Peak reducer memory
+is the ancestor stack plus a handful of groups, not O(match_count)
+Opportunity DTOs.
+
+```powershell
+$env:SPACELENS_BENCH_AGG = "1"
+$env:SPACELENS_TEST_ONLY = "ExactAgg_scale_measurements"
+.\build-release\tests\spacelens_tests.exe
+```
 
 ## Interpretation
 

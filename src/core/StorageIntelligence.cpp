@@ -6,6 +6,7 @@
 #include "core/SafetyPolicy.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -579,7 +580,180 @@ void writeGroup(std::ostringstream& os, const OpportunityGroup& g)
        << ",\"reason_codes\":" << jsonStringArray(g.reasonCodes) << "}";
 }
 
+void seedGroupReasons(OpportunityGroup& group)
+{
+    if (!group.reasonCodes.empty()) {
+        return;
+    }
+    if (group.id == "developer_dependencies") {
+        group.reasonCodes = {reason::kDeveloperDependency, reason::kLikelyRegenerable};
+    } else if (group.id == "generated_outputs") {
+        group.reasonCodes = {reason::kGeneratedOutput, reason::kLikelyRegenerable};
+    } else if (group.id == "package_cache") {
+        group.reasonCodes = {reason::kPackageCache, reason::kLikelyRegenerable};
+    } else if (group.id == "ide_cache") {
+        group.reasonCodes = {reason::kIdeCache, reason::kLikelyRegenerable};
+    } else if (group.id == "temporary_data") {
+        group.reasonCodes = {reason::kTemporaryData, reason::kLikelyRegenerable};
+    } else if (group.id == "log_data") {
+        group.reasonCodes = {reason::kLogData, reason::kPossiblyRegenerable};
+    } else {
+        group.reasonCodes = {reason::kOldLargeFile};
+    }
+}
+
+bool addChecked(ByteSize& acc, ByteSize delta, bool& overflow, bool& estimated)
+{
+    if (overflow) {
+        acc = std::numeric_limits<ByteSize>::max();
+        estimated = true;
+        return false;
+    }
+    if (delta > std::numeric_limits<ByteSize>::max() - acc) {
+        acc = std::numeric_limits<ByteSize>::max();
+        overflow = true;
+        estimated = true;
+        return false;
+    }
+    acc += delta;
+    return true;
+}
+
 }  // namespace
+
+std::wstring normalizeOpportunityPathKey(std::wstring path)
+{
+    return normalizePathKey(std::move(path));
+}
+
+void OpportunityStreamReducer::watchPath(std::wstring path)
+{
+    Watch w;
+    w.key = normalizePathKey(std::move(path));
+    if (w.key.empty()) {
+        return;
+    }
+    for (const auto& existing : watched_) {
+        if (existing.key == w.key) {
+            return;
+        }
+    }
+    watched_.push_back(std::move(w));
+}
+
+void OpportunityStreamReducer::observe(OpportunityAggregateInput row)
+{
+    groupsFinalized_ = false;
+    const std::wstring key = normalizePathKey(std::move(row.path));
+    if (key.empty()) {
+        return;
+    }
+    if (!lastKey_.empty() && key == lastKey_) {
+        ++duplicateRows_;
+        return;
+    }
+    lastKey_ = key;
+    ++rowsStreamed_;
+
+    while (!stack_.empty() && !isComponentPrefix(stack_.back(), key)) {
+        stack_.pop_back();
+    }
+    const bool covered = !stack_.empty();
+    for (auto& watch : watched_) {
+        if (watch.key == key) {
+            watch.seen = true;
+            watch.overlapped = covered;
+        }
+    }
+
+    if (covered) {
+        ++coveredRows_;
+    } else {
+        ++contributingRows_;
+        addChecked(uniqueReviewBytes_, row.logicalBytes, overflow_,
+                   uniqueReviewEstimated_);
+    }
+
+    std::string groupId = opportunityGroupId(parseStorageCategory(row.classification));
+    if (groupId.empty() && row.oldLargeFile) {
+        groupId = "old_large_files";
+    }
+    if (!groupId.empty()) {
+        OpportunityGroup* slot = nullptr;
+        for (auto& group : groups_) {
+            if (group.id == groupId) {
+                slot = &group;
+                break;
+            }
+        }
+        if (slot == nullptr) {
+            OpportunityGroup next;
+            next.id = groupId;
+            next.classification = groupId == "old_large_files"
+                                      ? std::string("mixed")
+                                      : row.classification;
+            seedGroupReasons(next);
+            groups_.push_back(std::move(next));
+            slot = &groups_.back();
+        }
+        if (!covered) {
+            addChecked(slot->logicalBytes, row.logicalBytes, overflow_,
+                       slot->estimated);
+            if (overflow_) {
+                uniqueReviewEstimated_ = true;
+            }
+        }
+        ++slot->itemCount;
+        if (strengthRank(row.candidateStrength) >
+            strengthRank(slot->strongestCandidateStrength)) {
+            slot->strongestCandidateStrength = row.candidateStrength;
+        }
+    }
+
+    if (row.directory && !covered) {
+        stack_.push_back(key);
+        if (stack_.size() > maxActiveDepth_) {
+            maxActiveDepth_ = stack_.size();
+        }
+    }
+}
+
+bool OpportunityStreamReducer::watchedPathOverlapped(const std::wstring& path) const
+{
+    const std::wstring key = normalizePathKey(path);
+    for (const auto& watch : watched_) {
+        if (watch.key == key) {
+            return watch.overlapped;
+        }
+    }
+    return false;
+}
+
+std::vector<std::wstring> OpportunityStreamReducer::overlappedWatchedKeys() const
+{
+    std::vector<std::wstring> keys;
+    for (const auto& watch : watched_) {
+        if (watch.overlapped) {
+            keys.push_back(watch.key);
+        }
+    }
+    return keys;
+}
+
+void OpportunityStreamReducer::finalizeGroups()
+{
+    if (groupsFinalized_) {
+        return;
+    }
+    std::sort(groups_.begin(), groups_.end(),
+              [](const OpportunityGroup& a, const OpportunityGroup& b) {
+                  if (a.logicalBytes != b.logicalBytes) {
+                      return a.logicalBytes > b.logicalBytes;
+                  }
+                  return a.id < b.id;
+              });
+    groupsFinalized_ = true;
+}
 
 const char* toString(EvidenceSource source) noexcept
 {
@@ -941,42 +1115,64 @@ OpportunityReport buildIndexedOpportunities(
     report.indexAgeMs = indexAgeMs;
     report.indexedAtIso = std::move(indexedAtIso);
 
+    const bool streamed = extras.hasStreamedAggregate;
     const std::vector<IndexHit>* sourceHits = &hits;
-    if (extras.aggregateHits != nullptr && !extras.aggregatesCapped &&
+    if (!streamed && extras.aggregateHits != nullptr && !extras.aggregatesCapped &&
         !extras.aggregateHits->empty()) {
         sourceHits = extras.aggregateHits;
     }
 
     std::vector<OpportunityItem> items;
     items.reserve(sourceHits->size());
+    std::vector<std::wstring> seenKeys;
     for (const auto& hit : *sourceHits) {
-        if (normalizePathKey(hit.path) == normalizePathKey(root)) {
+        const std::wstring key = normalizePathKey(hit.path);
+        if (key == normalizePathKey(root)) {
+            continue;
+        }
+        if (std::find(seenKeys.begin(), seenKeys.end(), key) != seenKeys.end()) {
             continue;
         }
         auto candidate = candidateFromHit(hit, query.nowTicks);
         if (!includeOpportunity(candidate, query)) {
             continue;
         }
+        seenKeys.push_back(key);
         items.push_back(
             itemFromCandidate(candidate, isOldLargeFile(candidate, query)));
     }
     report.opportunities = std::move(items);
-    markOverlaps(report.opportunities);
-    buildGroupsAndUniqueBytes(report);
+    if (streamed) {
+        for (auto& item : report.opportunities) {
+            const std::wstring key = normalizePathKey(item.path);
+            for (const auto& overlapped : extras.overlappedPathKeys) {
+                if (overlapped == key) {
+                    item.overlapped = true;
+                    if (std::find(item.reasonCodes.begin(), item.reasonCodes.end(),
+                                  reason::kNestedOverlap) ==
+                        item.reasonCodes.end()) {
+                        item.reasonCodes.push_back(reason::kNestedOverlap);
+                    }
+                    break;
+                }
+            }
+        }
+        report.uniqueReviewBytes = extras.uniqueReviewBytes;
+        report.uniqueReviewEstimated = extras.uniqueReviewEstimated;
+        report.groups = extras.groups;
+    } else {
+        markOverlaps(report.opportunities);
+        buildGroupsAndUniqueBytes(report);
+    }
     assignRanksAndBounds(report, query.limit);
     if (extras.matchedCount > 0) {
         report.truncated = extras.matchedCount > query.limit;
     }
-    if (extras.aggregatesCapped) {
+    if (!streamed && extras.aggregatesCapped) {
         report.uniqueReviewEstimated = true;
         for (auto& group : report.groups) {
             group.estimated = true;
         }
-    }
-    if (report.logicalBytes > 0 &&
-        report.uniqueReviewBytes > report.logicalBytes) {
-        report.uniqueReviewBytes = report.logicalBytes;
-        report.uniqueReviewEstimated = true;
     }
     return report;
 }

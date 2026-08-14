@@ -24,8 +24,8 @@ inline constexpr std::uint64_t kDefaultOldLargeDays = 90;
 /// Historical internal prefetch used before Indexed Intelligence Scaling V1.
 /// Production indexed opportunities no longer fetch this prefix.
 inline constexpr std::size_t kIndexedOpportunityFetchLimit = 200;
-/// Max matching rows materialized for overlap-aware unique_review_bytes.
-/// Top-N retrieval does not use this cap.
+/// Historical materialization ceiling used before Exact Indexed Opportunity
+/// Aggregates V1. Production no longer caps overlap accounting at this count.
 inline constexpr std::size_t kIndexedOpportunityAggregateLimit = 50000;
 
 /// Stable, non-localized reason codes derived from existing analysis semantics.
@@ -149,12 +149,101 @@ struct OpportunityQuery {
     std::wstring pathPrefix;
 };
 
-/// Optional indexed-fetch metadata for exact top-N + aggregate accuracy.
+/// Slim row for overlap-aware streaming aggregation. Not a full Opportunity DTO.
+struct OpportunityAggregateInput {
+    std::wstring path;
+    bool directory = false;
+    ByteSize logicalBytes = 0;
+    std::string classification;
+    std::string candidateStrength;
+    bool oldLargeFile = false;
+};
+
+/// Bounded path-order reducer: O(nesting depth + group count) memory.
+/// Directory candidates cover descendants; files never do. Duplicate normalized
+/// paths are ignored. Overflow saturates to UINT64_MAX and marks estimated.
+class OpportunityStreamReducer {
+public:
+    void watchPath(std::wstring path);
+    void observe(OpportunityAggregateInput row);
+
+    [[nodiscard]] bool overflow() const noexcept { return overflow_; }
+    [[nodiscard]] ByteSize uniqueReviewBytes() const noexcept
+    {
+        return uniqueReviewBytes_;
+    }
+    [[nodiscard]] bool uniqueReviewEstimated() const noexcept
+    {
+        return uniqueReviewEstimated_;
+    }
+    [[nodiscard]] std::uint64_t rowsStreamed() const noexcept
+    {
+        return rowsStreamed_;
+    }
+    [[nodiscard]] std::uint64_t contributingRows() const noexcept
+    {
+        return contributingRows_;
+    }
+    [[nodiscard]] std::uint64_t coveredRows() const noexcept
+    {
+        return coveredRows_;
+    }
+    [[nodiscard]] std::uint64_t duplicateRows() const noexcept
+    {
+        return duplicateRows_;
+    }
+    [[nodiscard]] std::size_t maxActiveDepth() const noexcept
+    {
+        return maxActiveDepth_;
+    }
+    [[nodiscard]] const std::vector<OpportunityGroup>& groups() const noexcept
+    {
+        return groups_;
+    }
+    [[nodiscard]] bool watchedPathOverlapped(const std::wstring& path) const;
+    [[nodiscard]] std::vector<std::wstring> overlappedWatchedKeys() const;
+    void finalizeGroups();
+
+private:
+    struct Watch {
+        std::wstring key;
+        bool overlapped = false;
+        bool seen = false;
+    };
+
+    std::vector<std::wstring> stack_;
+    std::wstring lastKey_;
+    std::vector<Watch> watched_;
+    std::vector<OpportunityGroup> groups_;
+    ByteSize uniqueReviewBytes_ = 0;
+    bool uniqueReviewEstimated_ = false;
+    bool overflow_ = false;
+    bool groupsFinalized_ = false;
+    std::uint64_t rowsStreamed_ = 0;
+    std::uint64_t contributingRows_ = 0;
+    std::uint64_t coveredRows_ = 0;
+    std::uint64_t duplicateRows_ = 0;
+    std::size_t maxActiveDepth_ = 0;
+};
+
+/// Optional indexed-fetch metadata for exact top-N + streamed aggregates.
 struct IndexedOpportunityExtras {
     const std::vector<IndexHit>* aggregateHits = nullptr;
     bool aggregatesCapped = false;
     std::uint64_t matchedCount = 0;
+    bool hasStreamedAggregate = false;
+    ByteSize uniqueReviewBytes = 0;
+    bool uniqueReviewEstimated = false;
+    bool aggregateOverflow = false;
+    std::vector<OpportunityGroup> groups;
+    std::vector<std::wstring> overlappedPathKeys;
+    std::uint64_t rowsStreamed = 0;
+    std::size_t maxActiveDepth = 0;
 };
+
+/// Case-folded component path used by overlap / --under. Drive root `D:\`
+/// normalizes to `d:` so it is a prefix of `d:\users\...`.
+[[nodiscard]] std::wstring normalizeOpportunityPathKey(std::wstring path);
 
 struct OpportunityReport {
     int schemaVersion = kStorageIntelligenceSchemaVersion;

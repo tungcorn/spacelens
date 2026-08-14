@@ -201,9 +201,11 @@ try {
     $unique = [uint64]$opp.Json.summary.unique_review_bytes
     $logical = [uint64]$opp.Json.summary.logical_bytes
     Assert-True ($unique -le $logical) "unique_review_bytes exceeds root logical bytes"
+    Assert-True ($opp.Json.summary.unique_review_estimated -eq $false) `
+        "unique_review_estimated must be false for this small matching set"
     Write-Host ("unique_review_bytes={0} estimated={1}" -f `
             $unique, $opp.Json.summary.unique_review_estimated)
-    Write-Host "INDEXED_INTELLIGENCE_SCALING_V1 verify script passed"
+    Write-Host "INDEXED_INTELLIGENCE_SCALING_V1 + exact aggregates verify script passed"
 } finally {
     if ($null -eq $previousDataRoot -or $previousDataRoot -eq "") {
         Remove-Item Env:SPACELENS_DATA_ROOT -ErrorAction SilentlyContinue

@@ -107,7 +107,11 @@ struct IndexedOpportunitySpec {
     bool matchNone = false;
     std::wstring pathPrefix;
     std::wstring excludePath;
+    /// Historical. Exact aggregation no longer uses a row-count ceiling.
     std::size_t aggregateLimit = 50000;
+    /// Test seam: treat the request as cancelled after this many streamed
+    /// aggregate rows. 0 disables the seam.
+    std::uint64_t cancelAfterStreamedRows = 0;
 };
 
 struct IndexedOpportunityFetch {
@@ -119,10 +123,28 @@ struct IndexedOpportunityFetch {
     std::uint64_t query_elapsed_ms = 0;
     std::vector<IndexHit> topHits;
     std::uint64_t matchedItems = 0;
+    /// No longer populated. Exact aggregates stream; they do not materialize
+    /// every matching IndexHit.
     std::vector<IndexHit> aggregateHits;
     bool aggregatesCapped = false;
     std::size_t sqlTopRows = 0;
     std::size_t sqlAggregateRows = 0;
+    ByteSize uniqueReviewBytes = 0;
+    bool uniqueReviewEstimated = false;
+    bool aggregateOverflow = false;
+    std::uint64_t rowsStreamed = 0;
+    std::size_t maxActiveDepth = 0;
+    std::vector<std::wstring> overlappedTopKeys;
+    struct Group {
+        std::string id;
+        std::string classification;
+        ByteSize logicalBytes = 0;
+        std::uint64_t itemCount = 0;
+        bool estimated = false;
+        std::string strongestCandidateStrength;
+        std::vector<std::string> reasonCodes;
+    };
+    std::vector<Group> groups;
 };
 
 /// Exact top-N opportunity retrieval across the whole published index.

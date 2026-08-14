@@ -1,6 +1,7 @@
 #include "core/index/IndexQuery.hpp"
 
 #include "core/FileTime.hpp"
+#include "core/StorageIntelligence.hpp"
 #include "sqlite3.h"
 
 #ifndef NOMINMAX
@@ -15,6 +16,7 @@
 #include <limits>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace spacelens {
 namespace {
@@ -346,6 +348,35 @@ int sqliteProgressCancel(void* ctx)
     return (cancel != nullptr && cancel->stop.stop_requested()) ? 1 : 0;
 }
 
+/// Read snapshot so top-N and the aggregate stream see one published generation.
+struct DeferredReadTxn {
+    explicit DeferredReadTxn(SqliteDb& db)
+        : db_(&db)
+    {
+        db_->exec("BEGIN DEFERRED;");
+    }
+    ~DeferredReadTxn()
+    {
+        if (!done_ && db_ != nullptr && db_->isOpen()) {
+            try {
+                db_->exec("ROLLBACK;");
+            } catch (...) {
+            }
+        }
+    }
+    void commit()
+    {
+        if (done_ || db_ == nullptr) {
+            return;
+        }
+        db_->exec("COMMIT;");
+        done_ = true;
+    }
+
+    SqliteDb* db_ = nullptr;
+    bool done_ = false;
+};
+
 }  // namespace
 
 IndexQueryResult indexStatus(const std::wstring& rootPath)
@@ -532,33 +563,20 @@ IndexedOpportunityFetch queryIndexedOpportunities(
         ProgressCancel cancel{stop};
         sqlite3_progress_handler(store.db().handle(), 1000, sqliteProgressCancel,
                                  &cancel);
+        DeferredReadTxn txn(store.db());
 
         const bool includeOldLarge = spec.olderThanDays > 0;
         const std::size_t publicLimit =
             spec.limit == 0 ? 20 : spec.limit;
-        const std::size_t aggregateLimit =
-            spec.aggregateLimit == 0 ? 50000 : spec.aggregateLimit;
+        const FileTimeTicks cutoff =
+            includeOldLarge && now > daysToTicks(spec.olderThanDays)
+                ? now - daysToTicks(spec.olderThanDays)
+                : 0;
 
         std::ostringstream where;
         where << "FROM entries WHERE root_id = 1";
         appendOpportunityInclusion(where, includeOldLarge);
         appendOpportunityExtras(where, spec);
-
-        {
-            std::ostringstream countSql;
-            countSql << "SELECT COUNT(*) " << where.str();
-            SqliteStmt count(store.db(), countSql.str());
-            int idx = 1;
-            bindOpportunityFilters(count, idx, spec, now);
-            if (count.step()) {
-                r.matchedItems = static_cast<std::uint64_t>(count.columnInt64(0));
-            }
-        }
-        if (stop.stop_requested()) {
-            sqlite3_progress_handler(store.db().handle(), 0, nullptr, nullptr);
-            r.error = "cancelled";
-            return finish();
-        }
 
         {
             std::ostringstream topSql;
@@ -580,32 +598,87 @@ IndexedOpportunityFetch queryIndexedOpportunities(
             return finish();
         }
 
-        if (r.matchedItems > 0 && r.matchedItems <= aggregateLimit) {
+        OpportunityStreamReducer reducer;
+        reducer.watchPath(r.location.rootPath.empty() ? rootPath
+                                                      : r.location.rootPath);
+        for (const auto& hit : r.topHits) {
+            reducer.watchPath(hit.path);
+        }
+
+        {
             std::ostringstream aggSql;
-            aggSql << kHitSelect << where.str();
-            appendOrderBy(aggSql, IndexSortKey::OpportunityRank, true);
+            // Preorder: replace separators with char(1) so `foo\bar` sorts
+            // immediately after `foo` and before `foo2` / `foobar`. Raw
+            // `ORDER BY path` is not a tree walk (`'2' < '\'`).
+            aggSql << "SELECT path, kind, "
+                      "CASE WHEN kind = 1 THEN recursive_size ELSE size_bytes "
+                      "END AS sz, classification, candidate_strength, "
+                      "last_write_ticks "
+                   << where.str()
+                   << " ORDER BY replace(replace(path, '/', char(1)), '\\', "
+                      "char(1)) COLLATE NOCASE ASC, id ASC";
             SqliteStmt agg(store.db(), aggSql.str());
             int idx = 1;
             bindOpportunityFilters(agg, idx, spec, now);
             while (agg.step()) {
-                if (stop.stop_requested()) {
-                    break;
+                if (stop.stop_requested() ||
+                    (spec.cancelAfterStreamedRows > 0 &&
+                     reducer.rowsStreamed() >= spec.cancelAfterStreamedRows)) {
+                    sqlite3_progress_handler(store.db().handle(), 0, nullptr,
+                                             nullptr);
+                    r.rowsStreamed = reducer.rowsStreamed();
+                    r.maxActiveDepth = reducer.maxActiveDepth();
+                    r.error = "cancelled";
+                    return finish();
                 }
-                r.aggregateHits.push_back(readHit(agg));
+                OpportunityAggregateInput row;
+                row.path = agg.columnText16(0);
+                row.directory = agg.columnInt64(1) == 1;
+                const auto rawSize = agg.columnInt64(2);
+                row.logicalBytes = rawSize < 0
+                                       ? std::numeric_limits<ByteSize>::max()
+                                       : static_cast<ByteSize>(rawSize);
+                row.classification = agg.columnText(3);
+                row.candidateStrength = agg.columnText(4);
+                const auto writeTicks = agg.columnInt64(5);
+                row.oldLargeFile =
+                    !row.directory && includeOldLarge && writeTicks > 0 &&
+                    static_cast<FileTimeTicks>(writeTicks) <= cutoff;
+                reducer.observe(std::move(row));
+                ++r.matchedItems;
             }
-            r.sqlAggregateRows = r.aggregateHits.size();
-            r.aggregatesCapped = r.aggregateHits.size() < r.matchedItems;
-        } else if (r.matchedItems > aggregateLimit) {
-            r.aggregatesCapped = true;
-            r.aggregateHits = r.topHits;
-            r.sqlAggregateRows = r.aggregateHits.size();
+            r.sqlAggregateRows = static_cast<std::size_t>(r.matchedItems);
         }
 
         sqlite3_progress_handler(store.db().handle(), 0, nullptr, nullptr);
         if (stop.stop_requested()) {
+            r.rowsStreamed = reducer.rowsStreamed();
+            r.maxActiveDepth = reducer.maxActiveDepth();
             r.error = "cancelled";
             return finish();
         }
+        reducer.finalizeGroups();
+        r.uniqueReviewBytes = reducer.uniqueReviewBytes();
+        r.uniqueReviewEstimated = reducer.uniqueReviewEstimated();
+        r.aggregateOverflow = reducer.overflow();
+        r.rowsStreamed = reducer.rowsStreamed();
+        r.maxActiveDepth = reducer.maxActiveDepth();
+        r.overlappedTopKeys = reducer.overlappedWatchedKeys();
+        r.groups.clear();
+        r.groups.reserve(reducer.groups().size());
+        for (const auto& group : reducer.groups()) {
+            IndexedOpportunityFetch::Group copy;
+            copy.id = group.id;
+            copy.classification = group.classification;
+            copy.logicalBytes = group.logicalBytes;
+            copy.itemCount = group.itemCount;
+            copy.estimated = group.estimated;
+            copy.strongestCandidateStrength = group.strongestCandidateStrength;
+            copy.reasonCodes = group.reasonCodes;
+            r.groups.push_back(std::move(copy));
+        }
+        r.aggregatesCapped = false;
+        txn.commit();
         r.ok = true;
     } catch (const SqliteError& ex) {
         r.ok = false;

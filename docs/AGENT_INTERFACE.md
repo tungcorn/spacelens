@@ -114,8 +114,12 @@ Indexed top-N is exact across the **whole published index**. Filters
 `opportunity_rank_v2`, not the first 20 rows SQLite happens to store.
 A stronger candidate at row 425,000 still wins.
 
-`unique_review_estimated` is only about overlap-aware aggregates when
-more than 50,000 rows match. It never means top-N is approximate.
+`unique_review_estimated` is true only when overlap-aware byte addition
+overflows `uint64`. It never means top-N is approximate, and it is no
+longer set merely because more than 50,000 rows match. `unique_review_bytes`
+is exact logical review bytes on the published index (nested directory
+candidates are not double-counted). It is not guaranteed reclaimable
+disk space and is not live-filesystem truth if the index is stale.
 
 There is no `safe_to_delete` and no `potential_reclaim_bytes` headline.
 

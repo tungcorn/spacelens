@@ -169,9 +169,11 @@ An unrecognized class name matches nothing (it does not silently become
 
 Indexed `--from-index` ranks the **entire** published index in SQL
 (`opportunity_rank_v2`) and returns the public top-N. An internal prefetch
-window does not decide which candidates appear. `unique_review_estimated`
-means only the overlap-aware unique-byte aggregate was capped (more than
-50,000 matching rows); top-N is still exact.
+window does not decide which candidates appear. Overlap-aware
+`unique_review_bytes` is streamed exactly for the matching set (no 50k
+ceiling). `unique_review_estimated` is true only on `uint64` overflow.
+The number is exact logical review bytes on published index evidence —
+not guaranteed freed disk space.
 
 See [`docs/AGENT_INTERFACE.md`](AGENT_INTERFACE.md).
 

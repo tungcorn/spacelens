@@ -100,7 +100,9 @@ commands until they resolve from the official WinGet source.
   guessing Recycled. History is inspection-only. Not permanent deletion.
 - Persistent SQLite index for fast repeated filtered queries, including
   exact top-N indexed `opportunities` (`opportunity_rank_v2` in SQL;
-  `--limit` is not an internal prefetch window)
+  `--limit` is not an internal prefetch window) and exact overlap-aware
+  `unique_review_bytes` (logical review bytes on published index
+  evidence — not guaranteed freed disk space)
 - Optional USN-based incremental refresh (`index refresh`) — read-only journal
   access; full rebuild required on discontinuity or access denied
 - Read-only CLI with human and machine-readable (`--json`) output for

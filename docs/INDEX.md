@@ -177,10 +177,37 @@ Indexed `opportunities` does **not** prefetch a 200-row prefix and rank
 in C++. `queryIndexedOpportunities` applies the inclusion predicate and
 `opportunity_rank_v2` (`ORDER BY` strength, confidence, size, path) in
 SQL, then `LIMIT N+1`. Classification, `--under`, min-size, and age
-filters run before that limit. Overlap-aware `unique_review_bytes` is
-exact when the matching set is ≤ 50,000 rows; larger sets set
-`unique_review_estimated: true` without making top-N approximate.
-Queries never refresh or rebuild the index.
+filters run before that limit.
+
+Overlap-aware `unique_review_bytes` is an **exact** non-overlapping sum
+of matching indexed `logical_bytes` for the same inclusion predicate.
+A second SQL stream orders by a tree-preorder key — separators `/` and
+`\` are rewritten to `char(1)` before `COLLATE NOCASE`, then `id ASC` —
+and feeds a bounded ancestor stack (memory scales with nesting depth
+and group count, not match count). Raw `ORDER BY path` is not a tree
+walk (`'2' < '\'`, so `foo2` would sort before `foo\bar` and pop the
+ancestor too early). Directory opportunities cover descendants; files
+never do. Near-prefix siblings (`foo` vs `foobar`) are not descendants. Group `logical_bytes` use that same **global** overlap
+(so `sum(groups)` equals the headline except for ungrouped rows);
+`item_count` still includes overlapped members. Category totals are
+therefore not independently additive across categories.
+
+`unique_review_bytes` is exact for the **published index evidence**, not
+a guaranteed freed-space figure. Sparse files, compression, hardlinks,
+allocation units, and Recycle Bin behavior can make live disk change
+differ. A stale index is still reported exactly as stored.
+
+`unique_review_estimated` is true only when checked byte addition
+overflows `uint64` (the public value saturates at `2^64-1` and is not
+a wrapped smaller total). It never means top-N is approximate and is
+not used merely because the match count crossed 50,000.
+
+Queries never refresh or rebuild the index. Top-N and the aggregate
+stream share one read connection and `BEGIN DEFERRED` snapshot.
+
+UNC roots are not a dedicated indexed-opportunity target; path helpers
+are drive-letter / backslash oriented. Reparse targets are not live-
+resolved during indexed aggregation.
 
 Capabilities advertise:
 
