@@ -138,6 +138,8 @@ struct OpportunityQuery {
     FileTimeTicks nowTicks = 0;
     std::size_t limit = kDefaultOpportunityLimit;
     std::optional<StorageCategory> categoryOnly;
+    /// Unrecognized classification token: include nothing (do not treat as Unknown).
+    bool matchNone = false;
 };
 
 struct OpportunityReport {

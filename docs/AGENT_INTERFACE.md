@@ -118,6 +118,9 @@ Medium or High confidence to enter the list (name-only `temp` / `cache` /
 items ≥ 10 MB rank Moderate even when recent.
 
 Filter: `spacelens opportunities <path> --classification BuildArtifact`.
+Indexed `--from-index` applies the class at fetch time so a 200-hit
+all-class page cannot hide a matching cache. An unrecognized class
+name matches nothing (it does not silently become `Unknown`).
 Duplicates are a separate command and are **not** hashed from
 `opportunities`.
 

@@ -17,6 +17,13 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
   Version stays 0.1.3. CLI/MCP remain `filesystem_mutation: false`.
   See [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
 
+### Fixed
+
+- Indexed `opportunities --classification` / MCP `classification` now
+  apply the class in the 200-hit index fetch, so a larger BuildArtifact
+  pile cannot hide a matching `.cache`. Unrecognized class tokens match
+  nothing instead of silently becoming `Unknown`.
+
 ## [0.1.3] — 2026-08-14
 
 AI-ready storage intelligence release. v0.1.2 stays published and

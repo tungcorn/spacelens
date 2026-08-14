@@ -1204,8 +1204,12 @@ ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
     request.query.nowTicks = nowFileTime();
     request.query.limit = args.limit;
     if (!args.classification.empty()) {
-        request.query.categoryOnly =
-            parseStorageCategory(narrowClassification(args.classification));
+        const std::string raw = narrowClassification(args.classification);
+        if (!isKnownStorageCategoryName(raw)) {
+            request.query.matchNone = true;
+        } else {
+            request.query.categoryOnly = parseStorageCategory(raw);
+        }
     }
     const auto analysis = analyzeOpportunities(request, stop);
     if (args.json) {

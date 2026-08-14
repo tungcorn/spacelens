@@ -166,6 +166,12 @@ SPACELENS_TEST(Classification_parse_category_aliases)
     SPACELENS_REQUIRE(parseStorageCategory("temp") ==
                       StorageCategory::TemporaryData);
     SPACELENS_REQUIRE(parseStorageCategory("nope") == StorageCategory::Unknown);
+    SPACELENS_REQUIRE(isKnownStorageCategoryName("TemporaryData"));
+    SPACELENS_REQUIRE(isKnownStorageCategoryName("unknown"));
+    SPACELENS_REQUIRE(isKnownStorageCategoryName("temp"));
+    SPACELENS_REQUIRE(!isKnownStorageCategoryName("BuildArtfact"));
+    SPACELENS_REQUIRE(!isKnownStorageCategoryName("nope"));
+    SPACELENS_REQUIRE(!isKnownStorageCategoryName(""));
 }
 
 SPACELENS_TEST(Classification_near_matches_are_not_exact)

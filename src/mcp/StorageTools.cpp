@@ -219,8 +219,12 @@ ToolResult callOpportunities(const JsonValue& args, std::stop_token stop)
     request.query.olderThanDays =
         olderThan.value_or(spacelens::kDefaultOldLargeDays);
     if (const auto classification = args.stringAt("classification")) {
-        request.query.categoryOnly =
-            spacelens::parseStorageCategory(*classification);
+        if (!spacelens::isKnownStorageCategoryName(*classification)) {
+            request.query.matchNone = true;
+        } else {
+            request.query.categoryOnly =
+                spacelens::parseStorageCategory(*classification);
+        }
     }
     if (stop.stop_requested()) {
         ToolResult cancelled;

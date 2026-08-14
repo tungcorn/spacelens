@@ -237,22 +237,33 @@ OpportunityAnalysis analyzeOpportunities(const OpportunityRequest& request,
                 }
             }
         };
-        appendUnique(queryKind(request.root, true, true,
-                               kIndexedOpportunityFetchLimit, query.minSize,
-                               std::nullopt,
-                               regenerableOpportunityClassifications()));
-        appendUnique(queryKind(request.root, true, true,
-                               kIndexedOpportunityFetchLimit, query.minSize,
-                               query.olderThanDays, {}));
-        IndexQuerySpec reclaimSpec;
-        reclaimSpec.includeFiles = true;
-        reclaimSpec.includeDirectories = true;
-        reclaimSpec.minSize = query.minSize;
-        reclaimSpec.limit = kIndexedOpportunityFetchLimit;
-        reclaimSpec.candidateStrengths = {"Strong", "Moderate"};
-        reclaimSpec.sortBy = IndexSortKey::CandidateStrength;
-        reclaimSpec.sortDescending = true;
-        appendUnique(queryIndex(request.root, reclaimSpec));
+        if (!query.matchNone) {
+            const std::vector<std::string> classFilter =
+                query.categoryOnly
+                    ? std::vector<std::string>{toString(*query.categoryOnly)}
+                    : std::vector<std::string>{};
+            const std::vector<std::string>& regenerable =
+                classFilter.empty() ? regenerableOpportunityClassifications()
+                                    : classFilter;
+            appendUnique(queryKind(request.root, true, true,
+                                   kIndexedOpportunityFetchLimit, query.minSize,
+                                   std::nullopt, regenerable));
+            appendUnique(queryKind(request.root, true, true,
+                                   kIndexedOpportunityFetchLimit, query.minSize,
+                                   query.olderThanDays, classFilter));
+            IndexQuerySpec reclaimSpec;
+            reclaimSpec.includeFiles = true;
+            reclaimSpec.includeDirectories = true;
+            reclaimSpec.minSize = query.minSize;
+            reclaimSpec.limit = kIndexedOpportunityFetchLimit;
+            reclaimSpec.candidateStrengths = {"Strong", "Moderate"};
+            reclaimSpec.sortBy = IndexSortKey::CandidateStrength;
+            reclaimSpec.sortDescending = true;
+            if (!classFilter.empty()) {
+                reclaimSpec.classifications = classFilter;
+            }
+            appendUnique(queryIndex(request.root, reclaimSpec));
+        }
 
         out.report = buildIndexedOpportunities(
             status.location.rootPath.empty() ? request.root

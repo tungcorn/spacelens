@@ -168,6 +168,9 @@ bool includeOpportunity(const ReclaimCandidate& candidate,
         candidate.safety == LocationSafety::Protected) {
         return false;
     }
+    if (query.matchNone) {
+        return false;
+    }
     if (query.categoryOnly &&
         candidate.classification.category != *query.categoryOnly) {
         return false;

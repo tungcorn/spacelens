@@ -163,7 +163,9 @@ developer/build/cache areas need Medium or High confidence to enter the list
 (name-only `temp` / `cache` / `build` is excluded). High-confidence regenerable
 items ≥ 10 MB rank Moderate even when recent. Unknown/user content appears only
 when it is old and large. Protected locations are omitted. `--classification`
-restricts to one existing SpaceLens class. This command does not hash files.
+restricts to one existing SpaceLens class. An unrecognized class name
+matches nothing (it does not silently become `Unknown`). This command
+does not hash files.
 
 See [`docs/AGENT_INTERFACE.md`](AGENT_INTERFACE.md).
 

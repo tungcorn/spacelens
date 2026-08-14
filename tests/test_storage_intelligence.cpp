@@ -354,6 +354,11 @@ SPACELENS_TEST(StorageIntel_v2_coverage_ranking_and_filters)
     SPACELENS_REQUIRE(hasPathContaining(onlyBuild.opportunities, L"target"));
     SPACELENS_REQUIRE(!hasPathContaining(onlyBuild.opportunities, L".venv"));
     SPACELENS_REQUIRE(!hasPathContaining(onlyBuild.opportunities, L"old-setup.msi"));
+
+    OpportunityQuery none = q;
+    none.matchNone = true;
+    const auto empty = buildLiveOpportunities(tree, none);
+    SPACELENS_REQUIRE(empty.opportunities.empty());
 }
 
 SPACELENS_TEST(StorageIntel_confidence_breaks_ranking_ties)

@@ -48,6 +48,10 @@ struct Classification {
 /// Parse category name (case-insensitive ASCII). Returns Unknown if not matched.
 [[nodiscard]] StorageCategory parseStorageCategory(std::string_view text) noexcept;
 
+/// True when `text` names a known StorageCategory, including the token
+/// `unknown`. Unrecognized spellings (e.g. `BuildArtfact`) are false.
+[[nodiscard]] bool isKnownStorageCategoryName(std::string_view text) noexcept;
+
 /// Classify a directory from leaf name, full path, direct children, and optional
 /// siblings of the same parent (files and directories). `fullPath` is used for
 /// Known Folder / path-component evidence. Sibling lookup is bounded to the

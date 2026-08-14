@@ -371,6 +371,15 @@ StorageCategory parseStorageCategory(std::string_view text) noexcept
     return StorageCategory::Unknown;
 }
 
+bool isKnownStorageCategoryName(std::string_view text) noexcept
+{
+    const std::string value = compactLowerAscii(text);
+    if (value == "unknown") {
+        return true;
+    }
+    return parseStorageCategory(text) != StorageCategory::Unknown;
+}
+
 Classification classifyDirectory(std::wstring_view directoryName,
                                  std::wstring_view fullPath,
                                  const std::wstring* childNames,
