@@ -5,21 +5,44 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-08-14
+
+First normal (non-prerelease) GitHub Release. Version remains
+semantically pre-1.0. v0.1.0 and v0.1.1 stay published and immutable.
+
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.2
+
 ### Added
 
-- npm packaging for the existing published v0.1.1 unified Windows x64
-  archive (`packaging/npm/`, `scripts/package-npm.ps1`). The tarball
-  embeds the native GUI + read-only CLI. Node is a launcher only.
-  `@tungcorn/spacelens@0.1.1` is on the public registry and is
-  advertised as `npm install -g @tungcorn/spacelens`.
+- Release Automation V2: `.github/workflows/release.yml` is
+  `workflow_dispatch` only. `publish=false` packages and hashes
+  without a tag, GitHub Release, or npm dispatch. `publish=true` on
+  `main` requires green required CI, creates an annotated `v*` tag at
+  the verified SHA, and publishes a latest GitHub Release (`--latest`,
+  no `--prerelease`, no `--draft`).
+- `scripts/verify-release-preflight.ps1` refuses version mismatch,
+  existing tags/releases, an already-published npm version, and
+  incomplete required CI.
+- npm Trusted Publishing for `@tungcorn/spacelens@0.1.2` stays in
+  `npm-publish.yml`. The release job dispatches that workflow after the
+  public GitHub assets exist. Observed hash must match SHA256SUMS and
+  an independent SHA-256 (dispatch input, required while the pin is
+  still 0.1.1). Hash mismatch is a hard stop. No `NPM_TOKEN`.
 
 ### Changed
 
-- Human-authorized Recycle Bin maintenance is now V2: durable operation IDs,
-  Attempting-before-Shell checkpoints, crash/restart Uncertain reconciliation,
-  a 2-minute prepared-plan expiry, and an inspection-only Maintenance History
-  dialog. The mutation remains GUI-only file-to-Recycle-Bin. Version stays
-  0.1.1; this is not a release.
+- Human-authorized Recycle Bin maintenance is V2: durable operation IDs,
+  Attempting-before-Shell checkpoints, crash/restart Uncertain
+  reconciliation, a 2-minute prepared-plan expiry, and an
+  inspection-only Maintenance History dialog. The mutation remains
+  GUI-only file-to-Recycle-Bin.
+- `@tungcorn/spacelens` package version is 0.1.2 and wraps this
+  release's unified zip. `@tungcorn/spacelens@0.1.1` remains on the
+  registry. `packaging/npm/release-pin.env` stays on the last
+  published 0.1.1 hash until the v0.1.2 zip exists; CI then skips
+  pack-from-release while the package is ahead of the pin.
+- GitHub Releases created by this workflow are latest/current, not
+  prerelease. Historical v0.1.0 and v0.1.1 Releases stay prerelease.
 
 ## [0.1.1] — 2026-08-14
 

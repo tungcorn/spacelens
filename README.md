@@ -15,17 +15,18 @@ spacelens_maintenance  →  GUI Recycle Bin adapter only
 
 ## Downloads
 
-Unsigned Windows x64 prerelease: [SpaceLens v0.1.1](https://github.com/tungcorn/spacelens/releases/tag/v0.1.1)
+Unsigned Windows x64: [SpaceLens v0.1.2](https://github.com/tungcorn/spacelens/releases/tag/v0.1.2)
 
 | Asset | Use |
 | --- | --- |
-| `spacelens-v0.1.1-windows-x64.zip` | Recommended: desktop GUI + read-only CLI (Qt 6.8.3 runtime included) |
-| `spacelens-cli-v0.1.1-windows-x64.zip` | Optional CLI-only profile |
+| `spacelens-v0.1.2-windows-x64.zip` | Recommended: desktop GUI + read-only CLI (Qt 6.8.3 runtime included) |
+| `spacelens-cli-v0.1.2-windows-x64.zip` | Optional CLI-only profile |
 | `SHA256SUMS.txt` | SHA-256 of the attached zip assets |
 
 Do not install both archives together; both expose `spacelens`.
-The earlier [v0.1.0](https://github.com/tungcorn/spacelens/releases/tag/v0.1.0)
-GUI-only zip remains published and is not replaced.
+Earlier [v0.1.1](https://github.com/tungcorn/spacelens/releases/tag/v0.1.1)
+and [v0.1.0](https://github.com/tungcorn/spacelens/releases/tag/v0.1.0)
+remain published and are not replaced.
 
 The official Microsoft Visual C++ Redistributable (x64) is required.
 Binaries are unsigned. Verify the zip hashes before use.

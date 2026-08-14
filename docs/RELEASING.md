@@ -35,7 +35,7 @@ GUI-only zip for v0.1.1 and later. Historical `spacelens-gui-v0.1.0-*.zip`
 on the v0.1.0 Release is immutable.
 
 These are verification artifacts. They are not a public GitHub Release
-until a maintainer pushes a matching `v*` tag.
+until Release Automation V2 publishes from `main` (`publish=true`).
 
 ## Independent CLI and GUI gates
 
@@ -62,8 +62,9 @@ sentinel must not unlock anything. The release workflow never creates
 A Qt review bound to 6.8.3 is invalid for any other Qt version.
 
 Combined public publication of **both** zips requires both gates. That
-is a product policy for a joint prerelease, not a technical reason to
-hold the CLI behind Qt.
+is a product policy for a joint release, not a technical reason to
+hold the CLI behind Qt. A `publish=true` run refuses a partial GitHub
+Release when either gate fails.
 
 ## Build and package locally
 
@@ -120,43 +121,81 @@ required pull-request check.
 
 ## Git tags and GitHub Releases
 
-`.github/workflows/release.yml` runs on `v*.*.*` tags and `workflow_dispatch`.
+`.github/workflows/release.yml` is **manual `workflow_dispatch` only**.
+It no longer runs on tag push. Inputs:
 
-It builds, tests, safety-checks, and stages archives as workflow artifacts.
+| Input | Default | Meaning |
+|-------|---------|---------|
+| `version` | `0.1.2` | Must equal CMake `project(VERSION …)` and `packaging/npm/package.json` |
+| `publish` | `false` | Dry-run when false; create tag + GitHub Release + npm dispatch when true |
+
+Dry-run (`publish=false`) builds, tests, packages, hashes, and stages the
+npm tarball from **this run's** unified zip. It must not create a tag,
+GitHub Release, or npm publication.
 
 A GitHub Release is created only when **all** of the following are true:
 
-1. the ref is a `v*.*.*` tag matching `v` + `CMAKE_PROJECT_VERSION`
-2. a non-empty root `LICENSE` file exists (`cli_eligible`)
+1. `publish=true`
+2. the ref is `main`
+3. `scripts/verify-release-preflight.ps1 -Publish` succeeds: version
+   matches CMake and package.json, the tag does not exist locally or on
+   origin, the GitHub Release does not exist, npm does not already have
+   that version, and required CI check-runs on this SHA are success
+   (`Windows / Full Debug`, `Windows / Full Release`,
+   `Windows / CLI-only Latest`, `Quality / MSVC Analyze`, `npm / Package`)
+4. both distribution gates pass (`cli_eligible` and `gui_eligible`)
 
-The unified zip is attached only when `cli_eligible` **and** the
-structured Qt review is PASS (`gui_eligible`). Otherwise that zip stays
-on the workflow run. The `SHA256SUMS.txt` attached to the GitHub
-Release lists only the uploaded zips. The workflow artifact may still
-list both.
+The workflow then creates an annotated tag at `$GITHUB_SHA`, pushes it,
+and runs `gh release create --latest --verify-tag`. It does **not** pass
+`--prerelease` or `--draft`. It refuses to move an existing tag or
+replace an existing Release. If the tag already points at this SHA and
+the Release does not exist (tag pushed, create failed), retry is
+allowed and only the Release is created.
 
-Releases are prerelease. Do not mark v0.1.0 as latest/production from this
-workflow. Do not move or recreate an already-published `v*` tag.
+The unified zip, CLI-only zip, and `SHA256SUMS.txt` are attached.
+`docs/release-notes/<tag>.md` is the Release body when that file exists.
 
-The publish job uses `docs/release-notes/<tag>.md` as the GitHub Release
-body when that file exists. Otherwise it writes a short unsigned-prerelease
-fallback. Do not hardcode a one-line body in the workflow.
+v0.1.2 is the first latest/current Release from this workflow. Historical
+v0.1.0 and v0.1.1 remain published prereleases and must not be retagged,
+redrafted, or have their assets replaced.
 
-The existing `v0.1.0` Release title is `SpaceLens v0.1.0`. GitHub already
-renders the Pre-release badge; do not add `(prerelease)` to the title.
+If GitHub publication succeeds and npm later fails, leave the GitHub
+Release alone. Retry only `npm-publish.yml`, and only if
+`@tungcorn/spacelens@<version>` does not already exist.
 
 ## npm
 
 Templates live in `packaging/npm/`. The package name is
-`@tungcorn/spacelens` version `0.1.1`. It distributes the **published**
-unified archive `spacelens-v0.1.1-windows-x64.zip` after verifying
-SHA-256
-`b4d4cb993bb53e1414c9fc156d9c29a5dca1b8640ac8d3b1229e5ff5a345793d`.
-A hash mismatch is a hard stop. Do not substitute a locally rebuilt zip.
+`@tungcorn/spacelens`. `package.json` version must match CMake.
+
+`packaging/npm/release-pin.env` records the **last published** unified
+zip (currently v0.1.1,
+`b4d4cb993bb53e1414c9fc156d9c29a5dca1b8640ac8d3b1229e5ff5a345793d`).
+Do not point the pin at a version whose public zip does not exist yet.
+A hash mismatch is a hard stop. Do not substitute a locally rebuilt zip
+for a published pin.
+
+While `package.json` is ahead of the pin, CI `npm / Package` validates
+templates and skips pack-from-release. The release workflow packs npm
+from **this run's** unified zip and the SHA-256 it just computed.
+
+`.github/workflows/npm-publish.yml` stays a separate
+`workflow_dispatch` workflow (Trusted Publisher is bound to that
+filename). It downloads the **public** GitHub Release zip and
+`SHA256SUMS.txt` and requires observed == sums == an independent
+SHA-256. That independent digest is the `sha256` input, or the pin
+when `package.json` still matches the pin. When the package is ahead
+of the pin, `sha256` is required; do not derive expected from the
+downloaded bytes. Hash mismatch is a hard stop. Publish runs only
+when `publish=true` **and** the ref is `main`, using OIDC
+(`id-token: write`). It does not publish on push to `main` or from
+other branches. Do not add an `NPM_TOKEN` secret. Do not move
+`npm publish` into `release.yml` (`workflow_call` would make npm
+validate the caller filename).
 
 ```powershell
 .\scripts\verify-npm-template.ps1
-.\scripts\package-npm.ps1
+.\scripts\package-npm.ps1 -ZipPath <unified.zip> -ExpectedSha256 <sha256>
 .\scripts\verify-npm-package.ps1
 ```
 
@@ -165,19 +204,12 @@ and license/source-offer files. There is no `postinstall` download.
 Node launchers spawn `native\spacelens.exe` / `native\spacelens-gui.exe`
 with `shell: false` and do not rewrite stdout.
 
-`.github/workflows/npm-publish.yml` is **manual dispatch only**. Pack
-always runs; publish runs only when the `publish` input is true **and**
-the ref is `main`, after the same validation, using npm Trusted
-Publishing (OIDC, `id-token: write`). It does not publish on push to
-`main` or from other branches. Do not add an `NPM_TOKEN` secret.
-
-`@tungcorn/spacelens@0.1.1` is on the public npm registry. The root
-README advertises `npm install -g @tungcorn/spacelens`. Subsequent
-publishes use this workflow after the maintainer binds Trusted Publisher
-on npmjs.com (GitHub Actions, owner `tungcorn`, repository `spacelens`,
-workflow filename `npm-publish.yml`, allowed action `npm publish`).
-Saving that form is not a live OIDC test. Do not add an `NPM_TOKEN`
-secret.
+`@tungcorn/spacelens@0.1.1` is on the public npm registry. v0.1.2 is
+published by dispatching `npm-publish.yml` after the v0.1.2 GitHub
+Release exists. The root README advertises
+`npm install -g @tungcorn/spacelens`. After a successful 0.1.2
+publication, update `release-pin.env` to the new public hash so CI
+pack-from-release works again.
 
 npm uninstall must not delete `%LOCALAPPDATA%\SpaceLens\`.
 
@@ -197,8 +229,10 @@ until the matching GitHub Release assets exist.
 ## Do not do from an assistant session
 
 - Change the maintainer-selected MIT license
-- Move, delete, or recreate `v0.1.0` or any other published tag
+- Move, delete, or recreate `v0.1.0`, `v0.1.1`, or any other published tag
 - Replace published zip binaries for an existing tag
+- Add an `NPM_TOKEN` secret or publish npm with a bypass-2FA token
+- Mark a new Release as prerelease or draft from this workflow
 - Commit Visual C++ runtime DLLs
 - Generate or commit a certificate, `.pfx`, or private key
 - Weaken `filesystem_mutation: false` so CI is easier

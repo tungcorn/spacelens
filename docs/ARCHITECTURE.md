@@ -316,8 +316,10 @@ Only runtime executables are installed. Tests, PDBs, static libraries, and
 
 CI (`.github/workflows/ci.yml`) is the quality gate: Full Debug, Full Release
 (with `scripts/verify-cli-safety.ps1` and zip staging), CLI-only Latest,
-`/analyze`, and npm package staging from the published v0.1.1 zip. Third-party
-actions are SHA-pinned. See [`docs/RELEASING.md`](RELEASING.md).
+`/analyze`, and npm template checks. Pack-from-release runs only when
+`package.json` matches the last-published pin in
+`packaging/npm/release-pin.env`; otherwise that job skips packing.
+Third-party actions are SHA-pinned. See [`docs/RELEASING.md`](RELEASING.md).
 
 npm is an additional **installation channel**, not a Node SDK. The
 `@tungcorn/spacelens` tarball embeds the same published Windows x64 GUI+CLI
