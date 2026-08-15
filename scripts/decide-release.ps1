@@ -28,6 +28,9 @@ if ($cmake.Text -ne $npm.Text) {
 $latest = Get-SpaceLensLatestStableVersion -Tags (Get-SpaceLensGitTags -RepoRoot $RepoRoot)
 if (-not $latest) { throw "no stable vX.Y.Z tag found" }
 $next = Get-SpaceLensNextPatchVersion $latest
+if (-not $HeadSha) {
+    $HeadSha = (& git -C $RepoRoot rev-parse HEAD).Trim()
+}
 
 $version = $cmake
 $publish = $false
@@ -53,10 +56,27 @@ if ($EventName -eq "workflow_dispatch") {
     }
 } else {
     $version = $cmake
-    if ($cmake.Text -eq $next.Text) {
+    $parentCmake = $null
+    $parent = & git -C $RepoRoot rev-parse --verify "${HeadSha}^" 2>$null
+    if ($LASTEXITCODE -eq 0 -and "$parent".Trim()) {
+        $parentText = (& git -C $RepoRoot show "$($parent.Trim()):CMakeLists.txt" | Out-String)
+        if ($LASTEXITCODE -eq 0 -and $parentText) {
+            try { $parentCmake = Get-SpaceLensCMakeVersionFromText $parentText } catch { $parentCmake = $null }
+        }
+    }
+    $tagPeel = Get-SpaceLensTagPeelSha -Tag $cmake.Tag -RepoRoot $RepoRoot
+    $auto = Test-SpaceLensAutoPublishCommit `
+        -CMakeVersion $cmake `
+        -LatestStableVersion $latest `
+        -ParentCMakeVersion $parentCmake `
+        -HeadSha $HeadSha `
+        -TagPeelSha $tagPeel
+    if ($auto) {
         $publish = $true
         $runPipeline = $true
-        $reason = "CMake $($cmake.Text) is the next patch after $($latest.Text)"
+        $reason = "CMake $($cmake.Text) is the next patch after $($latest.Text) and this commit is the version bump or already tagged"
+    } elseif ($cmake.Text -eq $next.Text) {
+        $reason = "CMake $($cmake.Text) is the next patch $($next.Text), but this commit did not bump it (tag does not point here)"
     } else {
         $reason = "CMake $($cmake.Text) is not the next patch $($next.Text) of $($latest.Text)"
     }

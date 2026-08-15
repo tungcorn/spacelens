@@ -9,7 +9,7 @@ param(
     [string]$Version,
     [switch]$Publish,
     [switch]$Wait,
-    [int]$WaitMinutes = 90,
+    [int]$WaitMinutes = 120,
     [string]$Repository = "",
     [string]$Sha = ""
 )
@@ -50,10 +50,6 @@ function Get-RequiredCheckRuns {
 }
 
 if ($Publish) {
-    if ($env:GITHUB_REF -and $env:GITHUB_REF -ne "refs/heads/main") {
-        Write-Error "publish is allowed only from main (ref=$($env:GITHUB_REF))"
-    }
-
     if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
         $PSNativeCommandUseErrorActionPreference = $false
     }
@@ -75,6 +71,14 @@ if ($Publish) {
     }
     if ($peeled -and $Sha -and $peeled -eq $Sha) {
         Write-Host "origin tag $tag already points at $Sha; Release-create retry allowed if Release is missing"
+    }
+
+    if ($env:GITHUB_REF -and $env:GITHUB_REF -ne "refs/heads/main") {
+        if ($peeled -and $Sha -and $peeled -eq $Sha) {
+            Write-Host "non-main recovery allowed; tag $tag already points at $Sha (ref=$($env:GITHUB_REF))"
+        } else {
+            Write-Error "publish is allowed only from main unless $tag already points at this SHA (ref=$($env:GITHUB_REF))"
+        }
     }
 
     $local = git rev-parse -q --verify "${tag}^{commit}" 2>$null

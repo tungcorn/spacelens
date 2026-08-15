@@ -96,6 +96,20 @@ $ciOnly = Get-SpaceLensReleaseDecision -LatestVersion "0.1.4" -Commits @(
 )
 if ($ciOnly.Needed) { Add-Fail "ci/docs release-automation commits must not require a product release" }
 
+# Auto-publish only the version-bump commit (or a tagged retry), not later SHAs.
+if (-not (Test-SpaceLensAutoPublishCommit -CMakeVersion "0.1.5" -LatestStableVersion "0.1.4" -ParentCMakeVersion "0.1.4" -HeadSha "aaa")) {
+    Add-Fail "bump commit must auto-publish"
+}
+if (Test-SpaceLensAutoPublishCommit -CMakeVersion "0.1.5" -LatestStableVersion "0.1.4" -ParentCMakeVersion "0.1.5" -HeadSha "bbb") {
+    Add-Fail "later SHA while CMake is already next must not auto-publish"
+}
+if (-not (Test-SpaceLensAutoPublishCommit -CMakeVersion "0.1.5" -LatestStableVersion "0.1.4" -ParentCMakeVersion "0.1.5" -HeadSha "ccc" -TagPeelSha "ccc")) {
+    Add-Fail "retry of the already-tagged SHA must auto-publish"
+}
+if (Test-SpaceLensAutoPublishCommit -CMakeVersion "0.1.4" -LatestStableVersion "0.1.4" -ParentCMakeVersion "0.1.4" -HeadSha "ddd") {
+    Add-Fail "unbumped CMake must not auto-publish"
+}
+
 # Publish plan G: rerun after public release exists → no duplicate.
 $g = Get-SpaceLensPublishPlan -PreparedVersion "0.1.5" -LatestStableVersion "0.1.4" `
     -TagPeelSha "abc" -HeadSha "abc" -GitHubReleaseExists $true -NpmVersionExists $true `

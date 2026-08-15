@@ -83,6 +83,16 @@ if ($release -match 'release-please' -or $pr -match 'release-please') {
     Add-Fail "Release Please must not own tag or GitHub Release"
 }
 
+if ($release -notmatch 'gh workflow run ci.yml') {
+    Add-Fail "pin job must dispatch ci.yml"
+}
+if ($release -notmatch 'gh workflow run release-pr.yml') {
+    Add-Fail "pin job must dispatch release-pr.yml so later product commits get a pending PR"
+}
+if ($release -match 'select\(\.head_sha == \$sha\)') {
+    Add-Fail "npm-publish poll must not require head_sha == GITHUB_SHA (main may have moved)"
+}
+
 # Dry-run the current tree (may or may not be releasable after this milestone).
 & (Join-Path $PSScriptRoot "release-needed.ps1") -DryRun | Out-Host
 & (Join-Path $PSScriptRoot "decide-release.ps1") | Out-Host

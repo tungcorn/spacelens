@@ -50,15 +50,54 @@ function Get-SpaceLensNextPatchVersion {
     }
 }
 
-function Get-SpaceLensCMakeVersion {
-    param([string]$RepoRoot = (Get-SpaceLensRepoRoot))
-    $text = Get-Content (Join-Path $RepoRoot "CMakeLists.txt") -Raw
-    if ($text -notmatch 'project\(\s*SpaceLens\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+function Get-SpaceLensCMakeVersionFromText {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    if ($Text -notmatch 'project\(\s*SpaceLens\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
         throw "CMake project VERSION not found"
     }
     $v = ConvertTo-SpaceLensVersion $Matches[1]
     if (-not $v) { throw "CMake version is not X.Y.Z" }
     return $v
+}
+
+function Get-SpaceLensCMakeVersion {
+    param([string]$RepoRoot = (Get-SpaceLensRepoRoot))
+    return (Get-SpaceLensCMakeVersionFromText (Get-Content (Join-Path $RepoRoot "CMakeLists.txt") -Raw))
+}
+
+function Get-SpaceLensTagPeelSha {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [string]$RepoRoot = (Get-SpaceLensRepoRoot)
+    )
+    $sha = & git -C $RepoRoot rev-parse -q --verify "${Tag}^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not "$sha".Trim()) {
+        return $null
+    }
+    return $sha.Trim()
+}
+
+function Test-SpaceLensAutoPublishCommit {
+    param(
+        [Parameter(Mandatory = $true)]$CMakeVersion,
+        [Parameter(Mandatory = $true)]$LatestStableVersion,
+        $ParentCMakeVersion = $null,
+        [string]$HeadSha = "",
+        [string]$TagPeelSha = ""
+    )
+    $cmake = if ($CMakeVersion -is [string]) { ConvertTo-SpaceLensVersion $CMakeVersion } else { $CMakeVersion }
+    $latest = if ($LatestStableVersion -is [string]) { ConvertTo-SpaceLensVersion $LatestStableVersion } else { $LatestStableVersion }
+    if (-not $cmake -or -not $latest) { return $false }
+    $next = Get-SpaceLensNextPatchVersion $latest
+    if ($cmake.Text -ne $next.Text) { return $false }
+
+    $parent = $null
+    if ($ParentCMakeVersion) {
+        $parent = if ($ParentCMakeVersion -is [string]) { ConvertTo-SpaceLensVersion $ParentCMakeVersion } else { $ParentCMakeVersion }
+    }
+    $isBump = $parent -and ($parent.Text -ne $cmake.Text)
+    $tagHere = [bool]($TagPeelSha -and $HeadSha -and ($TagPeelSha -eq $HeadSha))
+    return [bool]($isBump -or $tagHere)
 }
 
 function Get-SpaceLensNpmVersion {
