@@ -6,6 +6,8 @@
 #include "core/index/IndexRefresh.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -22,7 +24,9 @@ enum class AnalysisError {
     IndexNotFound,
     ScanFailed,
     Cancelled,
-    InvalidArgument
+    InvalidArgument,
+    IndexTooOld,
+    IndexFreshnessUnknown
 };
 
 [[nodiscard]] const char* toString(AnalysisError error) noexcept;
@@ -35,6 +39,8 @@ struct OverviewRequest {
     std::wstring root;
     bool fromIndex = false;
     std::size_t limit = kDefaultOverviewLimit;
+    FileTimeTicks nowTicks = 0;
+    std::optional<std::uint64_t> maxIndexAgeSeconds;
 };
 
 struct OverviewAnalysis {
@@ -49,6 +55,7 @@ struct OpportunityRequest {
     std::wstring root;
     bool fromIndex = false;
     OpportunityQuery query{};
+    std::optional<std::uint64_t> maxIndexAgeSeconds;
 };
 
 struct OpportunityAnalysis {

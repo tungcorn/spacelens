@@ -167,10 +167,19 @@ ToolResult callOverview(const JsonValue& args, std::stop_token stop)
                     spacelens::kMaxOverviewLimit, limit, error)) {
         return error;
     }
+    std::optional<std::uint64_t> maxAge;
+    if (!parseOptionalUint(args, "max_index_age_seconds", maxAge, error)) {
+        return error;
+    }
+    if (maxAge.has_value() && !fromIndex) {
+        return invalidArgs(
+            "max_index_age_seconds requires source=persistent_index");
+    }
     spacelens::OverviewRequest request;
     request.root = *path;
     request.fromIndex = fromIndex;
     request.limit = limit;
+    request.maxIndexAgeSeconds = maxAge;
     if (stop.stop_requested()) {
         ToolResult cancelled;
         cancelled.cancelled = true;
@@ -229,6 +238,15 @@ ToolResult callOpportunities(const JsonValue& args, std::stop_token stop)
     if (const auto under = args.stringAt("under")) {
         request.query.pathPrefix = spacelens::wideFromUtf8(*under);
     }
+    std::optional<std::uint64_t> maxAge;
+    if (!parseOptionalUint(args, "max_index_age_seconds", maxAge, error)) {
+        return error;
+    }
+    if (maxAge.has_value() && !fromIndex) {
+        return invalidArgs(
+            "max_index_age_seconds requires source=persistent_index");
+    }
+    request.maxIndexAgeSeconds = maxAge;
     if (stop.stop_requested()) {
         ToolResult cancelled;
         cancelled.cancelled = true;
@@ -330,6 +348,10 @@ ToolResult callQuery(const JsonValue& args, std::stop_token stop)
         }
     }
     spec.sortDescending = true;
+    if (!parseOptionalUint(args, "max_index_age_seconds", spec.maxIndexAgeSeconds,
+                           error)) {
+        return error;
+    }
     if (stop.stop_requested()) {
         ToolResult cancelled;
         cancelled.cancelled = true;
@@ -417,6 +439,8 @@ void registerStorageTools(McpServer& server)
         props.set("source", stringEnum({"live_scan", "persistent_index"}));
         props.set("limit", integerSchema(1, static_cast<std::int64_t>(
                                                 spacelens::kMaxOverviewLimit)));
+        props.set("max_index_age_seconds",
+                  integerSchema(0, 3'155'760'000));
         tool.inputSchema = requiredPathSchema(std::move(props));
         tool.outputSchema = analysisOutputSchema();
         tool.annotations = readOnlyAnnotations();
@@ -440,6 +464,8 @@ void registerStorageTools(McpServer& server)
         props.set("older_than_days", integerSchema(0, 36500));
         props.set("classification", objectType("string"));
         props.set("under", objectType("string"));
+        props.set("max_index_age_seconds",
+                  integerSchema(0, 3'155'760'000));
         tool.inputSchema = requiredPathSchema(std::move(props));
         tool.outputSchema = analysisOutputSchema();
         tool.annotations = readOnlyAnnotations();
@@ -466,6 +492,8 @@ void registerStorageTools(McpServer& server)
                                       "classification", "candidate_strength"}));
         props.set("limit", integerSchema(1, static_cast<std::int64_t>(
                                                 spacelens::kMaxQueryLimit)));
+        props.set("max_index_age_seconds",
+                  integerSchema(0, 3'155'760'000));
         props.set("source", stringEnum({"persistent_index"}));
         JsonValue schema = objectType("object");
         schema.set("properties", std::move(props));

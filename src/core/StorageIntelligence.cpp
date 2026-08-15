@@ -1225,7 +1225,9 @@ std::string StorageOverviewReport::toJson() const
     if (source == EvidenceSource::PersistentIndex) {
         os << ",\"index\":{"
            << "\"age_ms\":" << jsonUInt(indexAgeMs) << ","
-           << "\"indexed_at\":" << jsonString(indexedAtIso) << "}";
+           << "\"indexed_at\":" << jsonString(indexedAtIso) << ","
+           << "\"freshness\":"
+           << indexFreshnessJsonObject(snapshot, ageDecision) << "}";
     }
     if (!error.empty()) {
         os << ",\"error\":" << jsonString(error);
@@ -1279,7 +1281,9 @@ std::string OpportunityReport::toJson() const
     if (source == EvidenceSource::PersistentIndex) {
         os << ",\"index\":{"
            << "\"age_ms\":" << jsonUInt(indexAgeMs) << ","
-           << "\"indexed_at\":" << jsonString(indexedAtIso) << "}";
+           << "\"indexed_at\":" << jsonString(indexedAtIso) << ","
+           << "\"freshness\":"
+           << indexFreshnessJsonObject(snapshot, ageDecision) << "}";
     }
     if (!error.empty()) {
         os << ",\"error\":" << jsonString(error);

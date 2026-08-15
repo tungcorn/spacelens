@@ -16,6 +16,7 @@
 #include "core/index/IndexPaths.hpp"
 #include "core/index/IndexQuery.hpp"
 #include "core/index/IndexRefresh.hpp"
+#include "core/index/IndexSnapshot.hpp"
 #include "core/index/IndexStore.hpp"
 #include "platform/windows/CleanupMetadataReader.hpp"
 #include "platform/windows/FileContentHasher.hpp"
@@ -706,8 +707,12 @@ ExitCode runIndexStatus(const ParsedArgs& args)
         } else {
             std::cout << "Root:      " << narrow(status.location.rootPath) << "\n"
                       << "DB:        " << narrow(status.location.dbPath) << "\n"
-                      << "Indexed:   " << status.root.indexedAtIso << "\n"
-                      << "Age:       " << status.age_ms << " ms\n"
+                      << "Indexed:   "
+                      << (status.snapshot.publishedAtUtc.empty()
+                              ? status.root.indexedAtIso
+                              : status.snapshot.publishedAtUtc)
+                      << "\n"
+                      << formatSnapshotAgeHuman(status.snapshot) << "\n"
                       << "Files:     " << status.root.fileCount << "\n"
                       << "Dirs:      " << status.root.dirCount << "\n"
                       << "Bytes:     "
@@ -983,6 +988,8 @@ ExitCode runQuery(const ParsedArgs& args)
         }
     }
     spec.limit = args.limit;
+    spec.nowTicks = nowFileTime();
+    spec.maxIndexAgeSeconds = args.maxIndexAgeSeconds;
     if (!args.under.empty()) {
         spec.pathPrefix = args.under;
     }
@@ -993,7 +1000,13 @@ ExitCode runQuery(const ParsedArgs& args)
         std::cout << spacelens::indexQueryToJson(result);
     } else {
         if (!result.ok) {
-            std::cerr << "query failed: " << result.error << "\n";
+            const std::string gateText =
+                formatIndexAgeGateError(result.ageDecision);
+            if (!gateText.empty()) {
+                std::cerr << gateText << "\n";
+            } else {
+                std::cerr << "query failed: " << result.error << "\n";
+            }
         } else {
             std::cout << "SIZE           PATH\n";
             for (const auto& h : result.hits) {
@@ -1008,8 +1021,8 @@ ExitCode runQuery(const ParsedArgs& args)
             }
             std::cerr << "source=persistent_index matched="
                       << result.matched_items
-                      << " returned=" << result.returned_items
-                      << " age_ms=" << result.age_ms << "\n";
+                      << " returned=" << result.returned_items << " "
+                      << formatSnapshotAgeHuman(result.snapshot) << "\n";
         }
     }
 
@@ -1072,7 +1085,7 @@ void printHumanOverview(const StorageOverviewReport& report)
               << "Total size:  " << SizeFormatter::format(report.logicalBytes)
               << "\n";
     if (report.source == EvidenceSource::PersistentIndex) {
-        std::cout << "Index age:   " << report.indexAgeMs << " ms\n";
+        std::cout << formatSnapshotAgeHuman(report.snapshot) << "\n";
     }
     std::cout << "\nLargest directories\n";
     printHumanTable([&] {
@@ -1110,6 +1123,9 @@ void printHumanOpportunities(const OpportunityReport& report)
               << SizeFormatter::format(report.uniqueReviewBytes)
               << (report.uniqueReviewEstimated ? " (estimated)" : "") << "\n"
               << "Planning only — not authorization to delete.\n";
+    if (report.source == EvidenceSource::PersistentIndex) {
+        std::cout << formatSnapshotAgeHuman(report.snapshot) << "\n";
+    }
     if (!report.groups.empty()) {
         std::cout << "\nGROUPS\n";
         for (const auto& g : report.groups) {
@@ -1161,9 +1177,16 @@ ExitCode runOverview(const ParsedArgs& args, std::stop_token stop)
     request.root = args.path;
     request.fromIndex = args.fromIndex;
     request.limit = args.limit;
+    request.nowTicks = nowFileTime();
+    request.maxIndexAgeSeconds = args.maxIndexAgeSeconds;
     const auto analysis = analyzeOverview(request, stop);
     if (args.json) {
         std::cout << analysis.report.toJson();
+    } else if (!analysis.report.ok &&
+               (analysis.error == AnalysisError::IndexTooOld ||
+                analysis.error == AnalysisError::IndexFreshnessUnknown)) {
+        std::cerr << formatIndexAgeGateError(analysis.report.ageDecision)
+                  << "\n";
     } else if (!analysis.report.ok &&
                analysis.error == AnalysisError::IndexNotFound) {
         std::cerr << "overview: " << analysis.report.error << "\n";
@@ -1176,7 +1199,9 @@ ExitCode runOverview(const ParsedArgs& args, std::stop_token stop)
     if (analysis.error == AnalysisError::IndexNotFound) {
         return ExitCode::IndexNotFound;
     }
-    if (analysis.error == AnalysisError::ScanFailed) {
+    if (analysis.error == AnalysisError::ScanFailed ||
+        analysis.error == AnalysisError::IndexTooOld ||
+        analysis.error == AnalysisError::IndexFreshnessUnknown) {
         return ExitCode::ScanFailed;
     }
     if (analysis.error == AnalysisError::Cancelled) {
@@ -1212,9 +1237,15 @@ ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
         }
     }
     request.query.pathPrefix = args.under;
+    request.maxIndexAgeSeconds = args.maxIndexAgeSeconds;
     const auto analysis = analyzeOpportunities(request, stop);
     if (args.json) {
         std::cout << analysis.report.toJson();
+    } else if (!analysis.report.ok &&
+               (analysis.error == AnalysisError::IndexTooOld ||
+                analysis.error == AnalysisError::IndexFreshnessUnknown)) {
+        std::cerr << formatIndexAgeGateError(analysis.report.ageDecision)
+                  << "\n";
     } else if (!analysis.report.ok &&
                (analysis.error == AnalysisError::IndexNotFound ||
                 (analysis.error == AnalysisError::ScanFailed && args.fromIndex))) {
@@ -1225,7 +1256,9 @@ ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
     if (analysis.error == AnalysisError::IndexNotFound) {
         return ExitCode::IndexNotFound;
     }
-    if (analysis.error == AnalysisError::ScanFailed) {
+    if (analysis.error == AnalysisError::ScanFailed ||
+        analysis.error == AnalysisError::IndexTooOld ||
+        analysis.error == AnalysisError::IndexFreshnessUnknown) {
         return ExitCode::ScanFailed;
     }
     if (analysis.error == AnalysisError::Cancelled) {

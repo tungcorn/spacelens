@@ -6,6 +6,7 @@
 #include "core/ScanTypes.hpp"
 #include "core/Types.hpp"
 #include "core/index/IndexQuery.hpp"
+#include "core/index/IndexSnapshot.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -110,6 +111,8 @@ struct StorageOverviewReport {
     bool truncatedFiles = false;
     std::uint64_t indexAgeMs = 0;
     std::string indexedAtIso;
+    IndexSnapshotEvidence snapshot{};
+    IndexAgeDecision ageDecision{};
     /// Compact live-scan category totals. Empty for indexed overview (no extra
     /// regenerable fetch) so overview does not become a second opportunities dump.
     std::vector<OpportunityGroup> opportunitySummary;
@@ -265,6 +268,8 @@ struct OpportunityReport {
     std::uint64_t elapsedMs = 0;
     std::uint64_t indexAgeMs = 0;
     std::string indexedAtIso;
+    IndexSnapshotEvidence snapshot{};
+    IndexAgeDecision ageDecision{};
     std::string rankingPolicy = kOpportunityRankPolicy;
     std::vector<OpportunityGroup> groups;
     std::vector<OpportunityItem> opportunities;

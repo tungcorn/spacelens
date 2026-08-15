@@ -80,9 +80,9 @@ std::string helpText()
         "  spacelens index status <path> [--json]\n"
         "  spacelens index list [--json]\n"
         "  spacelens index refresh <path> [--json]\n"
-        "  spacelens query <path> (--files|--dirs) [filters] [--under P] [--limit N] [--json]\n"
-        "  spacelens overview <path> [--from-index] [--limit N] [--json]\n"
-        "  spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D] [--classification C] [--under P] [--limit N] [--json]\n"
+        "  spacelens query <path> (--files|--dirs) [filters] [--under P] [--limit N] [--max-index-age-seconds N] [--json]\n"
+        "  spacelens overview <path> [--from-index] [--limit N] [--max-index-age-seconds N] [--json]\n"
+        "  spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D] [--classification C] [--under P] [--limit N] [--max-index-age-seconds N] [--json]\n"
         "  spacelens duplicates <path> [--min-size S] [--json]\n"
         "  spacelens capabilities [--json]\n"
         "  spacelens help\n"
@@ -101,6 +101,8 @@ std::string helpText()
         "  --files         Files mode (top/query)\n"
         "  --dirs          Directories mode (top/query)\n"
         "  --from-index    Use a published index (overview/opportunities)\n"
+        "  --max-index-age-seconds N  Fail if the published snapshot is older than N seconds\n"
+        "                  (query / overview --from-index / opportunities --from-index)\n"
         "  --limit N       Number of results (default 20; overview default 10)\n"
         "  -h, --help      Show this help\n"
         "\n"
@@ -288,6 +290,27 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             out.fromIndex = true;
             continue;
         }
+        if (arg == L"--max-index-age-seconds") {
+            if (out.command != Command::Query &&
+                out.command != Command::Overview &&
+                out.command != Command::Opportunities) {
+                out.error =
+                    "--max-index-age-seconds is only valid with query, "
+                    "overview --from-index, or opportunities --from-index.";
+                return out;
+            }
+            if (i + 1 >= argc) {
+                out.error = "--max-index-age-seconds requires a value.";
+                return out;
+            }
+            const auto seconds = parseDays(argv[++i]);
+            if (!seconds) {
+                out.error = "Invalid --max-index-age-seconds value.";
+                return out;
+            }
+            out.maxIndexAgeSeconds = *seconds;
+            continue;
+        }
         if (arg == L"--under") {
             if (out.command != Command::Query &&
                 out.command != Command::Opportunities) {
@@ -348,6 +371,15 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             out.error = "Specify --files or --dirs.";
             return out;
         }
+    }
+    if (out.maxIndexAgeSeconds.has_value() &&
+        (out.command == Command::Overview ||
+         out.command == Command::Opportunities) &&
+        !out.fromIndex) {
+        out.error =
+            "--max-index-age-seconds requires --from-index on overview/"
+            "opportunities.";
+        return out;
     }
 
     return out;

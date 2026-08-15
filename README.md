@@ -102,7 +102,9 @@ commands until they resolve from the official WinGet source.
   exact top-N indexed `opportunities` (`opportunity_rank_v2` in SQL;
   `--limit` is not an internal prefetch window) and exact overlap-aware
   `unique_review_bytes` (logical review bytes on published index
-  evidence — not guaranteed freed disk space)
+  evidence — not guaranteed freed disk space). Exact is not live:
+  indexed JSON reports published-snapshot `index.freshness`; optional
+  `--max-index-age-seconds` fails closed
 - Optional USN-based incremental refresh (`index refresh`) — read-only journal
   access; full rebuild required on discontinuity or access denied
 - Read-only CLI with human and machine-readable (`--json`) output for

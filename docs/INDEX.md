@@ -195,7 +195,31 @@ therefore not independently additive across categories.
 `unique_review_bytes` is exact for the **published index evidence**, not
 a guaranteed freed-space figure. Sparse files, compression, hardlinks,
 allocation units, and Recycle Bin behavior can make live disk change
-differ. A stale index is still reported exactly as stored.
+differ. Exact is not live. A stale index is still reported exactly as
+stored.
+
+### Snapshot freshness (Honesty V1)
+
+Indexed results report the age of the **latest successfully published
+generation**, not `index.db` mtime and not a live-filesystem probe.
+
+- Published timestamp = `refresh_checkpoint.last_refresh_at_ticks` when
+  non-zero, otherwise `roots.indexed_at`. Incremental refresh keeps
+  `roots.indexed_at` at the last full build and only advances the
+  checkpoint after a successful commit. A failed refresh does not move
+  the published timestamp.
+- `index.age_ms` / `index.indexed_at` are derived from that published
+  snapshot. Additive `index.freshness` names the basis
+  (`published_snapshot`), `age_state` (`known` / `unknown` /
+  `clock_skew`), `publish_kind`, and `age_seconds` when known. There is
+  no `fresh: true`.
+- Optional `--max-index-age-seconds N` / MCP `max_index_age_seconds`
+  fails closed **before** Query A/B / top-N: `age <= N` is allowed;
+  older, unknown, or clock-skew is rejected (`index_too_old` or
+  `index_freshness_unknown`, exit **4**). No default policy. No
+  auto-refresh. No live fallback. `index status` reports honest age and
+  never applies the gate. `duplicates` is exempt (index candidates, then
+  live hash verify).
 
 `unique_review_estimated` is true only when checked byte addition
 overflows `uint64` (the public value saturates at `2^64-1` and is not
@@ -346,7 +370,7 @@ Freshness labels (display):
 | 0 | Success (`index`, `query`, successful refresh / already current) |
 | 2 | Usage |
 | 3 | Path inaccessible |
-| 4 | Index build / refresh failed |
+| 4 | Index build / refresh failed, or max-age gate (`index_too_old` / `index_freshness_unknown`) |
 | 5 | Cancelled |
 | 6 | Index not found (`query`, `duplicates`, `--from-index`, refresh) |
 

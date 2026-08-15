@@ -66,6 +66,8 @@ struct ParsedArgs {
     std::wstring strength;  // CandidateStrength name for query
     std::wstring under;     // query path prefix (descendants of this path)
     bool fromIndex = false;
+    /// Optional published-snapshot max age. Empty = no policy.
+    std::optional<std::uint64_t> maxIndexAgeSeconds;
     std::string error;      // non-empty => usage error
 };
 

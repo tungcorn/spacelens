@@ -286,6 +286,9 @@ try {
     Assert-True ($idxOverview.Json.source -eq "persistent_index") "indexed overview source"
     Assert-True ($idxOverview.Json.ok -eq $true) "indexed overview not ok"
     Assert-True (Has-PathNeedle $idxOverview.Json.largest_files "recent-vm.iso") "indexed overview missed VM"
+    Assert-True ($null -ne $idxOverview.Json.index.freshness) "indexed overview missing index.freshness"
+    Assert-True ($idxOverview.Json.index.freshness.basis -eq "published_snapshot") "overview freshness basis"
+    Assert-True ($idxOverview.Raw -notmatch '"fresh"\s*:') "indexed overview leaked bare fresh"
 
     $idxOpp = Invoke-CliJson -Arguments @("opportunities", $fixture, "--from-index", "--json")
     Assert-True ($idxOpp.Json.source -eq "persistent_index") "indexed opportunities source"
@@ -296,6 +299,9 @@ try {
     $query = Invoke-CliJson -Arguments @("query", $fixture, "--files", "--under", $under, "--limit", "20", "--json")
     Assert-True ($query.Json.source -eq "persistent_index") "query source"
     Assert-True ($query.Json.ok -eq $true) "query --under failed"
+    Assert-True ($null -ne $query.Json.index.freshness) "query missing index.freshness"
+    Assert-True ($query.Json.index.freshness.basis -eq "published_snapshot") "query freshness basis"
+    Assert-True ($query.Raw -notmatch '"fresh"\s*:') "query leaked bare fresh"
     Assert-True ($query.Json.returned_items -gt 0) "query --under returned no files"
     foreach ($hit in @($query.Json.results)) {
         Assert-True ($hit.path -like "$under*") "query --under leaked $($hit.path)"
@@ -334,6 +340,29 @@ try {
     Write-Host ("E duplicates: redundant_logical={0} hardlink_aliases={1}" -f `
             $dups.Json.summary.potential_redundant_logical_bytes,
             $dups.Json.summary.hardlink_alias_paths)
+
+    $null = & $exe overview $fixture --max-index-age-seconds 3600 --json 2>&1
+    Assert-True ($LASTEXITCODE -eq 2) "max-age without --from-index must be usage"
+
+    $freshOk = Invoke-CliJson -Arguments @(
+        "overview", $fixture, "--from-index", "--max-index-age-seconds", "86400", "--json"
+    )
+    Assert-True ($freshOk.Json.ok -eq $true) "generous max-age should pass"
+    Assert-True ($freshOk.Json.index.freshness.max_age_satisfied -eq $true) "max_age_satisfied"
+
+    $ageSec = $idxOverview.Json.index.freshness.age_seconds
+    if ($null -ne $ageSec -and [int64]$ageSec -gt 0) {
+        $stale = Invoke-CliJson -Arguments @(
+            "overview", $fixture, "--from-index", "--max-index-age-seconds", "0", "--json"
+        ) -AcceptExit @(4)
+        Assert-True ($stale.Code -eq 4) "too-old must be exit 4"
+        Assert-True ($stale.Json.ok -eq $false) "too-old ok flag"
+        Assert-True ($stale.Json.error -eq "index_too_old") "too-old error code"
+        Assert-True ($stale.Json.index.freshness.max_age_satisfied -eq $false) "too-old max_age_satisfied"
+        Assert-True ($stale.Raw -match "No refresh was performed" -or
+                     $stale.Json.error -eq "index_too_old") "too-old must not refresh"
+    }
+    Write-Host "H freshness: index.freshness present, max-age fail-closed"
 
     # --- G: delete unavailable ---
     $deleteOut = & $exe delete $fixture 2>&1 | Out-String

@@ -220,6 +220,14 @@ $env:SPACELENS_TEST_ONLY = "IndexedIntel_100k"
 rows under an isolated data root. Incremental USN timings are unchanged
 (no schema/index change).
 
+## Indexed Freshness Honesty V1 (2026-08-15)
+
+Optional max-age is evaluated on the same `BEGIN DEFERRED` read
+connection **before** Query A/B / top-N SQL. There is no auto-refresh,
+no live fallback, and no extra filesystem probe. Age math is one shared
+evaluator (`IndexSnapshot`); CLI/MCP/GUI do not reimplement it.
+`index.db` mtime is not used.
+
 ## Exact Indexed Opportunity Aggregates V1 (2026-08-15)
 
 Exact overlap-aware `unique_review_bytes` for the whole matching set

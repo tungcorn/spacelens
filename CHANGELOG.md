@@ -5,6 +5,21 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+### Added
+
+- Indexed Freshness Honesty V1: indexed `overview` / `opportunities` /
+  `query` / `index status` report published-snapshot age via additive
+  `index.freshness` (`basis=published_snapshot`, `age_state`,
+  `publish_kind`, `age_seconds`). Incremental age uses
+  `refresh_checkpoint.last_refresh_at_ticks` (full-build
+  `roots.indexed_at` is not rewritten). Optional
+  `--max-index-age-seconds` / MCP `max_index_age_seconds` fails closed
+  before Query A/B (`index_too_old` / `index_freshness_unknown`, exit
+  4). No default policy, no auto-refresh, no live fallback, no seventh
+  MCP tool, no `fresh: true`. `index status` never applies the gate.
+  `duplicates` is exempt. Schema stays `index_schema_version: 2` and
+  JSON `schema_version: 1`. Version stays 0.1.3.
+
 ### Changed
 
 - Exact Indexed Opportunity Aggregates V1: indexed `opportunities` /

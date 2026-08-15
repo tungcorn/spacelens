@@ -4,6 +4,7 @@
 #include "core/Json.hpp"
 #include "core/ScanEngine.hpp"
 #include "core/index/IndexPaths.hpp"
+#include "core/index/IndexSnapshot.hpp"
 #include "platform/windows/CleanupMetadataReader.hpp"
 #include "platform/windows/FileContentHasher.hpp"
 #include "platform/windows/WindowsFileEnumerator.hpp"
@@ -31,7 +32,9 @@ constexpr int kSchemaVersion = 1;
 IndexQueryResult queryKind(const std::wstring& root, bool files, bool dirs,
                            std::size_t limit, std::optional<ByteSize> minSize,
                            std::optional<std::uint64_t> olderThan,
-                           const std::vector<std::string>& classifications)
+                           const std::vector<std::string>& classifications,
+                           FileTimeTicks nowTicks = 0,
+                           std::optional<std::uint64_t> maxIndexAgeSeconds = {})
 {
     IndexQuerySpec spec;
     spec.includeFiles = files;
@@ -42,7 +45,44 @@ IndexQueryResult queryKind(const std::wstring& root, bool files, bool dirs,
     spec.classifications = classifications;
     spec.sortBy = IndexSortKey::Size;
     spec.sortDescending = true;
+    spec.nowTicks = nowTicks;
+    spec.maxIndexAgeSeconds = maxIndexAgeSeconds;
     return queryIndex(root, spec);
+}
+
+AnalysisError analysisErrorFromIndex(const std::string& error)
+{
+    if (error == "index_not_found") {
+        return AnalysisError::IndexNotFound;
+    }
+    if (error == "cancelled") {
+        return AnalysisError::Cancelled;
+    }
+    if (error == "index_too_old") {
+        return AnalysisError::IndexTooOld;
+    }
+    if (error == "index_freshness_unknown") {
+        return AnalysisError::IndexFreshnessUnknown;
+    }
+    return AnalysisError::ScanFailed;
+}
+
+void applySnapshotToOverview(StorageOverviewReport& report,
+                             const IndexQueryResult& status)
+{
+    report.snapshot = status.snapshot;
+    report.ageDecision = status.ageDecision;
+    report.indexAgeMs = status.snapshot.ageMs;
+    report.indexedAtIso = status.snapshot.publishedAtUtc;
+}
+
+void applySnapshotToOpportunities(OpportunityReport& report,
+                                  const IndexedOpportunityFetch& fetched)
+{
+    report.snapshot = fetched.snapshot;
+    report.ageDecision = fetched.ageDecision;
+    report.indexAgeMs = fetched.snapshot.ageMs;
+    report.indexedAtIso = fetched.snapshot.publishedAtUtc;
 }
 
 ScanResult scanRoot(const std::wstring& path, std::size_t topFiles,
@@ -83,6 +123,10 @@ const char* toString(AnalysisError error) noexcept
         return "cancelled";
     case AnalysisError::InvalidArgument:
         return "invalid_argument";
+    case AnalysisError::IndexTooOld:
+        return "index_too_old";
+    case AnalysisError::IndexFreshnessUnknown:
+        return "index_freshness_unknown";
     }
     return "unknown";
 }
@@ -143,30 +187,67 @@ OverviewAnalysis analyzeOverview(const OverviewRequest& request,
     }
 
     if (request.fromIndex) {
-        const auto status = indexStatus(request.root);
+        const FileTimeTicks now =
+            request.nowTicks != 0 ? request.nowTicks : currentFileTime();
+        const auto status = indexStatus(request.root, now);
         if (!status.ok) {
             out.report.ok = false;
             out.report.source = EvidenceSource::PersistentIndex;
             out.report.state = "failed";
             out.report.error =
                 status.error.empty() ? "index_not_found" : status.error;
-            out.error = status.error == "index_not_found"
-                            ? AnalysisError::IndexNotFound
-                            : AnalysisError::ScanFailed;
+            out.error = analysisErrorFromIndex(out.report.error);
+            applySnapshotToOverview(out.report, status);
             return out;
         }
-        const auto dirs =
-            queryKind(request.root, false, true, limit + 2, std::nullopt,
-                      std::nullopt, {});
-        const auto files =
-            queryKind(request.root, true, false, limit + 1, std::nullopt,
-                      std::nullopt, {});
+        applySnapshotToOverview(out.report, status);
+        const auto gate =
+            evaluateIndexAgeGate(status.snapshot, request.maxIndexAgeSeconds);
+        out.report.ageDecision = gate;
+        if (gate.result == IndexAgeGateResult::TooOld ||
+            gate.result == IndexAgeGateResult::FreshnessUnknown) {
+            out.report.ok = false;
+            out.report.source = EvidenceSource::PersistentIndex;
+            out.report.state = "failed";
+            out.report.error = gate.result == IndexAgeGateResult::TooOld
+                                   ? "index_too_old"
+                                   : "index_freshness_unknown";
+            out.error = analysisErrorFromIndex(out.report.error);
+            return out;
+        }
+        const auto dirs = queryKind(
+            request.root, false, true, limit + 2, std::nullopt, std::nullopt, {},
+            now, request.maxIndexAgeSeconds);
+        if (!dirs.ok) {
+            out.report.ok = false;
+            out.report.source = EvidenceSource::PersistentIndex;
+            out.report.state = "failed";
+            out.report.error = dirs.error.empty() ? "index_query_failed" : dirs.error;
+            out.error = analysisErrorFromIndex(out.report.error);
+            applySnapshotToOverview(out.report, dirs);
+            return out;
+        }
+        const auto files = queryKind(
+            request.root, true, false, limit + 1, std::nullopt, std::nullopt, {},
+            now, request.maxIndexAgeSeconds);
+        if (!files.ok) {
+            out.report.ok = false;
+            out.report.source = EvidenceSource::PersistentIndex;
+            out.report.state = "failed";
+            out.report.error =
+                files.error.empty() ? "index_query_failed" : files.error;
+            out.error = analysisErrorFromIndex(out.report.error);
+            applySnapshotToOverview(out.report, files);
+            return out;
+        }
         out.report = buildIndexedOverview(
             status.location.rootPath.empty() ? request.root
                                              : status.location.rootPath,
             status.root.logicalBytes, status.root.fileCount,
-            status.root.dirCount, dirs.hits, files.hits, status.age_ms,
-            status.root.indexedAtIso, limit);
+            status.root.dirCount, dirs.hits, files.hits, status.snapshot.ageMs,
+            status.snapshot.publishedAtUtc, limit);
+        applySnapshotToOverview(out.report, status);
+        out.report.ageDecision = gate;
         return out;
     }
 
@@ -208,16 +289,36 @@ OpportunityAnalysis analyzeOpportunities(const OpportunityRequest& request,
     }
 
     if (request.fromIndex) {
-        const auto status = indexStatus(request.root);
+        const auto status = indexStatus(request.root, query.nowTicks);
         if (!status.ok) {
             out.report.ok = false;
             out.report.source = EvidenceSource::PersistentIndex;
             out.report.state = "failed";
             out.report.error =
                 status.error.empty() ? "index_not_found" : status.error;
-            out.error = status.error == "index_not_found"
-                            ? AnalysisError::IndexNotFound
-                            : AnalysisError::ScanFailed;
+            out.error = analysisErrorFromIndex(out.report.error);
+            out.report.snapshot = status.snapshot;
+            out.report.ageDecision = status.ageDecision;
+            out.report.indexAgeMs = status.snapshot.ageMs;
+            out.report.indexedAtIso = status.snapshot.publishedAtUtc;
+            return out;
+        }
+
+        out.report.snapshot = status.snapshot;
+        out.report.indexAgeMs = status.snapshot.ageMs;
+        out.report.indexedAtIso = status.snapshot.publishedAtUtc;
+        const auto gate =
+            evaluateIndexAgeGate(status.snapshot, request.maxIndexAgeSeconds);
+        out.report.ageDecision = gate;
+        if (gate.result == IndexAgeGateResult::TooOld ||
+            gate.result == IndexAgeGateResult::FreshnessUnknown) {
+            out.report.ok = false;
+            out.report.source = EvidenceSource::PersistentIndex;
+            out.report.state = "failed";
+            out.report.error = gate.result == IndexAgeGateResult::TooOld
+                                   ? "index_too_old"
+                                   : "index_freshness_unknown";
+            out.error = analysisErrorFromIndex(out.report.error);
             return out;
         }
 
@@ -239,6 +340,7 @@ OpportunityAnalysis analyzeOpportunities(const OpportunityRequest& request,
         spec.excludePath = status.location.rootPath.empty() ? request.root
                                                             : status.location.rootPath;
         spec.aggregateLimit = kIndexedOpportunityAggregateLimit;
+        spec.maxIndexAgeSeconds = request.maxIndexAgeSeconds;
         if (query.categoryOnly) {
             spec.classification = toString(*query.categoryOnly);
         }
@@ -250,13 +352,8 @@ OpportunityAnalysis analyzeOpportunities(const OpportunityRequest& request,
             out.report.state = fetched.error == "cancelled" ? "cancelled" : "failed";
             out.report.error =
                 fetched.error.empty() ? "index_query_failed" : fetched.error;
-            if (fetched.error == "cancelled") {
-                out.error = AnalysisError::Cancelled;
-            } else if (fetched.error == "index_not_found") {
-                out.error = AnalysisError::IndexNotFound;
-            } else {
-                out.error = AnalysisError::ScanFailed;
-            }
+            out.error = analysisErrorFromIndex(out.report.error);
+            applySnapshotToOpportunities(out.report, fetched);
             return out;
         }
 
@@ -286,8 +383,9 @@ OpportunityAnalysis analyzeOpportunities(const OpportunityRequest& request,
             status.location.rootPath.empty() ? request.root
                                              : status.location.rootPath,
             status.root.logicalBytes, status.root.fileCount,
-            status.root.dirCount, fetched.topHits, query, status.age_ms,
-            status.root.indexedAtIso, extras);
+            status.root.dirCount, fetched.topHits, query, fetched.snapshot.ageMs,
+            fetched.snapshot.publishedAtUtc, extras);
+        applySnapshotToOpportunities(out.report, fetched);
         out.report.elapsedMs = fetched.query_elapsed_ms;
         return out;
     }
@@ -363,8 +461,14 @@ std::string indexQueryToJson(const IndexQueryResult& result)
        << "\"root\":" << jsonString(result.location.rootPath) << ","
        << "\"index\":{"
        << "\"path\":" << jsonString(result.location.dbPath) << ","
-       << "\"indexed_at\":" << jsonString(result.root.indexedAtIso) << ","
+       << "\"indexed_at\":"
+       << jsonString(result.snapshot.publishedAtUtc.empty()
+                         ? result.root.indexedAtIso
+                         : result.snapshot.publishedAtUtc)
+       << ","
        << "\"age_ms\":" << jsonUInt(result.age_ms) << ","
+       << "\"freshness\":"
+       << indexFreshnessJsonObject(result.snapshot, result.ageDecision) << ","
        << "\"index_schema_version\":" << kIndexSchemaVersion << "},"
        << "\"matched_items\":" << jsonUInt(result.matched_items) << ","
        << "\"returned_items\":" << jsonUInt(result.returned_items) << ","
@@ -409,10 +513,20 @@ std::string indexStatusToJson(const IndexQueryResult& status,
        << "\"index\":{"
        << "\"path\":" << jsonString(status.location.dbPath) << ","
        << "\"exists\":" << jsonBool(indexDatabaseExists(status.location)) << ","
-       << "\"indexed_at\":" << jsonString(status.root.indexedAtIso) << ","
-       << "\"full_indexed_at\":" << jsonString(status.root.indexedAtIso) << ","
+       << "\"indexed_at\":"
+       << jsonString(status.snapshot.publishedAtUtc.empty()
+                         ? status.root.indexedAtIso
+                         : status.snapshot.publishedAtUtc)
+       << ","
+       << "\"full_indexed_at\":"
+       << jsonString(status.snapshot.fullIndexedAtUtc.empty()
+                         ? status.root.indexedAtIso
+                         : status.snapshot.fullIndexedAtUtc)
+       << ","
        << "\"age_ms\":" << jsonUInt(status.age_ms) << ","
        << "\"snapshot_age_ms\":" << jsonUInt(status.age_ms) << ","
+       << "\"freshness\":"
+       << indexFreshnessJsonObject(status.snapshot, status.ageDecision) << ","
        << "\"file_count\":" << jsonUInt(status.root.fileCount) << ","
        << "\"directory_count\":" << jsonUInt(status.root.dirCount) << ","
        << "\"logical_bytes\":" << jsonUInt(status.root.logicalBytes) << ","

@@ -129,3 +129,30 @@ SPACELENS_TEST(CliArgs_overview_and_opportunities)
     auto underScan = parse({L"spacelens", L"scan", L"D:\\", L"--under", L"D:\\x"});
     SPACELENS_REQUIRE(!underScan.error.empty());
 }
+
+SPACELENS_TEST(CliArgs_max_index_age_seconds)
+{
+    auto q = parse({L"spacelens", L"query", L"D:\\data", L"--files",
+                    L"--max-index-age-seconds", L"3600"});
+    SPACELENS_REQUIRE(q.error.empty());
+    SPACELENS_REQUIRE(q.maxIndexAgeSeconds.has_value());
+    SPACELENS_REQUIRE_EQ(*q.maxIndexAgeSeconds, 3600ULL);
+
+    auto o = parse({L"spacelens", L"overview", L"D:\\data", L"--from-index",
+                    L"--max-index-age-seconds", L"10"});
+    SPACELENS_REQUIRE(o.error.empty());
+    SPACELENS_REQUIRE(o.fromIndex);
+    SPACELENS_REQUIRE(o.maxIndexAgeSeconds.has_value());
+
+    auto live = parse({L"spacelens", L"overview", L"D:\\data",
+                       L"--max-index-age-seconds", L"10"});
+    SPACELENS_REQUIRE(!live.error.empty());
+
+    auto dups = parse({L"spacelens", L"duplicates", L"D:\\data",
+                       L"--max-index-age-seconds", L"10"});
+    SPACELENS_REQUIRE(!dups.error.empty());
+
+    auto fresh = parse({L"spacelens", L"query", L"D:\\data", L"--files",
+                        L"--fresh"});
+    SPACELENS_REQUIRE(!fresh.error.empty());
+}

@@ -4,6 +4,7 @@
 #include "core/FileTime.hpp"
 #include "core/Types.hpp"
 #include "core/index/IndexPaths.hpp"
+#include "core/index/IndexSnapshot.hpp"
 #include "core/index/IndexStore.hpp"
 
 #include <cstdint>
@@ -61,6 +62,8 @@ struct IndexQuerySpec {
     bool sortDescending = true;
     std::size_t limit = 20;
     FileTimeTicks nowTicks = 0;  // for age filters
+    /// Optional fail-closed published-snapshot age. Empty = no policy.
+    std::optional<std::uint64_t> maxIndexAgeSeconds;
 };
 
 struct IndexHit {
@@ -90,6 +93,8 @@ struct IndexQueryResult {
     std::uint64_t age_ms = 0;
     /// Wall-clock query time inside queryIndex (open + SQL), milliseconds.
     std::uint64_t query_elapsed_ms = 0;
+    IndexSnapshotEvidence snapshot{};
+    IndexAgeDecision ageDecision{};
 };
 
 /// Query a published persistent index. Never falls back to a live scan.
@@ -112,6 +117,8 @@ struct IndexedOpportunitySpec {
     /// Test seam: treat the request as cancelled after this many streamed
     /// aggregate rows. 0 disables the seam.
     std::uint64_t cancelAfterStreamedRows = 0;
+    /// Optional fail-closed published-snapshot age. Empty = no policy.
+    std::optional<std::uint64_t> maxIndexAgeSeconds;
 };
 
 struct IndexedOpportunityFetch {
@@ -121,6 +128,8 @@ struct IndexedOpportunityFetch {
     IndexLocation location{};
     std::uint64_t age_ms = 0;
     std::uint64_t query_elapsed_ms = 0;
+    IndexSnapshotEvidence snapshot{};
+    IndexAgeDecision ageDecision{};
     std::vector<IndexHit> topHits;
     std::uint64_t matchedItems = 0;
     /// No longer populated. Exact aggregates stream; they do not materialize
@@ -153,8 +162,10 @@ struct IndexedOpportunityFetch {
     const std::wstring& rootPath, const IndexedOpportunitySpec& spec,
     std::stop_token stop = {});
 
-/// Read status for a root without running a query.
-[[nodiscard]] IndexQueryResult indexStatus(const std::wstring& rootPath);
+/// Read status for a root without running a query. Honest published age only;
+/// never applies a max-age gate.
+[[nodiscard]] IndexQueryResult indexStatus(const std::wstring& rootPath,
+                                           FileTimeTicks nowTicks = 0);
 
 /// Same-size regular-file candidate buckets. This is not duplicate proof.
 /// Directories, zero-length files, and indexed reparse files are excluded.

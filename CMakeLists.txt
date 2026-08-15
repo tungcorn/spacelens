@@ -113,6 +113,8 @@ add_library(spacelens_core STATIC
     src/core/index/IndexBuilder.cpp
     src/core/index/IndexQuery.hpp
     src/core/index/IndexQuery.cpp
+    src/core/index/IndexSnapshot.hpp
+    src/core/index/IndexSnapshot.cpp
     src/core/index/IndexRefresh.hpp
     src/core/index/IndexRefresh.cpp
     src/core/index/IndexCatalog.hpp

@@ -5,6 +5,7 @@
 #include "platform/windows/UsnJournal.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <stop_token>
 #include <string>
 
@@ -95,5 +96,8 @@ struct IndexRefreshResult {
 void writeRefreshCheckpointAfterFullBuild(IndexStore& store,
                                           const std::wstring& rootPath,
                                           std::uint64_t fullIndexedAtTicks);
+
+/// Read the persisted refresh checkpoint, if any. Missing/unreadable → nullopt.
+[[nodiscard]] std::optional<RefreshCheckpoint> readRefreshCheckpoint(SqliteDb& db);
 
 }  // namespace spacelens

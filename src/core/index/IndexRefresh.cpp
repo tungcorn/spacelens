@@ -122,7 +122,9 @@ void coalesce(std::unordered_map<std::uint64_t, CoalescedChange>& map,
     }
 }
 
-std::optional<RefreshCheckpoint> readCheckpoint(SqliteDb& db)
+}  // namespace
+
+std::optional<RefreshCheckpoint> readRefreshCheckpoint(SqliteDb& db)
 {
     try {
         SqliteStmt stmt(
@@ -153,6 +155,8 @@ std::optional<RefreshCheckpoint> readCheckpoint(SqliteDb& db)
         return std::nullopt;
     }
 }
+
+namespace {
 
 void upsertCheckpoint(SqliteDb& db, const RefreshCheckpoint& cp)
 {
@@ -856,7 +860,7 @@ IndexRefreshResult probeIncremental(const std::wstring& rootPath)
             return r;
         }
         r.root = *meta;
-        auto cp = readCheckpoint(store.db());
+        auto cp = readRefreshCheckpoint(store.db());
         if (cp) {
             r.checkpoint = *cp;
         }

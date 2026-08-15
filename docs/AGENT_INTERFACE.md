@@ -53,17 +53,25 @@ storage_query             { "path": "D:\\", "object_type": "directory",
 ```
 
 Prefer a published index when `index status` / `storage_index_status` shows
-an acceptable `age_ms` and `status`. Indexed commands take `--from-index`
-(overview/opportunities) or `source: persistent_index`. `query` /
-`storage_query` and `duplicates` / `storage_duplicates` are index-only.
-They never silently refresh.
+an acceptable `index.freshness` / `age_ms` and `status`. Exact is not
+live: `age_ms` is the published snapshot age (latest successful
+generation), not proof the filesystem is unchanged. Indexed commands
+take `--from-index` (overview/opportunities) or `source:
+persistent_index`. `query` / `storage_query` and `duplicates` /
+`storage_duplicates` are index-only. They never silently refresh.
+Optional `--max-index-age-seconds` / `max_index_age_seconds` fails
+closed (exit 4 / domain error) before top-N or aggregates. No default
+max-age. Do not invent `fresh: true`.
 
 ```powershell
 spacelens overview D:\ --from-index --json
 spacelens opportunities D:\ --from-index --json
+spacelens overview D:\ --from-index --max-index-age-seconds 3600 --json
 ```
 
-Missing index → exit code **6**. Do not treat indexed evidence as live
+Missing index → exit code **6**. Snapshot too old / freshness unknown →
+exit **4** (`index_too_old` / `index_freshness_unknown`); JSON still
+includes `index.freshness`. Do not treat indexed evidence as live
 filesystem truth.
 
 ## Five core questions

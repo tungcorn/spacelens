@@ -134,14 +134,17 @@ safety, reclaimability, and candidate strength.
 One live scan (or one published index) answering "what is consuming this root?"
 
 ```text
-spacelens overview <path> [--from-index] [--limit N] [--json]
+spacelens overview <path> [--from-index] [--limit N] [--max-index-age-seconds N] [--json]
 ```
 
 Default `--limit` is 10 per list. JSON includes `summary`, `largest_directories`,
 `largest_files`, scan/index provenance, and `source` (`live_scan` or
 `persistent_index`). Largest consumers are not reclaim recommendations.
 `--from-index` requires a published index (exit 6 if missing) and does not
-refresh it.
+refresh it. `--max-index-age-seconds` is valid only with `--from-index`
+and fails closed (exit 4) when the published snapshot is older than N
+seconds, unknown, or clock-skewed. There is no default max-age. JSON
+adds `index.freshness` (no `fresh: true`).
 
 ### `opportunities`
 
@@ -150,7 +153,8 @@ activity, and location-safety analysis. Not "safe to delete".
 
 ```text
 spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D]
-    [--limit N] [--classification CLASS] [--under PATH] [--json]
+    [--limit N] [--classification CLASS] [--under PATH]
+    [--max-index-age-seconds N] [--json]
 ```
 
 Default `--limit` is 20. Default `--min-size` is `1MB`. Default `--older-than`
@@ -173,7 +177,10 @@ window does not decide which candidates appear. Overlap-aware
 `unique_review_bytes` is streamed exactly for the matching set (no 50k
 ceiling). `unique_review_estimated` is true only on `uint64` overflow.
 The number is exact logical review bytes on published index evidence —
-not guaranteed freed disk space.
+not guaranteed freed disk space. Exact is not live: optional
+`--max-index-age-seconds` (requires `--from-index`) fails closed before
+the opportunity stream. `index.freshness` reports published-snapshot
+age.
 
 See [`docs/AGENT_INTERFACE.md`](AGENT_INTERFACE.md).
 
@@ -219,11 +226,16 @@ Runs a filtered query against a **published** index only. No live-scan fallback.
 ```text
 spacelens query <path> [--files|--dirs] [--min-size SIZE] [--ext EXT]
                      [--older-than DAYS] [--category CATEGORY]
-                     [--strength STRENGTH] [--under PATH] [--limit N] [--json]
+                     [--strength STRENGTH] [--under PATH] [--limit N]
+                     [--max-index-age-seconds N] [--json]
 ```
 
 Missing index → exit code **6** (`index_not_found`). Successful JSON includes
-`"source": "persistent_index"` and `index.age_ms`.
+`"source": "persistent_index"`, `index.age_ms`, and additive
+`index.freshness` (published snapshot; no `fresh: true`). Optional
+`--max-index-age-seconds N` fails closed (exit 4) before the SQL query
+when the snapshot is too old, unknown, or clock-skewed. No default
+max-age. `index status` reports honest age and does not take this flag.
 
 ### `duplicates`
 
@@ -265,6 +277,7 @@ scan or mutate the filesystem.
 | `--limit N` | Return no more than `N` results. |
 | `--under PATH` | `query` / `opportunities`: restrict to `PATH` and descendants. |
 | `--from-index` | `overview` / `opportunities`: use a published index (exit 6 if missing). |
+| `--max-index-age-seconds N` | `query` / `--from-index` overview / `--from-index` opportunities: fail closed if the published snapshot is older than N seconds (exit 4). No default. |
 | `--json` | Write machine-readable JSON to stdout. |
 
 Filter behavior is conservative. Filters do not override Protected or Sensitive
@@ -364,7 +377,7 @@ parent before acting.
 | 1 | Unexpected internal error |
 | 2 | Invalid arguments, unknown command, or unsupported option/filter |
 | 3 | Inaccessible or missing root path |
-| 4 | Scan or query failure |
+| 4 | Scan or query failure, including `index_too_old` / `index_freshness_unknown` |
 | 5 | Cancelled by Ctrl+C / stop request |
 | 6 | Published index not found (`query`, `duplicates`, `--from-index`) |
 

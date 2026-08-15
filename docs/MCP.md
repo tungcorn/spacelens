@@ -79,10 +79,13 @@ protocol versions, the six tool names, and `filesystem_mutation: false`.
 | `path` | yes | Absolute directory |
 | `source` | no | `live_scan` (default) or `persistent_index` |
 | `limit` | no | 1–100, default 10 |
+| `max_index_age_seconds` | no | Fail closed if the published snapshot is older than N seconds. Requires `source=persistent_index`. No default. |
 
 Same semantics as `spacelens overview --json`. Indexed source never
 auto-refreshes. Missing index is a domain error (`isError: true`), not a
-silent live fallback.
+silent live fallback. Indexed JSON includes additive `index.freshness`
+(published snapshot; no `fresh: true`). `live_scan` plus
+`max_index_age_seconds` is `invalidArgs`.
 
 ### `storage_opportunities`
 
@@ -95,6 +98,7 @@ silent live fallback.
 | `older_than_days` | no | Default 90 |
 | `classification` | no | Existing SpaceLens class name (same as CLI `--classification`). Unrecognized names match nothing. |
 | `under` | no | Subtree prefix (same as CLI `--under`) |
+| `max_index_age_seconds` | no | Fail closed if the published snapshot is older than N seconds. Requires `source=persistent_index`. No default. |
 
 Same inclusion and ranking as CLI `opportunities` (`ranking_policy`:
 `opportunity_rank_v2`). Indexed `source=persistent_index` retrieves the
@@ -126,6 +130,7 @@ Index-only. Never live-scans. Never refreshes.
 | `older_than_days` | no | |
 | `sort` | no | `size`, `name`, `last_write`, `classification`, `candidate_strength` |
 | `limit` | no | 1–200, default 20 |
+| `max_index_age_seconds` | no | Fail closed if the published snapshot is older than N seconds. No default. No auto-refresh. |
 | `source` | no | Only `persistent_index` is accepted |
 
 `source=live_scan` is rejected. Missing index is a domain error.
@@ -262,8 +267,12 @@ Safety / wire / CLI-parity gates (temp fixtures only):
 
 Every analysis document reports `source: live_scan` or
 `source: persistent_index`. Indexed evidence is a snapshot, not live
-filesystem truth. `--from-index` / `source=persistent_index` never
-refreshes. Query/status/duplicates open a current-schema index
+filesystem truth. Exact top-N / `unique_review_bytes` are exact for the
+published snapshot, not live. `--from-index` / `source=persistent_index`
+never refreshes. Optional `max_index_age_seconds` fails closed before
+expensive indexed work (`index_too_old` / `index_freshness_unknown`).
+`storage_index_status` reports honest age and does not take a max-age.
+There is no seventh freshness/refresh MCP tool. Query/status/duplicates open a current-schema index
 read-only (`PRAGMA query_only`). An older published schema may be
 migrated in place under AppData — that is not an index refresh and
 does not write analyzed user files.

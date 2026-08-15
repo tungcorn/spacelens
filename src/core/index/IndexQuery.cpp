@@ -2,6 +2,8 @@
 
 #include "core/FileTime.hpp"
 #include "core/StorageIntelligence.hpp"
+#include "core/index/IndexRefresh.hpp"
+#include "core/index/IndexSnapshot.hpp"
 #include "sqlite3.h"
 
 #ifndef NOMINMAX
@@ -31,12 +33,63 @@ FileTimeTicks nowFileTime()
     return value.QuadPart;
 }
 
-std::uint64_t ageMs(std::uint64_t indexedAtTicks, FileTimeTicks now)
+IndexPublishMetadata publishMetadataFrom(const IndexRootInfo& root, SqliteDb& db)
 {
-    if (indexedAtTicks == 0 || now == 0 || indexedAtTicks > now) {
-        return 0;
+    IndexPublishMetadata meta;
+    meta.rootIndexedAtTicks = root.indexedAtTicks;
+    meta.rootIndexedAtIso = root.indexedAtIso;
+    if (auto cp = readRefreshCheckpoint(db)) {
+        meta.lastRefreshAtTicks = cp->lastRefreshAtTicks;
+        meta.lastRefreshMethod = cp->lastRefreshMethod;
+        meta.fullIndexedAtTicks = cp->fullIndexedAtTicks;
     }
-    return (now - indexedAtTicks) / 10'000ULL;  // 100ns -> ms
+    return meta;
+}
+
+void attachSnapshot(IndexQueryResult& r, SqliteDb& db, FileTimeTicks now,
+                    const std::optional<std::uint64_t>& maxAge)
+{
+    r.snapshot = evaluateIndexSnapshot(publishMetadataFrom(r.root, db), now);
+    r.ageDecision = evaluateIndexAgeGate(r.snapshot, maxAge);
+    r.age_ms = r.snapshot.ageMs;
+}
+
+void attachSnapshot(IndexedOpportunityFetch& r, SqliteDb& db, FileTimeTicks now,
+                    const std::optional<std::uint64_t>& maxAge)
+{
+    r.snapshot = evaluateIndexSnapshot(publishMetadataFrom(r.root, db), now);
+    r.ageDecision = evaluateIndexAgeGate(r.snapshot, maxAge);
+    r.age_ms = r.snapshot.ageMs;
+}
+
+bool applyAgeGate(IndexQueryResult& r)
+{
+    if (r.ageDecision.result == IndexAgeGateResult::TooOld) {
+        r.ok = false;
+        r.error = "index_too_old";
+        return false;
+    }
+    if (r.ageDecision.result == IndexAgeGateResult::FreshnessUnknown) {
+        r.ok = false;
+        r.error = "index_freshness_unknown";
+        return false;
+    }
+    return true;
+}
+
+bool applyAgeGate(IndexedOpportunityFetch& r)
+{
+    if (r.ageDecision.result == IndexAgeGateResult::TooOld) {
+        r.ok = false;
+        r.error = "index_too_old";
+        return false;
+    }
+    if (r.ageDecision.result == IndexAgeGateResult::FreshnessUnknown) {
+        r.ok = false;
+        r.error = "index_freshness_unknown";
+        return false;
+    }
+    return true;
 }
 
 IndexQueryResult fail(const std::wstring& rootPath, const char* error)
@@ -379,7 +432,7 @@ struct DeferredReadTxn {
 
 }  // namespace
 
-IndexQueryResult indexStatus(const std::wstring& rootPath)
+IndexQueryResult indexStatus(const std::wstring& rootPath, FileTimeTicks nowTicks)
 {
     IndexQueryResult r;
     r.location = locateIndex(rootPath);
@@ -397,7 +450,8 @@ IndexQueryResult indexStatus(const std::wstring& rootPath)
         }
         r.root = *meta;
         r.ok = true;
-        r.age_ms = ageMs(r.root.indexedAtTicks, nowFileTime());
+        const FileTimeTicks now = nowTicks != 0 ? nowTicks : nowFileTime();
+        attachSnapshot(r, store.db(), now, std::nullopt);
     } catch (const SqliteError& ex) {
         r.error = ex.what();
         if (r.error.find("not found") != std::string::npos) {
@@ -433,9 +487,19 @@ IndexQueryResult queryIndex(const std::wstring& rootPath,
         r.root = *meta;
         const FileTimeTicks now =
             spec.nowTicks != 0 ? spec.nowTicks : nowFileTime();
-        r.age_ms = ageMs(r.root.indexedAtTicks, now);
+        DeferredReadTxn txn(store.db());
+        attachSnapshot(r, store.db(), now, spec.maxIndexAgeSeconds);
+        if (!applyAgeGate(r)) {
+            txn.commit();
+            r.query_elapsed_ms = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - t0)
+                    .count());
+            return r;
+        }
 
         if (!spec.includeFiles && !spec.includeDirectories) {
+            txn.commit();
             r.ok = true;
             r.query_elapsed_ms = static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -497,6 +561,7 @@ IndexQueryResult queryIndex(const std::wstring& rootPath,
         }
         r.returned_items = r.hits.size();
         r.ok = true;
+        txn.commit();
     } catch (const SqliteError& ex) {
         r.ok = false;
         r.error = ex.what();
@@ -535,7 +600,7 @@ IndexedOpportunityFetch queryIndexedOpportunities(
         return r;
     };
 
-    if (spec.matchNone) {
+    if (spec.matchNone && !spec.maxIndexAgeSeconds.has_value()) {
         r.ok = true;
         return finish();
     }
@@ -558,12 +623,23 @@ IndexedOpportunityFetch queryIndexedOpportunities(
         r.root = *meta;
         const FileTimeTicks now =
             spec.nowTicks != 0 ? spec.nowTicks : nowFileTime();
-        r.age_ms = ageMs(r.root.indexedAtTicks, now);
 
         ProgressCancel cancel{stop};
         sqlite3_progress_handler(store.db().handle(), 1000, sqliteProgressCancel,
                                  &cancel);
         DeferredReadTxn txn(store.db());
+        attachSnapshot(r, store.db(), now, spec.maxIndexAgeSeconds);
+        if (!applyAgeGate(r)) {
+            sqlite3_progress_handler(store.db().handle(), 0, nullptr, nullptr);
+            txn.commit();
+            return finish();
+        }
+        if (spec.matchNone) {
+            sqlite3_progress_handler(store.db().handle(), 0, nullptr, nullptr);
+            txn.commit();
+            r.ok = true;
+            return finish();
+        }
 
         const bool includeOldLarge = spec.olderThanDays > 0;
         const std::size_t publicLimit =
@@ -715,7 +791,10 @@ DuplicateCandidateQueryResult queryDuplicateSizeCandidates(
         result.root.rootPath = result.location.rootPath.empty()
                                    ? result.root.rootPath
                                    : result.location.rootPath;
-        result.ageMs = ageMs(result.root.indexedAtTicks, nowFileTime());
+        result.ageMs = evaluateIndexSnapshot(
+                           publishMetadataFrom(result.root, store.db()),
+                           nowFileTime())
+                           .ageMs;
 
         const char* sql =
             "SELECT path, name, size_bytes, last_write_ticks, attributes, "
@@ -796,7 +875,10 @@ DuplicateCandidateQueryResult queryDuplicateSizeCandidates(
         result.minimumSize = minimumSize;
         result.root = *meta;
         result.location = locateIndex(rootPath);
-        result.ageMs = ageMs(result.root.indexedAtTicks, nowFileTime());
+        result.ageMs = evaluateIndexSnapshot(
+                           publishMetadataFrom(result.root, store.db()),
+                           nowFileTime())
+                           .ageMs;
     } catch (const SqliteError& ex) {
         result.ok = false;
         result.error = ex.what();
