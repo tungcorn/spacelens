@@ -121,35 +121,33 @@ jobs:
         env:
           NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
           NEXT_TAG: ${{ steps.release_check.outputs.next_tag }}
-        shell: pwsh
         run: |
-          # Suppress automatic error-on-non-zero for git external calls
-          $ErrorActionPreference = "Continue"
-          . .\\scripts\\SpaceLensRelease.ps1
+          # This step uses bash to avoid pwsh external-process exit-code propagation.
+          set -eo pipefail
+          git fetch origin main 2>/dev/null || true
 
-          git fetch origin main 2>&1 | Out-Null
+          ALREADY_BUMPED=false
+          # Read CMake version on origin/main and compare to next version
+          CMAKE_TEXT="$(git show "origin/main:CMakeLists.txt" 2>/dev/null || true)"
+          if [ -n "$CMAKE_TEXT" ]; then
+            MAIN_CMAKE="$(echo "$CMAKE_TEXT" | grep -oP '(?<=project\(SpaceLens VERSION )\d+\.\d+\.\d+' || true)"
+            echo "main_cmake=${MAIN_CMAKE}  next=${NEXT_VERSION}"
+            if [ "$MAIN_CMAKE" = "$NEXT_VERSION" ]; then
+              ALREADY_BUMPED=true
+            fi
+          fi
 
-          # Read CMake version on origin/main
-          $cmakeRaw = & git show "origin/main:CMakeLists.txt" 2>$null
-          $alreadyBumped = $false
-          if ($LASTEXITCODE -eq 0 -and $cmakeRaw) {
-            $cmakeText = $cmakeRaw -join "`n"
-            $current = $null
-            try { $current = Get-SpaceLensCMakeVersionFromText $cmakeText } catch { }
-            if ($current) {
-              $alreadyBumped = ($current.Text -eq $env:NEXT_VERSION)
-              Write-Host "main_cmake=$($current.Text)  next=$($env:NEXT_VERSION)  already_bumped=$alreadyBumped"
-            }
-          }
+          # Check if tag exists on origin (git ls-remote returns empty if not present)
+          TAG_SHA="$(git ls-remote origin "refs/tags/${NEXT_TAG}" | awk '{print $1}' || true)"
+          TAG_EXISTS=false
+          if [ -n "$TAG_SHA" ]; then
+            TAG_EXISTS=true
+          fi
 
-          # Check if tag already exists on origin
-          # Keep ErrorActionPreference=Continue: Get-SpaceLensTagPeelSha calls
-          # git rev-parse which exits 1 when the tag does not exist yet.
-          $tagPeel = Get-SpaceLensTagPeelSha -Tag $env:NEXT_TAG
-          $tagExists = [bool]$tagPeel
-          Write-Host "tag_exists=$($tagExists.ToString().ToLower())  already_bumped=$($alreadyBumped.ToString().ToLower())"
-          "already_bumped=$($alreadyBumped.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
-          "tag_exists=$($tagExists.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
+          echo "already_bumped=${ALREADY_BUMPED}  tag_exists=${TAG_EXISTS}"
+          echo "already_bumped=${ALREADY_BUMPED}" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=${TAG_EXISTS}" >> "$GITHUB_OUTPUT"
+
 
       - name: Skip — bump already on main or tag exists
         if: >
