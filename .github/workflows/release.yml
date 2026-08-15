@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -13,7 +15,7 @@ on:
         default: false
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: spacelens-release
   cancel-in-progress: false
 
 permissions:
@@ -24,10 +26,43 @@ env:
   AQTINSTALL_VERSION: "3.3.0"
 
 jobs:
-  preflight:
-    name: Preflight
+  decide:
+    name: Decide
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      publish: ${{ steps.plan.outputs.publish }}
+      run_pipeline: ${{ steps.plan.outputs.run_pipeline }}
+      reason: ${{ steps.plan.outputs.reason }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch tags
+        run: git fetch --tags --force origin
+
+      - name: Classify this run
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+        shell: pwsh
+        run: .\scripts\decide-release.ps1
+
+  preflight:
+    name: Preflight
+    needs: decide
+    if: ${{ needs.decide.outputs.run_pipeline == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
       checks: read
@@ -37,23 +72,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Verify version and publish gates
         id: meta
         env:
-          REQUESTED_VERSION: ${{ inputs.version }}
-          PUBLISH: ${{ inputs.publish }}
+          REQUESTED_VERSION: ${{ needs.decide.outputs.version }}
+          PUBLISH: ${{ needs.decide.outputs.publish }}
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $publish = ($env:PUBLISH -eq "true")
-          .\scripts\verify-release-preflight.ps1 -Version $env:REQUESTED_VERSION -Publish:$publish
+          .\scripts\verify-release-preflight.ps1 -Version $env:REQUESTED_VERSION -Publish:$publish -Wait:$publish
           "version=$($env:REQUESTED_VERSION)" | Out-File $env:GITHUB_OUTPUT -Append
           "tag=v$($env:REQUESTED_VERSION)" | Out-File $env:GITHUB_OUTPUT -Append
 
   publish-refused:
     name: Publish refused off main
-    if: ${{ inputs.publish && github.ref != 'refs/heads/main' }}
+    needs: decide
+    if: ${{ needs.decide.outputs.publish == 'true' && github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -67,7 +106,8 @@ jobs:
 
   package:
     name: Build test and package
-    needs: preflight
+    needs: [decide, preflight]
+    if: ${{ needs.decide.outputs.run_pipeline == 'true' }}
     runs-on: windows-2022
     timeout-minutes: 120
     permissions:
@@ -237,9 +277,9 @@ jobs:
 
   publish-blocked:
     name: Publish blocked by distribution gates
-    needs: package
+    needs: [decide, package]
     if: >
-      inputs.publish &&
+      needs.decide.outputs.publish == 'true' &&
       github.ref == 'refs/heads/main' &&
       (needs.package.outputs.cli_eligible != 'true' ||
        needs.package.outputs.gui_eligible != 'true')
@@ -257,9 +297,9 @@ jobs:
 
   publish-github:
     name: Publish GitHub Release
-    needs: package
+    needs: [decide, package]
     if: >
-      inputs.publish &&
+      needs.decide.outputs.publish == 'true' &&
       github.ref == 'refs/heads/main' &&
       needs.package.outputs.cli_eligible == 'true' &&
       needs.package.outputs.gui_eligible == 'true'
@@ -288,10 +328,6 @@ jobs:
           VERSION: ${{ needs.package.outputs.version }}
         run: |
           set -euo pipefail
-          if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "refusing to replace existing GitHub Release ${TAG}" >&2
-            exit 1
-          fi
           peeled="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}')"
           if [ -z "$peeled" ]; then
             peeled="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}')"
@@ -301,7 +337,7 @@ jobs:
               echo "refusing to move existing tag ${TAG} (points at ${peeled}, not ${GITHUB_SHA})" >&2
               exit 1
             fi
-            echo "tag ${TAG} already points at ${GITHUB_SHA}; creating Release only"
+            echo "tag ${TAG} already points at ${GITHUB_SHA}"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -316,6 +352,25 @@ jobs:
             ls -la dist >&2
             exit 1
           fi
+
+          if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "GitHub Release ${TAG} already exists; verifying assets (will not replace)"
+            assets="$(gh release view "${TAG}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')"
+            for need in "spacelens-${TAG}-windows-x64.zip" "spacelens-cli-${TAG}-windows-x64.zip" "SHA256SUMS.txt"; do
+              if ! printf '%s\n' "$assets" | grep -Fxq "$need"; then
+                echo "existing Release ${TAG} is missing ${need}" >&2
+                exit 1
+              fi
+            done
+            draft="$(gh release view "${TAG}" --repo "${{ github.repository }}" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')"
+            if [ "$draft" != "false false" ]; then
+              echo "existing Release ${TAG} is draft/prerelease: ${draft}" >&2
+              exit 1
+            fi
+            echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           notes_file="docs/release-notes/${TAG}.md"
           fallback="dist/RELEASE_NOTES.md"
           if [ -s "$notes_file" ]; then
@@ -361,6 +416,13 @@ jobs:
           if ! printf '%s' "${UNIFIED_SHA256}" | grep -Eq '^[0-9a-f]{64}$'; then
             echo "unified_sha256 is not a 64-char hex digest: '${UNIFIED_SHA256}'" >&2
             exit 1
+          fi
+          got_now="$(npm view "@tungcorn/spacelens@${VERSION}" version 2>/dev/null || true)"
+          if [ "$got_now" = "$VERSION" ]; then
+            echo "npm already has @tungcorn/spacelens@${VERSION}; skipping dispatch"
+            latest="$(npm view @tungcorn/spacelens version)"
+            echo "npm @tungcorn/spacelens@${VERSION} present; latest=${latest}"
+            exit 0
           fi
           since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "Dispatching npm-publish.yml version=${VERSION} sha256=${UNIFIED_SHA256}"
@@ -417,3 +479,45 @@ jobs:
           fi
           latest="$(npm view @tungcorn/spacelens version)"
           echo "npm @tungcorn/spacelens@${VERSION} published; latest=${latest}"
+
+  pin-public-hash:
+    name: Pin public unified hash
+    needs: [package, wait-npm]
+    if: ${{ needs.wait-npm.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Hash the public unified zip and pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.package.outputs.version }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          .\scripts\update-release-pin.ps1 -Version $env:VERSION -Repo $env:GITHUB_REPOSITORY -WriteFiles
+          if ($LASTEXITCODE -ne 0) { throw "update-release-pin.ps1 failed" }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- packaging/npm/release-pin.env docs/RELEASING.md
+          $dirty = git status --porcelain
+          if (-not "$dirty".Trim()) {
+            Write-Host "release pin already current; not committing"
+            exit 0
+          }
+          git commit -m "chore(npm): pin pack-from-release to public v$($env:VERSION) hash"
+          git push origin main
+          if ($LASTEXITCODE -ne 0) { throw "pin push failed; public release stands — retry this job" }
+          gh workflow run ci.yml --ref main
+          if ($LASTEXITCODE -ne 0) { throw "pin committed but failed to dispatch ci.yml" }

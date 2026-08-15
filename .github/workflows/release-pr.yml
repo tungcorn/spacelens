@@ -1,0 +1,45 @@
+name: Release PR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: spacelens-release-pr
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: Update pending release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch tags
+        run: git fetch --tags --force origin
+
+      - name: Policy self-check
+        shell: pwsh
+        run: |
+          .\scripts\verify-release-policy.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\scripts\release-needed.ps1 -DryRun
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Create or update release/next
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: .\scripts\update-release-pr.ps1

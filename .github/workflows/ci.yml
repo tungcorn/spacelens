@@ -272,6 +272,32 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  release-policy:
+    name: Release / Policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch tags
+        run: git fetch --tags --force origin
+
+      - name: Release policy and automation
+        shell: pwsh
+        run: |
+          .\scripts\verify-release-policy.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\scripts\verify-release-automation.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\scripts\release-needed.ps1 -DryRun
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\scripts\prepare-release.ps1 -DryRun
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   npm-package:
     name: npm / Package
     runs-on: windows-2022

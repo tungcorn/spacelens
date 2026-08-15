@@ -1,45 +1,52 @@
-# Release Automation V2 preflight.
+# Release publication preflight.
 # Refuses publish when the requested version disagrees with CMake, the tag
-# already exists, npm already has that version, or required CI is not green.
+# points at another SHA, or required CI is not green. Existing correct
+# GitHub Release / npm version are verified, not treated as errors.
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
     [switch]$Publish,
+    [switch]$Wait,
+    [int]$WaitMinutes = 90,
     [string]$Repository = "",
     [string]$Sha = ""
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "SpaceLensRelease.ps1")
 
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
     Write-Error "version '$Version' is not X.Y.Z"
 }
 
-$cmakeText = Get-Content (Join-Path $root "CMakeLists.txt") -Raw
-if ($cmakeText -notmatch 'project\(\s*SpaceLens\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
-    Write-Error "CMake project VERSION not found"
-}
-$cmakeVersion = $Matches[1]
+$cmakeVersion = (Get-SpaceLensCMakeVersion -RepoRoot $root).Text
 if ($cmakeVersion -ne $Version) {
     Write-Error "requested version $Version does not match CMake $cmakeVersion"
 }
 
-$pkg = Get-Content (Join-Path $root "packaging\npm\package.json") -Raw | ConvertFrom-Json
-if ($pkg.version -ne $Version) {
-    Write-Error "package.json version $($pkg.version) does not match $Version"
+$pkgVersion = (Get-SpaceLensNpmVersion -RepoRoot $root).Text
+if ($pkgVersion -ne $Version) {
+    Write-Error "package.json version $pkgVersion does not match $Version"
 }
 
 $tag = "v$Version"
-Write-Host "preflight version=$Version tag=$tag publish=$Publish"
+Write-Host "preflight version=$Version tag=$tag publish=$Publish wait=$Wait"
 
 if (-not $Repository) {
     $Repository = $env:GITHUB_REPOSITORY
 }
 if (-not $Sha) {
     $Sha = $env:GITHUB_SHA
+}
+
+function Get-RequiredCheckRuns {
+    param([string]$Repo, [string]$Commit)
+    $json = gh api --paginate "repos/$Repo/commits/$Commit/check-runs"
+    $runs = $json | ConvertFrom-Json
+    return @($runs.check_runs)
 }
 
 if ($Publish) {
@@ -75,14 +82,28 @@ if ($Publish) {
         Write-Error "local tag $tag points at $($local.Trim()), not $Sha"
     }
 
-    gh release view $tag --repo $Repository 1>$null 2>$null
+    $names = Get-SpaceLensArtifactNames $Version
+    gh release view $tag --repo $Repository --json tagName,isDraft,isPrerelease,assets 1>$null 2>$null
     if ($LASTEXITCODE -eq 0) {
-        Write-Error "GitHub Release $tag already exists"
+        $info = gh release view $tag --repo $Repository --json tagName,isDraft,isPrerelease,assets | ConvertFrom-Json
+        if ($info.isDraft) { Write-Error "GitHub Release $tag exists but is a draft" }
+        if ($info.isPrerelease) { Write-Error "GitHub Release $tag exists but is a prerelease" }
+        $assetNames = @($info.assets | ForEach-Object { $_.name })
+        foreach ($need in @($names.Unified, $names.Headless, $names.Sums)) {
+            if ($assetNames -notcontains $need) {
+                Write-Error "GitHub Release $tag exists but is missing $need"
+            }
+        }
+        Write-Host "GitHub Release $tag already exists with required assets; treating as verified"
+    } else {
+        Write-Host "GitHub Release $tag does not exist yet"
     }
 
     $npmVer = npm view "@tungcorn/spacelens@$Version" version 2>$null
     if ($npmVer -eq $Version) {
-        Write-Error "npm already has @tungcorn/spacelens@$Version"
+        Write-Host "npm already has @tungcorn/spacelens@$Version; treating as verified"
+    } else {
+        Write-Host "npm does not have @tungcorn/spacelens@$Version yet"
     }
 
     if (-not $Sha) {
@@ -93,25 +114,57 @@ if ($Publish) {
         "Windows / Full Release",
         "Windows / CLI-only Latest",
         "Quality / MSVC Analyze",
-        "npm / Package"
+        "npm / Package",
+        "Release / Policy"
     )
-    $json = gh api --paginate "repos/$Repository/commits/$Sha/check-runs"
-    $runs = $json | ConvertFrom-Json
-    $checks = @($runs.check_runs)
-    foreach ($name in $required) {
-        $mine = @(
-            $checks |
-                Where-Object { $_.name -eq $name } |
-                Sort-Object completed_at -Descending
-        )
-        if ($mine.Count -eq 0) {
-            Write-Error "required CI check missing on ${Sha}: $name"
+
+    $deadline = [datetime]::UtcNow.AddMinutes($WaitMinutes)
+    while ($true) {
+        $checks = Get-RequiredCheckRuns -Repo $Repository -Commit $Sha
+        $pending = New-Object System.Collections.Generic.List[string]
+        $failed = New-Object System.Collections.Generic.List[string]
+        $missing = New-Object System.Collections.Generic.List[string]
+        foreach ($name in $required) {
+            $mine = @(
+                $checks |
+                    Where-Object { $_.name -eq $name } |
+                    Sort-Object completed_at -Descending
+            )
+            if ($mine.Count -eq 0) {
+                $missing.Add($name)
+                continue
+            }
+            $latestCheck = $mine[0]
+            if ($latestCheck.conclusion -eq "success") {
+                Write-Host "CI OK: $name"
+                continue
+            }
+            if ($latestCheck.status -ne "completed") {
+                $pending.Add("$name ($($latestCheck.status))")
+                continue
+            }
+            $failed.Add("$name $($latestCheck.status)/$($latestCheck.conclusion)")
         }
-        $latest = $mine[0]
-        if ($latest.conclusion -ne "success") {
-            Write-Error "required CI check '$name' is $($latest.status)/$($latest.conclusion)"
+
+        if ($failed.Count -gt 0) {
+            Write-Error "required CI check failed: $($failed -join ', ')"
         }
-        Write-Host "CI OK: $name"
+        if ($missing.Count -eq 0 -and $pending.Count -eq 0) {
+            break
+        }
+        if (-not $Wait) {
+            if ($missing.Count -gt 0) {
+                Write-Error "required CI check missing on ${Sha}: $($missing -join ', ')"
+            }
+            if ($pending.Count -gt 0) {
+                Write-Error "required CI check not finished: $($pending -join ', ')"
+            }
+        }
+        if ([datetime]::UtcNow -ge $deadline) {
+            Write-Error "timed out waiting for CI ($($missing + $pending -join ', '))"
+        }
+        Write-Host "waiting for CI: $((@($missing) + @($pending)) -join ', ')"
+        Start-Sleep -Seconds 30
     }
 }
 
