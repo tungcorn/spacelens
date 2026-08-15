@@ -96,12 +96,12 @@ npm install -g @tungcorn/spacelens
 
 ### Pre-built GitHub Releases
 
-Download pre-built archives from [SpaceLens v0.1.4](https://github.com/tungcorn/spacelens/releases/tag/v0.1.4):
+Download pre-built archives from the [latest SpaceLens release](https://github.com/tungcorn/spacelens/releases/latest):
 
 | Asset | Description |
 | --- | --- |
-| `spacelens-v0.1.4-windows-x64.zip` | Unified profile: Desktop GUI + Read-only CLI + Read-only MCP (Qt 6.8.3 runtime included) |
-| `spacelens-cli-v0.1.4-windows-x64.zip` | Headless profile: Read-only CLI + Read-only MCP (no GUI, no Qt dependency) |
+| Published unified archive (`spacelens-v*-windows-x64.zip`) | Unified profile: Desktop GUI + Read-only CLI + Read-only MCP (Qt 6.8.3 runtime included) |
+| Published headless archive (`spacelens-cli-v*-windows-x64.zip`) | Headless profile: Read-only CLI + Read-only MCP (no GUI, no Qt dependency) |
 
 *Requires Microsoft Visual C++ Redistributable (x64).*
 

@@ -300,7 +300,7 @@ User: "My D drive is almost full."
 ## Storage Intelligence V2
 
 Coverage and ranking improvements over V1. Schema stays `schema_version: 1`
-(additive). Version is 0.1.4.
+(additive). Shipped in v0.1.4.
 
 ### What improved
 

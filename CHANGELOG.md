@@ -5,6 +5,9 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+- Generic install docs no longer hardcode a current release version.
+  README, MCP, and packaged README files describe the latest published
+  archives and the current npm distribution instead of a stamped v0.1.4.
 - Release Decide skips prepare on expected no-op pushes (docs/chore/pin,
   or no releasable commits). That is success, not a red workflow.
 - Prepare treats multiline `project(VERSION)` as already-bumped instead

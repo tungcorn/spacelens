@@ -21,7 +21,7 @@ prerequisite. Qt runtime libraries in this folder were deployed with
 windeployqt --no-compiler-runtime --no-system-d3d-compiler
 --no-system-dxc-compiler from the Qt 6.8.3 shared kit.
 
-v0.1.4 binaries are unsigned.
+These binaries are unsigned.
 
 SpaceLens-owned files in this archive are licensed under MIT.
 See LICENSE. Qt remains under its own licenses (LGPL-3.0-only option
