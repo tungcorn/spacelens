@@ -143,7 +143,8 @@ jobs:
           }
 
           # Check if tag already exists on origin
-          $ErrorActionPreference = "Stop"
+          # Keep ErrorActionPreference=Continue: Get-SpaceLensTagPeelSha calls
+          # git rev-parse which exits 1 when the tag does not exist yet.
           $tagPeel = Get-SpaceLensTagPeelSha -Tag $env:NEXT_TAG
           $tagExists = [bool]$tagPeel
           Write-Host "tag_exists=$($tagExists.ToString().ToLower())  already_bumped=$($alreadyBumped.ToString().ToLower())"
