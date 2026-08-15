@@ -29,13 +29,13 @@ spacelens index list --json
 # Query high-level storage overview from snapshot index
 spacelens overview D:\ --from-index --json
 
-# Discover top size-saving opportunities from snapshot index
+# Discover top storage review opportunities from snapshot index
 spacelens opportunities D:\ --from-index --json
 ```
 
 ## Why SpaceLens?
 
-- **Native C++20**: High-performance filesystem scanner and query engine optimized for Windows x64.
+- **Native C++20**: Native Windows filesystem scanner and indexed query engine.
 - **Persistent SQLite Index**: Stores root snapshots locally in AppData for fast, repeated offline queries without rescanning.
 - **Optional USN Incremental Refresh**: Fast index updates using NTFS Change Journal (USN) when volume permissions allow.
 - **Exact Indexed Top-N & Overlap-Aware Aggregates**: Exact Top-K rankings and non-overlapping logical size metrics calculated on published snapshot evidence.
@@ -50,8 +50,8 @@ index list  ──>  overview  ──>  opportunities  ──>  query  ──>  
 ```
 
 - **`index list`**: Catalog available indexes, status, and snapshot freshness.
-- **`overview`**: Review root storage distribution and classification breakdown.
-- **`opportunities`**: Identify exact top-N size-saving candidates across the indexed root.
+- **`overview`**: Review high-level indexed storage usage and largest objects.
+- **`opportunities`**: Rank the top-N storage review candidates across the indexed root.
 - **`query`**: Filter specific files or directories by size, age, pattern, or classification.
 - **`duplicates`**: Locate identical content files verified by SHA-256 hashing.
 
@@ -73,9 +73,9 @@ CLI:  {"filesystem_mutation": false, "read_only": true}
 MCP:  {"filesystem_mutation": false, "read_only": true}
 ```
 
-- **No mutation capabilities**: CLI and MCP contain no code paths to delete, move, recycle, restore, or perform autonomous cleanup.
+- **No user file mutation**: CLI and MCP do not mutate analyzed user files; SpaceLens may write its own indexes and derived state under AppData.
 - **GUI-only maintenance**: Human-authorized Recycle Bin cleanup is restricted to the desktop GUI requiring explicit user confirmation.
-- **AI recommendation is not permission**: Structured outputs provide review candidates; agents have no capability to alter the filesystem.
+- **AI recommendation is not permission**: Structured outputs provide review candidates; agents have no filesystem permission over analyzed user files.
 - **Snapshot evidence**: Indexed queries reflect snapshot evidence—not live filesystem state or guaranteed freed disk space.
 
 For full safety specifications, see [`docs/SAFETY.md`](docs/SAFETY.md).
