@@ -29,7 +29,7 @@ agent profile (CLI + MCP). The filename is kept for continuity.
 
 Runtime: Windows x64. The official Microsoft Visual C++ Redistributable
 (x64) is required if the machine does not already have a compatible
-MSVC runtime. Binaries in v0.1.3 are unsigned.
+MSVC runtime. Binaries in v0.1.4 are unsigned.
 
 This archive does not include Qt.
 

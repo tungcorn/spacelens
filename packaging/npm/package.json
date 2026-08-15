@@ -1,6 +1,6 @@
 {
   "name": "@tungcorn/spacelens",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Native Windows storage intelligence. This package installs the desktop GUI, the read-only CLI, and the read-only MCP server.",
   "license": "MIT",
   "author": "tungcorn",

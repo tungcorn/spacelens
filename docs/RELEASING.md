@@ -136,7 +136,7 @@ It no longer runs on tag push. Inputs:
 
 | Input | Default | Meaning |
 |-------|---------|---------|
-| `version` | `0.1.3` | Must equal CMake `project(VERSION …)` and `packaging/npm/package.json` |
+| `version` | `0.1.4` | Must equal CMake `project(VERSION …)` and `packaging/npm/package.json` |
 | `publish` | `false` | Dry-run when false; create tag + GitHub Release + npm dispatch when true |
 
 Dry-run (`publish=false`) builds, tests, packages, hashes, and stages the
@@ -166,9 +166,9 @@ The unified zip, headless zip (`spacelens-cli-*`), and `SHA256SUMS.txt`
 are attached.
 `docs/release-notes/<tag>.md` is the Release body when that file exists.
 
-v0.1.3 is the current latest Release from this workflow. Historical
-v0.1.0, v0.1.1, and v0.1.2 remain published and must not be retagged,
-redrafted, or have their assets replaced.
+v0.1.4 is the current latest Release from this workflow. Historical
+v0.1.0, v0.1.1, v0.1.2, and v0.1.3 remain published and must not be
+retagged, redrafted, or have their assets replaced.
 
 If GitHub publication succeeds and npm later fails, leave the GitHub
 Release alone. Retry only `npm-publish.yml`, and only if
@@ -180,8 +180,8 @@ Templates live in `packaging/npm/`. The package name is
 `@tungcorn/spacelens`. `package.json` version must match CMake.
 
 `packaging/npm/release-pin.env` records the **last published** unified
-zip (currently v0.1.1,
-`b4d4cb993bb53e1414c9fc156d9c29a5dca1b8640ac8d3b1229e5ff5a345793d`).
+zip (currently v0.1.3,
+`ddac8a6b9433ff6685029dfb6fa6e1abf76e30da4722346244e9ce93d343978d`).
 Do not point the pin at a version whose public zip does not exist yet.
 A hash mismatch is a hard stop. Do not substitute a locally rebuilt zip
 for a published pin.
@@ -217,12 +217,12 @@ no `postinstall` download. Node launchers spawn
 `native\spacelens-mcp.exe` with `shell: false` and do not rewrite
 stdout. The MCP launcher must emit protocol-only stdout.
 
-`@tungcorn/spacelens@0.1.2` is on the public npm registry. v0.1.3 is
-published by dispatching `npm-publish.yml` after the v0.1.3 GitHub
+`@tungcorn/spacelens@0.1.3` is on the public npm registry. v0.1.4 is
+published by dispatching `npm-publish.yml` after the v0.1.4 GitHub
 Release exists. The root README advertises
-`npm install -g @tungcorn/spacelens`. After a successful 0.1.3
+`npm install -g @tungcorn/spacelens`. After a successful 0.1.4
 publication, update `release-pin.env` to the new public hash so CI
-pack-from-release works again. Do not retag or republish 0.1.2.
+pack-from-release works again. Do not retag or republish 0.1.3.
 
 npm uninstall must not delete `%LOCALAPPDATA%\SpaceLens\`.
 

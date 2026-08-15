@@ -5,56 +5,59 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
-### Added
+## [0.1.4] — 2026-08-15
 
-- Index Catalog Agent Entry V1: `spacelens index list --json` is a
-  compact published-index catalog (root, schema, status, cheap counts,
-  Honesty V1 `freshness`). One captured `now` per invocation.
-  Deterministic root order. Broken entries stay visible. Listing does
-  not refresh, live-scan, hash, or migrate schema. No new MCP tool.
-  Schema stays `index_schema_version: 2` and JSON `schema_version: 1`.
-  Version stays 0.1.3.
-- Indexed Freshness Honesty V1: indexed `overview` / `opportunities` /
-  `query` / `index status` report published-snapshot age via additive
-  `index.freshness` (`basis=published_snapshot`, `age_state`,
-  `publish_kind`, `age_seconds`). Incremental age uses
-  `refresh_checkpoint.last_refresh_at_ticks` (full-build
-  `roots.indexed_at` is not rewritten). Optional
-  `--max-index-age-seconds` / MCP `max_index_age_seconds` fails closed
-  before Query A/B (`index_too_old` / `index_freshness_unknown`, exit
-  4). No default policy, no auto-refresh, no live fallback, no seventh
-  MCP tool, no `fresh: true`. `index status` never applies the gate.
-  `duplicates` is exempt. Schema stays `index_schema_version: 2` and
-  JSON `schema_version: 1`. Version stays 0.1.3.
+Indexed intelligence is now more exact, scalable, and honest. v0.1.3
+stays published and immutable.
 
-### Changed
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.4
 
-- Exact Indexed Opportunity Aggregates V1: indexed `opportunities` /
-  MCP `storage_opportunities` stream overlap-aware
-  `unique_review_bytes` across the whole matching set. The historical
-  50,000-row aggregate ceiling is gone. Top-N stays exact
-  `opportunity_rank_v2` + `LIMIT N+1`. Aggregates use a path-ordered
-  SQL stream and an O(depth) ancestor stack — they do not materialize
-  every matching Opportunity DTO. `unique_review_estimated` is true
-  only on `uint64` overflow (saturated), never because the match
-  count is large and never because top-N is approximate.
-  `unique_review_bytes` is exact logical review bytes on published
-  index evidence, not guaranteed freed disk space. Schema stays
-  `index_schema_version: 2` and JSON `schema_version: 1`. Version
-  stays 0.1.3. CLI/MCP remain `filesystem_mutation: false`.
-- Indexed Intelligence Scaling V1: indexed `opportunities` / MCP
-  `storage_opportunities` retrieve the exact public top-N with
-  `opportunity_rank_v2` inside SQLite. Inclusion filters
-  (classification, `--under` / `under`, min-size, age, object type)
-  run before `LIMIT`. A stronger candidate after the old 200-row
-  prefetch window is no longer invisible. Drive-root `--under D:\`
-  / MCP `under` matches descendants (`D:\Users\...`); the LIKE bind
-  no longer escapes the trailing slash into a non-matching pattern.
-  Schema stays `index_schema_version: 2` and JSON `schema_version: 1`.
-  Version stays 0.1.3. CLI/MCP remain `filesystem_mutation: false`.
-  Tests may set `SPACELENS_DATA_ROOT` so they never touch the
-  developer AppData index. See [`docs/INDEX.md`](docs/INDEX.md) and
-  [`docs/AGENT_INTERFACE.md`](docs/AGENT_INTERFACE.md).
+### Storage intelligence
+
+- Sibling and project-context classification for developer, build, and
+  cache trees. Leaf-name-only `temp` / `tmp` / `cache` / `build` is no
+  longer enough.
+- Deterministic `opportunity_rank_v2` and category aggregation. High-
+  confidence regenerable items ≥ 10 MB rank Moderate even when recent.
+- `opportunities --classification` / MCP classification filter applies
+  at index fetch, not after a truncated prefetch.
+
+### Exact indexed intelligence
+
+- Indexed `opportunities` returns the exact public top-N across the
+  whole matching published index. Inclusion filters run before `LIMIT`.
+- Drive-root `--under D:\` / MCP `under` matches descendants.
+
+### Exact aggregate accounting
+
+- Indexed `unique_review_bytes` is overlap-aware across the whole
+  matching set. The historical 50,000-row aggregate ceiling is gone.
+- Totals are exact logical review bytes on published index evidence,
+  not guaranteed freed disk space. `unique_review_estimated` is true
+  only on integer overflow.
+
+### Snapshot freshness
+
+- Indexed `overview` / `opportunities` / `query` / `index status`
+  report published-snapshot age (`index.freshness`,
+  `basis=published_snapshot`). Exact results are exact for that
+  snapshot, not live filesystem truth.
+- Optional `--max-index-age-seconds` / MCP `max_index_age_seconds`
+  fails closed before expensive analysis. No default policy, no
+  auto-refresh, no live fallback.
+
+### Index discovery
+
+- `spacelens index list --json` is a compact published-index catalog
+  (root, schema, status, cheap counts, snapshot freshness).
+  Deterministic order. Broken entries stay visible. Listing does not
+  refresh, live-scan, hash, or migrate schema.
+
+### Safety
+
+- CLI and MCP remain `filesystem_mutation: false` / `read_only: true`.
+- MCP still exposes six read-only tools. Human-authorized Recycle Bin
+  maintenance remains GUI-only.
 
 ## [0.1.3] — 2026-08-14
 
