@@ -94,8 +94,10 @@ npm packaging templates (no native rebuild required):
 Do not bump `CMakeLists.txt` / `package.json` version in a product PR.
 `feat:` / `fix:` / `perf:` commits on `main` keep one pending
 `release/next` pull request at the next **patch**. Merging that PR
-publishes. `docs:` / `test:` / `ci:` / `chore:` commits do not release
-by themselves.
+publishes that merge commit only. Later `main` pushes during
+packaging do not start a second publication; after the tag exists
+they become the next pending patch PR. `docs:` / `test:` / `ci:` /
+`chore:` commits do not release by themselves.
 
 Inspect with `.\scripts\release-needed.ps1 -DryRun`. Manual
 `workflow_dispatch` on `.github/workflows/release.yml` is recovery, not

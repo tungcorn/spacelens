@@ -152,15 +152,21 @@ Product-worthy commits on `main` maintain one pending pull request from
 4. Generated notes live between `<!-- BEGIN GENERATED NOTES -->` markers.
    Human edits outside the markers are preserved when the PR is
    refreshed. If a notes file has no markers, it is left alone.
-5. Merging the PR is the publish approval. `release.yml` on `main` sees
-   CMake equal to the next patch of the latest stable tag, waits for
-   required CI (including `Release / Policy`), rebuilds, tags that
-   merge commit, publishes the GitHub Release, dispatches npm Trusted
-   Publishing, then pins `release-pin.env` from the **public** unified
-   zip and dispatches `ci.yml` (a `GITHUB_TOKEN` push does not trigger
-   workflows by itself).
+5. Merging the PR is the publish approval. `release.yml` on `main`
+   publishes only when **this commit** bumped CMake to the next patch
+   (or the version tag already points at this SHA). Later pushes while
+   CMake is already the next patch do **not** start a second
+   publication. The bump commit waits for required CI (including
+   `Release / Policy`), rebuilds, tags **that** commit, publishes the
+   GitHub Release, dispatches npm Trusted Publishing (`ref=main`;
+   npm downloads the public zip, so `main` may have moved), then pins
+   `release-pin.env` from the **public** unified zip and dispatches
+   `ci.yml` and `release-pr.yml` even if the pin was already current
+   (a `GITHUB_TOKEN` push does not trigger workflows by itself).
 6. The pin commit keeps CMake at the released version while the tag
-   exists, so it does not open another release.
+   exists, so it does not open another release. After the tag exists,
+   `release-pr.yml` classifies `vX.Y.Z..main` so product commits that
+   landed during packaging become the next pending patch PR.
 
 Inspect locally without publishing:
 
@@ -194,10 +200,12 @@ Dispatch inputs (recovery / dry-run):
 | `publish` | `false` | Dry-run when false; create tag + GitHub Release + npm dispatch when true |
 
 On push to `main`, `scripts/decide-release.ps1` publishes only when
-CMake already equals the next patch of the latest **stable** `vX.Y.Z`
-tag (the merged release-prep commit). A pin commit does not match that
-rule. Prerelease tags such as `v0.1.5-rc.1` are ignored when selecting
-the latest stable tag.
+CMake equals the next patch of the latest **stable** `vX.Y.Z` tag
+**and** this commit is the version bump (parent CMake differs) or the
+version tag already points here. A later product or docs commit that
+still has the next-patch CMake does not start another pipeline. A pin
+commit does not match that rule. Prerelease tags such as `v0.1.5-rc.1`
+are ignored when selecting the latest stable tag.
 
 Dry-run (`publish=false` via dispatch) builds, tests, packages, hashes,
 and stages the npm tarball from **this run's** unified zip. It must not
@@ -252,8 +260,10 @@ Partial failure is forward-only. Do not roll back a public tag:
   the tag.
 
 If auto-publish fails after the tag exists, recover with
-`workflow_dispatch` on `release.yml` from the tagged commit, or on
-`npm-publish.yml` if only npm is missing. Do not retag.
+`workflow_dispatch` on `release.yml` from `main` while `main` still
+is the tagged SHA, or from the tag itself (preflight allows a
+non-`main` ref only when that tag already points at this SHA). If
+only npm is missing, dispatch `npm-publish.yml`. Do not retag.
 
 ## npm
 
