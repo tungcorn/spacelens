@@ -501,24 +501,42 @@ void limitList(std::vector<ReclaimCandidateEvidence>& list, std::size_t limit)
     }
 }
 
+[[nodiscard]] bool isActionableCandidate(
+    const ReclaimCandidateEvidence& cand) noexcept
+{
+    return cand.actionability ==
+               ReclaimActionability::ActionableWithoutContentJudgment &&
+           !isProtectedFromReclaim(cand.safety);
+}
+
+[[nodiscard]] bool isSelectableCandidate(
+    const ReclaimCandidateEvidence& cand) noexcept
+{
+    return isActionableCandidate(cand) && cand.hostReclaimBytes.has_value() &&
+           *cand.hostReclaimBytes > 0;
+}
+
 void revalidateOne(ReclaimCandidateEvidence& cand, std::stop_token stop)
 {
     if (stop.stop_requested()) {
         return;
     }
-    cand.liveRevalidated = true;
     const auto live = queryFileIdentity(cand.path);
     if (!live) {
+        cand.liveRevalidated = false;
+        cand.hostReclaimBytes.reset();
+        cand.actionability = ReclaimActionability::InformationalOnly;
+        cand.confidence = ReclaimConfidence::Unknown;
+        cand.basis = ReclaimBasis::Unknown;
         cand.reasonCodes.emplace_back("live_missing_or_inaccessible");
-        if (cand.confidence == ReclaimConfidence::Verified) {
-            cand.confidence = ReclaimConfidence::Strong;
-        }
         return;
     }
+    cand.liveRevalidated = true;
     if (cand.identity.valid() &&
         (live->fileId != cand.identity.fileId ||
          (live->volumeSerial != 0 && cand.identity.volumeSerial != 0 &&
           live->volumeSerial != cand.identity.volumeSerial))) {
+        cand.hostReclaimBytes.reset();
         cand.reasonCodes.emplace_back("live_identity_mismatch");
         cand.confidence = ReclaimConfidence::Heuristic;
         cand.actionability = ReclaimActionability::RequiresContentJudgment;
@@ -546,6 +564,8 @@ void revalidateOne(ReclaimCandidateEvidence& cand, std::stop_token stop)
             cand.reasonCodes.emplace_back("live_hardlink_unconfirmed");
         }
     }
+    // Indexed directory bytes are a snapshot rollup. A matching directory
+    // handle is not a live subtree, so Verified is files / live-scan only.
     const bool verified =
         cand.ownership.authoritative &&
         cand.size.allocationKnown &&
@@ -553,32 +573,161 @@ void revalidateOne(ReclaimCandidateEvidence& cand, std::stop_token stop)
         cand.hostReclaimBytes.has_value() &&
         !isProtectedFromReclaim(cand.safety) &&
         cand.actionability ==
-            ReclaimActionability::ActionableWithoutContentJudgment;
+            ReclaimActionability::ActionableWithoutContentJudgment &&
+        !(cand.kind == ItemKind::Directory && cand.snapshotBased);
     if (verified) {
         cand.confidence = ReclaimConfidence::Verified;
         cand.reasonCodes.emplace_back("live_revalidated");
     }
 }
 
-void revalidateBounded(std::vector<ReclaimCandidateEvidence>& a,
-                       std::vector<ReclaimCandidateEvidence>& b,
-                       std::vector<ReclaimCandidateEvidence>& c,
-                       std::stop_token stop)
+void rebucketActionable(ReclaimPlanReport& report)
 {
-    for (auto* list : {&a, &b, &c}) {
-        for (auto& cand : *list) {
-            revalidateOne(cand, stop);
-            if (stop.stop_requested()) {
-                return;
+    std::vector<ReclaimCandidateEvidence> stay;
+    stay.reserve(report.actionable.size());
+    for (auto& cand : report.actionable) {
+        if (isActionableCandidate(cand)) {
+            stay.push_back(std::move(cand));
+        } else {
+            report.reviewOnly.push_back(std::move(cand));
+        }
+    }
+    report.actionable = std::move(stay);
+}
+
+void recomputeHostByteSums(ReclaimPlanReport& report)
+{
+    ByteSize exact = 0;
+    bool exactAny = false;
+    ByteSize actionableSum = 0;
+    bool actionableAny = false;
+    for (const auto* list : {&report.actionable, &report.reviewOnly}) {
+        for (const auto& cand : *list) {
+            if (cand.hostReclaimBytes.has_value()) {
+                exactAny = true;
+                (void)addSaturating(exact, *cand.hostReclaimBytes);
             }
         }
     }
+    for (const auto& cand : report.actionable) {
+        if (cand.hostReclaimBytes.has_value()) {
+            actionableAny = true;
+            (void)addSaturating(actionableSum, *cand.hostReclaimBytes);
+        }
+    }
+    ByteSize selectedSum = 0;
+    bool selectedAny = false;
+    for (const auto& cand : report.selected) {
+        if (cand.hostReclaimBytes.has_value()) {
+            selectedAny = true;
+            (void)addSaturating(selectedSum, *cand.hostReclaimBytes);
+        }
+    }
+    report.exactHostReclaimBytes =
+        exactAny ? std::optional<ByteSize>(exact) : std::nullopt;
+    report.actionableHostReclaimBytes =
+        actionableAny ? std::optional<ByteSize>(actionableSum) : std::nullopt;
+    report.selectedHostReclaimBytes =
+        selectedAny ? std::optional<ByteSize>(selectedSum) : std::nullopt;
+}
+
+void finalizeAfterRevalidation(ReclaimPlanReport& report,
+                               const ReclaimPlanRequest& request,
+                               std::stop_token stop)
+{
+    report.selected.clear();
+    report.targetMet = false;
+    ByteSize selectedSum = 0;
+
+    if (request.targetFreeBytes.has_value()) {
+        for (auto& cand : report.actionable) {
+            if (stop.stop_requested()) {
+                return;
+            }
+            revalidateOne(cand, stop);
+            if (!isSelectableCandidate(cand)) {
+                continue;
+            }
+            report.selected.push_back(cand);
+            (void)addSaturating(selectedSum, *cand.hostReclaimBytes);
+            if (selectedSum >= *request.targetFreeBytes) {
+                break;
+            }
+        }
+        report.targetMet = selectedSum >= *request.targetFreeBytes;
+    }
+
+    rebucketActionable(report);
+
+    const std::size_t display = request.limit;
+    for (std::size_t i = 0; i < report.actionable.size() && i < display; ++i) {
+        if (stop.stop_requested()) {
+            return;
+        }
+        revalidateOne(report.actionable[i], stop);
+    }
+    for (std::size_t i = 0; i < report.reviewOnly.size() && i < display; ++i) {
+        if (stop.stop_requested()) {
+            return;
+        }
+        revalidateOne(report.reviewOnly[i], stop);
+    }
+    rebucketActionable(report);
+
+    report.selected.erase(
+        std::remove_if(report.selected.begin(), report.selected.end(),
+                       [](const ReclaimCandidateEvidence& cand) {
+                           return !isSelectableCandidate(cand);
+                       }),
+        report.selected.end());
+
+    if (request.targetFreeBytes.has_value() && !report.targetMet) {
+        selectedSum = 0;
+        for (const auto& cand : report.selected) {
+            if (cand.hostReclaimBytes.has_value()) {
+                (void)addSaturating(selectedSum, *cand.hostReclaimBytes);
+            }
+        }
+        if (selectedSum < *request.targetFreeBytes) {
+            for (auto& cand : report.actionable) {
+                if (stop.stop_requested()) {
+                    return;
+                }
+                bool already = false;
+                for (const auto& sel : report.selected) {
+                    if (sel.path == cand.path) {
+                        already = true;
+                        break;
+                    }
+                }
+                if (already) {
+                    continue;
+                }
+                revalidateOne(cand, stop);
+                if (!isSelectableCandidate(cand)) {
+                    continue;
+                }
+                report.selected.push_back(cand);
+                (void)addSaturating(selectedSum, *cand.hostReclaimBytes);
+                if (selectedSum >= *request.targetFreeBytes) {
+                    break;
+                }
+            }
+            rebucketActionable(report);
+        }
+        report.targetMet = selectedSum >= *request.targetFreeBytes;
+    }
+
+    recomputeHostByteSums(report);
+    limitList(report.actionable, request.limit);
+    limitList(report.reviewOnly, request.limit);
 }
 
 void assembleReport(ReclaimPlanReport& report,
                     std::vector<ReclaimCandidateEvidence> candidates,
                     const ReclaimPlanRequest& request)
 {
+    (void)request;
     std::sort(candidates.begin(), candidates.end(), betterRank);
     auto kept = suppressOverlap(std::move(candidates));
 
@@ -626,35 +775,14 @@ void assembleReport(ReclaimPlanReport& report,
         overall = HardLinkCoverage::Incomplete;
     }
 
-    std::vector<ReclaimCandidateEvidence> selected;
-    ByteSize selectedSum = 0;
-    bool selectedAny = false;
-    if (request.targetFreeBytes.has_value()) {
-        for (const auto& cand : actionable) {
-            if (!cand.hostReclaimBytes.has_value() ||
-                *cand.hostReclaimBytes == 0) {
-                continue;
-            }
-            selected.push_back(cand);
-            selectedAny = true;
-            (void)addSaturating(selectedSum, *cand.hostReclaimBytes);
-            if (selectedSum >= *request.targetFreeBytes) {
-                break;
-            }
-        }
-        report.targetMet = selectedSum >= *request.targetFreeBytes;
-    }
-
     report.actionableHostReclaimBytes =
         actionableAny ? std::optional<ByteSize>(actionableSum) : std::nullopt;
     report.exactHostReclaimBytes =
         exactAny ? std::optional<ByteSize>(exact) : std::nullopt;
-    report.selectedHostReclaimBytes =
-        selectedAny ? std::optional<ByteSize>(selectedSum) : std::nullopt;
+    report.selectedHostReclaimBytes = std::nullopt;
+    report.targetMet = false;
     report.overallCoverage = overall;
-    report.selected = std::move(selected);
-    limitList(actionable, request.limit);
-    limitList(review, request.limit);
+    report.selected.clear();
     report.actionable = std::move(actionable);
     report.reviewOnly = std::move(review);
 }
@@ -889,28 +1017,12 @@ ReclaimPlanReport buildFromLive(const ReclaimPlanRequest& request,
     }
 
     assembleReport(report, std::move(candidates), request);
-    revalidateBounded(report.actionable, report.reviewOnly, report.selected,
-                      stop);
+    finalizeAfterRevalidation(report, request, stop);
     if (stop.stop_requested()) {
         report.ok = false;
         report.error = "cancelled";
         report.state = "cancelled";
         return report;
-    }
-    {
-        ByteSize selectedSum = 0;
-        bool selectedAny = false;
-        for (const auto& cand : report.selected) {
-            if (cand.hostReclaimBytes.has_value()) {
-                selectedAny = true;
-                (void)addSaturating(selectedSum, *cand.hostReclaimBytes);
-            }
-        }
-        report.selectedHostReclaimBytes =
-            selectedAny ? std::optional<ByteSize>(selectedSum) : std::nullopt;
-        if (request.targetFreeBytes.has_value()) {
-            report.targetMet = selectedSum >= *request.targetFreeBytes;
-        }
     }
     report.ok = true;
     report.state = "completed";
@@ -1156,29 +1268,12 @@ ReclaimPlanReport buildFromIndex(const ReclaimPlanRequest& request,
         }
 
         assembleReport(report, std::move(candidates), request);
-        revalidateBounded(report.actionable, report.reviewOnly, report.selected,
-                          stop);
+        finalizeAfterRevalidation(report, request, stop);
         if (stop.stop_requested()) {
             report.ok = false;
             report.error = "cancelled";
             report.state = "cancelled";
             return report;
-        }
-        {
-            ByteSize selectedSum = 0;
-            bool selectedAny = false;
-            for (const auto& cand : report.selected) {
-                if (cand.hostReclaimBytes.has_value()) {
-                    selectedAny = true;
-                    (void)addSaturating(selectedSum, *cand.hostReclaimBytes);
-                }
-            }
-            report.selectedHostReclaimBytes =
-                selectedAny ? std::optional<ByteSize>(selectedSum)
-                            : std::nullopt;
-            if (request.targetFreeBytes.has_value()) {
-                report.targetMet = selectedSum >= *request.targetFreeBytes;
-            }
         }
         report.ok = true;
         report.state = "completed";

@@ -493,3 +493,82 @@ SPACELENS_TEST(ReclaimIntel_target_free_never_picks_review_only)
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
 }
+
+SPACELENS_TEST(ReclaimIntel_index_revalidation_drops_missing_and_mismatch)
+{
+    IsolatedDataRoot data;
+    const auto root = makeTempRoot("reval");
+    writeText(root / "Cargo.toml", "[package]\nname=\"x\"\n");
+    writeText(root / "target" / "CACHEDIR.TAG", "Signature: 8a477f597d28d172");
+    writeSizedFile(root / "target" / "lib.rlib", 2ULL << 20);
+    writeText(root / "keep" / "Cargo.toml", "[package]\nname=\"y\"\n");
+    writeText(root / "keep" / "target" / "CACHEDIR.TAG",
+              "Signature: 8a477f597d28d172");
+    writeSizedFile(root / "keep" / "target" / "lib.rlib", 3ULL << 20);
+
+    const auto built = buildIndexForRoot(root.wstring());
+    SPACELENS_REQUIRE(built.state == IndexBuildState::Completed);
+
+    std::error_code ec;
+    std::filesystem::remove_all(root / "target", ec);
+
+    ReclaimPlanRequest req;
+    req.root = root.wstring();
+    req.source = ReclaimPlanSource::PersistentIndex;
+    req.targetFreeBytes = 1ULL << 20;
+    req.limit = 10;
+    const auto missing = buildReclaimPlan(req);
+    SPACELENS_REQUIRE(missing.ok);
+    SPACELENS_REQUIRE(findPathContains(missing.selected, L"\\keep\\target") !=
+                      nullptr);
+    for (const auto& sel : missing.selected) {
+        SPACELENS_REQUIRE(sel.actionability ==
+                          ReclaimActionability::ActionableWithoutContentJudgment);
+        SPACELENS_REQUIRE(sel.hostReclaimBytes.has_value());
+        if (pathEndsWithIgnoreCase(sel.path, L"\\target") &&
+            sel.path.find(L"\\keep\\target") == std::wstring::npos) {
+            throw spacelens::test::Failure(
+                "deleted cargo target stayed selected");
+        }
+    }
+    for (const auto& item : missing.actionable) {
+        if (pathEndsWithIgnoreCase(item.path, L"\\target") &&
+            item.path.find(L"\\keep\\target") == std::wstring::npos) {
+            throw spacelens::test::Failure(
+                "deleted cargo target stayed actionable");
+        }
+        SPACELENS_REQUIRE(item.confidence != ReclaimConfidence::Verified ||
+                          !item.snapshotBased || item.kind != ItemKind::Directory);
+    }
+    bool sawMissing = false;
+    for (const auto& item : missing.reviewOnly) {
+        if (pathEndsWithIgnoreCase(item.path, L"\\target") &&
+            item.path.find(L"\\keep\\target") == std::wstring::npos) {
+            sawMissing = true;
+            SPACELENS_REQUIRE(!item.hostReclaimBytes.has_value());
+            SPACELENS_REQUIRE(item.liveRevalidated == false);
+        }
+    }
+    SPACELENS_REQUIRE(sawMissing);
+
+    std::filesystem::create_directories(root / "target");
+    writeText(root / "target" / "CACHEDIR.TAG", "Signature: 8a477f597d28d172");
+    writeSizedFile(root / "target" / "lib.rlib", 2ULL << 20);
+    const auto recreated = buildReclaimPlan(req);
+    SPACELENS_REQUIRE(recreated.ok);
+    for (const auto& item : recreated.selected) {
+        if (pathEndsWithIgnoreCase(item.path, L"\\target") &&
+            item.path.find(L"\\keep\\target") == std::wstring::npos) {
+            throw spacelens::test::Failure(
+                "recreated cargo target with new identity stayed selected");
+        }
+    }
+    for (const auto& item : recreated.actionable) {
+        if (pathEndsWithIgnoreCase(item.path, L"\\target") &&
+            item.path.find(L"\\keep\\target") == std::wstring::npos) {
+            throw spacelens::test::Failure(
+                "recreated cargo target with new identity stayed actionable");
+        }
+    }
+    std::filesystem::remove_all(root, ec);
+}
