@@ -84,21 +84,7 @@ jobs:
       - name: Fetch tags
         run: git fetch --tags --force origin
 
-      - name: Check if release is needed
-        id: needed
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: |
-          .\\scripts\\release-needed.ps1 -DryRun
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "releasable=$($env:releasable)" | Out-File $env:GITHUB_OUTPUT -Append -ErrorAction SilentlyContinue
-          # Re-run to capture output into GITHUB_OUTPUT
-          .\\scripts\\release-needed.ps1 -DryRun | Out-Null
-          # Read the output directly via the script's GITHUB_OUTPUT writes
-          .\\scripts\\release-needed.ps1 -DryRun
-        # Override: use a clean approach
-      - name: Determine if release needed
+      - name: Determine release need and next version
         id: release_check
         shell: pwsh
         run: |
@@ -106,45 +92,62 @@ jobs:
           . .\\scripts\\SpaceLensRelease.ps1
           $tags = Get-SpaceLensGitTags
           $latest = Get-SpaceLensLatestStableVersion -Tags $tags
-          if (-not $latest) { Write-Host "needed=false"; "needed=false" | Out-File $env:GITHUB_OUTPUT -Append; exit 0 }
+          if (-not $latest) {
+            Write-Host "No stable tag found; nothing to release."
+            "needed=false" | Out-File $env:GITHUB_OUTPUT -Append
+            "next_version=" | Out-File $env:GITHUB_OUTPUT -Append
+            "next_tag=" | Out-File $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
           $commits = Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head "HEAD"
           $decision = Get-SpaceLensReleaseDecision -Commits $commits -LatestVersion $latest
           Write-Host (Format-SpaceLensDryRun -Decision $decision -Head "HEAD")
           $needed = $decision.Needed.ToString().ToLower()
           $nextVer = if ($decision.NextVersion) { $decision.NextVersion.Text } else { "" }
           $nextTag = if ($decision.NextVersion) { $decision.NextVersion.Tag } else { "" }
-          Write-Host "needed=$needed"
-          Write-Host "next_version=$nextVer"
+          Write-Host "needed=$needed  next_version=$nextVer  next_tag=$nextTag"
           "needed=$needed" | Out-File $env:GITHUB_OUTPUT -Append
           "next_version=$nextVer" | Out-File $env:GITHUB_OUTPUT -Append
           "next_tag=$nextTag" | Out-File $env:GITHUB_OUTPUT -Append
+          "latest_tag=$($latest.Tag)" | Out-File $env:GITHUB_OUTPUT -Append
 
       - name: Skip — no releasable commits
         if: steps.release_check.outputs.needed != 'true'
         run: echo "No releasable commits since latest stable tag. Nothing to prepare."
 
-      - name: Check if bump already on main (idempotency)
+      - name: Check idempotency (bump already on main or tag exists)
         id: bump_check
         if: steps.release_check.outputs.needed == 'true'
         env:
           NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
+          NEXT_TAG: ${{ steps.release_check.outputs.next_tag }}
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
+          # Suppress automatic error-on-non-zero for git external calls
+          $ErrorActionPreference = "Continue"
           . .\\scripts\\SpaceLensRelease.ps1
-          git fetch origin main
-          $cmakeText = & git show "origin/main:CMakeLists.txt" | Out-String
-          if ($LASTEXITCODE -ne 0) { throw "cannot read origin/main CMakeLists.txt" }
-          $current = $null
-          try { $current = Get-SpaceLensCMakeVersionFromText $cmakeText } catch { }
-          $alreadyBumped = ($current -and $current.Text -eq $env:NEXT_VERSION)
-          Write-Host "main_cmake=$($current.Text)"
-          Write-Host "already_bumped=$($alreadyBumped.ToString().ToLower())"
-          "already_bumped=$($alreadyBumped.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
-          # Check if tag already exists
-          $tagPeel = Get-SpaceLensTagPeelSha -Tag "v$($env:NEXT_VERSION)"
+
+          git fetch origin main 2>&1 | Out-Null
+
+          # Read CMake version on origin/main
+          $cmakeRaw = & git show "origin/main:CMakeLists.txt" 2>$null
+          $alreadyBumped = $false
+          if ($LASTEXITCODE -eq 0 -and $cmakeRaw) {
+            $cmakeText = $cmakeRaw -join "`n"
+            $current = $null
+            try { $current = Get-SpaceLensCMakeVersionFromText $cmakeText } catch { }
+            if ($current) {
+              $alreadyBumped = ($current.Text -eq $env:NEXT_VERSION)
+              Write-Host "main_cmake=$($current.Text)  next=$($env:NEXT_VERSION)  already_bumped=$alreadyBumped"
+            }
+          }
+
+          # Check if tag already exists on origin
+          $ErrorActionPreference = "Stop"
+          $tagPeel = Get-SpaceLensTagPeelSha -Tag $env:NEXT_TAG
           $tagExists = [bool]$tagPeel
-          Write-Host "tag_exists=$($tagExists.ToString().ToLower())"
+          Write-Host "tag_exists=$($tagExists.ToString().ToLower())  already_bumped=$($alreadyBumped.ToString().ToLower())"
+          "already_bumped=$($alreadyBumped.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
           "tag_exists=$($tagExists.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
 
       - name: Skip — bump already on main or tag exists
@@ -165,14 +168,13 @@ jobs:
           steps.bump_check.outputs.tag_exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUESTED_VERSION: ${{ needs.decide.outputs.version }}
+          CURRENT_VERSION: ${{ needs.decide.outputs.version }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          # Wait for the original pushed SHA's CI checks — not publish gates.
-          # We pass -Publish:$false so it only waits for CI, not tag/release checks.
+          # Wait for the original pushed SHA's CI checks — without publish gates.
           .\\scripts\\verify-release-preflight.ps1 `
-            -Version $env:REQUESTED_VERSION `
+            -Version $env:CURRENT_VERSION `
             -Publish:$false `
             -Wait `
             -WaitMinutes 120 `
@@ -197,23 +199,25 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Ensure we are on a clean local main that matches origin/main at the original SHA.
+          # Verify main has not moved since this push.
           git fetch origin main
           $originHead = (& git rev-parse "origin/main").Trim()
           if ($originHead -ne $env:ORIGINAL_SHA) {
-            Write-Host "main has moved since this push ($($env:ORIGINAL_SHA) → $originHead). Aborting safely."
+            Write-Host "main has moved: $($env:ORIGINAL_SHA) → $originHead. Aborting safely."
             exit 1
           }
-
           git checkout -B main origin/main
           git reset --hard origin/main
 
-          # Run prepare-release.ps1 to bump version files, CHANGELOG, and release notes.
+          # Bump version files, CHANGELOG, and release notes.
           .\\scripts\\prepare-release.ps1 -Version $env:NEXT_VERSION
           if ($LASTEXITCODE -ne 0) { throw "prepare-release.ps1 failed" }
 
-          # Stage mechanical version files + CHANGELOG + release notes.
-          $toAdd = @(Get-SpaceLensMechanicalVersionFiles) + @("CHANGELOG.md", "docs/release-notes/$($env:NEXT_TAG).md")
+          # Stage all mechanical version files + CHANGELOG + release notes.
+          $toAdd = @(Get-SpaceLensMechanicalVersionFiles) + @(
+            "CHANGELOG.md",
+            "docs/release-notes/$($env:NEXT_TAG).md"
+          )
           foreach ($rel in $toAdd) {
             $path = Join-Path (Get-SpaceLensRepoRoot) ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
             if (Test-Path -LiteralPath $path) {
@@ -224,7 +228,7 @@ jobs:
 
           $porcelain = & git status --porcelain
           if (-not "$porcelain".Trim()) {
-            throw "prepare-release produced no staged changes for $($env:NEXT_VERSION)"
+            throw "prepare-release.ps1 produced no staged changes for $($env:NEXT_VERSION)"
           }
 
           $subject = "chore(release): prepare SpaceLens $($env:NEXT_TAG)"
@@ -233,11 +237,10 @@ jobs:
 
           $bumpSha = (& git rev-parse HEAD).Trim()
           Write-Host "bump_sha=$bumpSha"
-          Write-Host "bump_subject=$subject"
           "bump_sha=$bumpSha" | Out-File $env:GITHUB_OUTPUT -Append
           "bump_subject=$subject" | Out-File $env:GITHUB_OUTPUT -Append
 
-          # Push — fail safely on non-fast-forward (another push arrived).
+          # Push — fail safely on non-fast-forward.
           git push origin main
           if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: git push failed (main moved during prepare). No force-push. Aborting."
