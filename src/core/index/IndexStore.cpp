@@ -58,6 +58,14 @@ CREATE TABLE IF NOT EXISTS entries (
   oldest_descendant_write INTEGER NOT NULL DEFAULT 0,
   file_id INTEGER NOT NULL DEFAULT 0,
   parent_file_id INTEGER NOT NULL DEFAULT 0,
+  allocated_bytes INTEGER,
+  allocation_known INTEGER NOT NULL DEFAULT 0,
+  hard_link_count INTEGER NOT NULL DEFAULT 0,
+  observed_link_count INTEGER NOT NULL DEFAULT 0,
+  sparse INTEGER NOT NULL DEFAULT 0,
+  compressed INTEGER NOT NULL DEFAULT 0,
+  volume_serial INTEGER NOT NULL DEFAULT 0,
+  hard_link_coverage TEXT NOT NULL DEFAULT 'unknown',
   FOREIGN KEY(root_id) REFERENCES roots(id) ON DELETE CASCADE
 );
 
@@ -93,6 +101,8 @@ CREATE INDEX IF NOT EXISTS idx_entries_root_path
   ON entries(root_id, path);
 CREATE INDEX IF NOT EXISTS idx_entries_root_file_id
   ON entries(root_id, file_id);
+CREATE INDEX IF NOT EXISTS idx_entries_root_identity
+  ON entries(root_id, volume_serial, file_id);
 )SQL";
 
 int readSchemaVersion(SqliteDb& db)
@@ -161,6 +171,46 @@ CREATE TABLE IF NOT EXISTS refresh_checkpoint (
 CREATE INDEX IF NOT EXISTS idx_entries_root_file_id
   ON entries(root_id, file_id);
 )SQL");
+}
+
+void migrateToV3(SqliteDb& db)
+{
+    if (!columnExists(db, "entries", "allocated_bytes")) {
+        db.exec("ALTER TABLE entries ADD COLUMN allocated_bytes INTEGER;");
+    }
+    if (!columnExists(db, "entries", "allocation_known")) {
+        db.exec(
+            "ALTER TABLE entries ADD COLUMN allocation_known INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!columnExists(db, "entries", "hard_link_count")) {
+        db.exec(
+            "ALTER TABLE entries ADD COLUMN hard_link_count INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!columnExists(db, "entries", "observed_link_count")) {
+        db.exec(
+            "ALTER TABLE entries ADD COLUMN observed_link_count INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!columnExists(db, "entries", "sparse")) {
+        db.exec("ALTER TABLE entries ADD COLUMN sparse INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!columnExists(db, "entries", "compressed")) {
+        db.exec(
+            "ALTER TABLE entries ADD COLUMN compressed INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!columnExists(db, "entries", "volume_serial")) {
+        db.exec(
+            "ALTER TABLE entries ADD COLUMN volume_serial INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!columnExists(db, "entries", "hard_link_coverage")) {
+        db.exec(
+            "ALTER TABLE entries ADD COLUMN hard_link_coverage TEXT NOT NULL DEFAULT 'unknown';");
+    }
+    db.exec(R"SQL(
+CREATE INDEX IF NOT EXISTS idx_entries_root_identity
+  ON entries(root_id, volume_serial, file_id);
+)SQL");
+    // Migrated rows keep defaults. physical_accounting is NOT set — reclaim-plan
+    // --source persistent_index fail-closes until a full v3 build finalize.
 }
 
 }  // namespace
@@ -299,8 +349,12 @@ void IndexStore::migrateSchemaIfNeeded()
         writeSchemaVersion(m_db, 2);
         version = 2;
     }
+    if (version < 3) {
+        migrateToV3(m_db);
+        writeSchemaVersion(m_db, 3);
+        version = 3;
+    }
     if (version < kIndexSchemaVersion) {
-        // Future migrations chain here.
         writeSchemaVersion(m_db, kIndexSchemaVersion);
     }
 }

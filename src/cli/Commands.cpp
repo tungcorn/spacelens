@@ -7,6 +7,7 @@
 #include "core/FileTime.hpp"
 #include "core/Query.hpp"
 #include "core/ReclaimAnalysis.hpp"
+#include "core/ReclaimPlan.hpp"
 #include "core/ScanEngine.hpp"
 #include "core/SizeFormatter.hpp"
 #include "core/StorageAnalysis.hpp"
@@ -1321,6 +1322,90 @@ ExitCode runBreakdown(const ParsedArgs& args, std::stop_token stop)
     return result.ok ? ExitCode::Success : ExitCode::ScanFailed;
 }
 
+void printHumanReclaimPlan(const ReclaimPlanReport& report)
+{
+    std::cout << "reclaim-plan " << toString(report.sourceUsed) << " "
+              << report.state << "\n"
+              << "planning_only: true  execution_supported: false\n"
+              << "physical_accounting: "
+              << (report.physicalAccounting ? "true" : "false") << "\n"
+              << "hard_link_coverage: " << toString(report.overallCoverage)
+              << "\n";
+    if (report.targetFreeBytes.has_value()) {
+        std::cout << "target_free: "
+                  << SizeFormatter::format(*report.targetFreeBytes)
+                  << (report.targetMet ? "  met\n" : "  not met\n");
+    }
+    if (report.actionableHostReclaimBytes.has_value()) {
+        std::cout << "actionable host reclaim: "
+                  << SizeFormatter::format(*report.actionableHostReclaimBytes)
+                  << "\n";
+    }
+    if (report.selectedHostReclaimBytes.has_value()) {
+        std::cout << "selected host reclaim: "
+                  << SizeFormatter::format(*report.selectedHostReclaimBytes)
+                  << "\n";
+    }
+    const auto printList = [](const char* title,
+                              const std::vector<ReclaimCandidateEvidence>& items) {
+        std::cout << title << " (" << items.size() << ")\n";
+        for (const auto& item : items) {
+            std::cout << "  " << toString(item.actionability) << "  "
+                      << toString(item.confidence) << "  ";
+            if (item.hostReclaimBytes.has_value()) {
+                std::cout << SizeFormatter::format(*item.hostReclaimBytes);
+            } else {
+                std::cout << "unknown";
+            }
+            std::cout << "  " << narrow(item.path);
+            if (!item.ownership.provider.empty()) {
+                std::cout << "  [" << item.ownership.provider << "]";
+            }
+            std::cout << "\n";
+        }
+    };
+    printList("actionable", report.actionable);
+    printList("review_only", report.reviewOnly);
+    if (!report.selected.empty()) {
+        printList("selected", report.selected);
+    }
+}
+
+ExitCode runReclaimPlan(const ParsedArgs& args, std::stop_token stop)
+{
+    ReclaimPlanRequest request;
+    request.root = args.path;
+    request.source = args.reclaimSource;
+    request.limit = args.limit;
+    request.targetFreeBytes = args.targetFree;
+    request.maxIndexAgeSeconds = args.maxIndexAgeSeconds;
+    const auto report = buildReclaimPlan(request, stop);
+
+    if (args.json) {
+        std::cout << report.toJson();
+    } else if (!report.ok) {
+        const std::string gateText = formatIndexAgeGateError(report.ageDecision);
+        if (!gateText.empty()) {
+            std::cerr << gateText << "\n";
+        } else {
+            std::cerr << "reclaim-plan failed: " << report.error << "\n";
+        }
+    } else {
+        printHumanReclaimPlan(report);
+    }
+
+    if (!report.ok && report.error == "inaccessible_root") {
+        return ExitCode::InaccessibleRoot;
+    }
+    if (!report.ok && report.error == "index_not_found") {
+        return ExitCode::IndexNotFound;
+    }
+    if (!report.ok && report.error == "cancelled") {
+        return ExitCode::Cancelled;
+    }
+    return report.ok ? ExitCode::Success : ExitCode::ScanFailed;
+}
+
 ExitCode runCapabilities(const ParsedArgs& args)
 {
     if (args.json) {
@@ -1328,14 +1413,14 @@ ExitCode runCapabilities(const ParsedArgs& args)
     } else {
         std::cout << "spacelens " << SPACELENS_VERSION_STRING << "\n"
                   << "commands: scan top find index index-refresh query "
-                     "overview opportunities breakdown duplicates "
+                     "overview opportunities breakdown reclaim-plan duplicates "
                      "capabilities help version\n"
                   << "read_only: true\n"
                   << "filesystem_mutation: false\n"
                   << "features: json, cancellation, classification, filters, "
                      "persistent_index, indexed_query, incremental_index, "
                      "storage_overview, storage_opportunities, "
-                     "indexed_breakdown, "
+                     "indexed_breakdown, reclaim_plan, "
                      "duplicate_detection, reclaim_analysis\n"
                   << "not available: filesystem_mutation\n"
                   << "index_schema_version: " << kIndexSchemaVersion << "\n";

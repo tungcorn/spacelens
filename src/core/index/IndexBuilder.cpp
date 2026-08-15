@@ -2,10 +2,12 @@
 
 #include "core/Classification.hpp"
 #include "core/FileTime.hpp"
+#include "core/PhysicalStorage.hpp"
 #include "core/ReclaimAnalysis.hpp"
 #include "core/SafetyPolicy.hpp"
 #include "core/ScanEngine.hpp"
 #include "core/index/IndexRefresh.hpp"
+#include "core/index/PhysicalAccounting.hpp"
 #include "platform/windows/FileIdentity.hpp"
 #include "platform/windows/WindowsFileEnumerator.hpp"
 
@@ -110,9 +112,11 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
                 "extension, last_write_ticks, last_access_ticks, attributes, is_reparse, "
                 "classification, confidence, rule_id, location_safety, reclaimability, "
                 "candidate_strength, newest_descendant_write, oldest_descendant_write, "
-                "file_id, parent_file_id) "
+                "file_id, parent_file_id, allocated_bytes, allocation_known, "
+                "hard_link_count, observed_link_count, sparse, compressed, "
+                "volume_serial, hard_link_coverage) "
                 "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,"
-                "?19,?20,?21,?22,?23);");
+                "?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31);");
 
             SqliteTxn txn(store.db());
             std::unordered_map<DirIndex, std::uint64_t> dirFileIds;
@@ -141,8 +145,10 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
 
                 std::uint64_t fileId = 0;
                 std::uint64_t parentFileId = 0;
+                PhysicalRow phys;
                 if (auto id = queryFileIdentity(path)) {
                     fileId = id->fileId;
+                    phys = physicalRowFromIdentity(*id, true);
                 }
                 if (node.parent != InvalidDirIndex) {
                     parentFileId = dirFileIds[node.parent];
@@ -184,6 +190,14 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
                     21, static_cast<std::int64_t>(node.oldestDescendantWrite));
                 insert.bindInt64(22, static_cast<std::int64_t>(fileId));
                 insert.bindInt64(23, static_cast<std::int64_t>(parentFileId));
+                insert.bindNull(24);
+                insert.bindInt64(25, 0);
+                insert.bindInt64(26, 0);
+                insert.bindInt64(27, 0);
+                insert.bindInt64(28, phys.sparse ? 1 : 0);
+                insert.bindInt64(29, phys.compressed ? 1 : 0);
+                insert.bindInt64(30, static_cast<std::int64_t>(phys.volumeSerial));
+                insert.bindText(31, toString(HardLinkCoverage::Unknown));
                 insert.stepDone();
             }
 
@@ -209,8 +223,10 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
 
                 std::uint64_t fileId = 0;
                 std::uint64_t parentFileId = 0;
+                PhysicalRow phys;
                 if (auto id = queryFileIdentity(path)) {
                     fileId = id->fileId;
+                    phys = physicalRowFromIdentity(*id, false);
                 }
                 if (file.parent != InvalidDirIndex) {
                     parentFileId = dirFileIds[file.parent];
@@ -246,7 +262,30 @@ IndexBuildResult buildIndexFromScan(const ScanResult& scan,
                 insert.bindInt64(21, 0);
                 insert.bindInt64(22, static_cast<std::int64_t>(fileId));
                 insert.bindInt64(23, static_cast<std::int64_t>(parentFileId));
+                if (phys.allocatedBytes.has_value()) {
+                    insert.bindInt64(
+                        24, static_cast<std::int64_t>(*phys.allocatedBytes));
+                } else {
+                    insert.bindNull(24);
+                }
+                insert.bindInt64(25, phys.allocationKnown ? 1 : 0);
+                insert.bindInt64(26, static_cast<std::int64_t>(phys.hardLinkCount));
+                insert.bindInt64(27, 0);
+                insert.bindInt64(28, phys.sparse ? 1 : 0);
+                insert.bindInt64(29, phys.compressed ? 1 : 0);
+                insert.bindInt64(30, static_cast<std::int64_t>(phys.volumeSerial));
+                insert.bindText(31, toString(HardLinkCoverage::Unknown));
                 insert.stepDone();
+            }
+
+            if (!finalizePhysicalAccounting(store.db(), true, stop)) {
+                txn.rollback();
+                insert.finalize();
+                store.db().close();
+                discardStagingDatabase(result.location);
+                result.state = IndexBuildState::Cancelled;
+                result.error = "index build cancelled";
+                return result;
             }
 
             meta.status = IndexStatus::Ready;

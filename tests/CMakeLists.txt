@@ -18,6 +18,9 @@ set(SPACELENS_TEST_SOURCES
     test_duplicates.cpp
     test_hash_cache.cpp
     test_reclaim.cpp
+    test_physical_storage.cpp
+    test_reclaim_providers.cpp
+    test_reclaim_intelligence.cpp
     test_index.cpp
     test_index_refresh.cpp
     test_usn_parity.cpp

@@ -22,6 +22,8 @@ namespace spacelens::cli {
                                         std::stop_token stop);
 [[nodiscard]] ExitCode runBreakdown(const ParsedArgs& args,
                                     std::stop_token stop);
+[[nodiscard]] ExitCode runReclaimPlan(const ParsedArgs& args,
+                                      std::stop_token stop);
 [[nodiscard]] ExitCode runCapabilities(const ParsedArgs& args);
 
 }  // namespace spacelens::cli

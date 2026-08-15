@@ -84,6 +84,8 @@ std::string helpText()
         "  spacelens overview <path> [--from-index] [--limit N] [--max-index-age-seconds N] [--json]\n"
         "  spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D] [--classification C] [--under P] [--limit N] [--max-index-age-seconds N] [--json]\n"
         "  spacelens breakdown <path> [--under P] [--limit N] [--max-index-age-seconds N] [--json]\n"
+        "  spacelens reclaim-plan <path> [--source auto|persistent_index|live_scan]\n"
+        "                 [--target-free S] [--limit N] [--max-index-age-seconds N] [--json]\n"
         "  spacelens duplicates <path> [--min-size S] [--json]\n"
         "  spacelens capabilities [--json]\n"
         "  spacelens help\n"
@@ -103,7 +105,10 @@ std::string helpText()
         "  --dirs          Directories mode (top/query)\n"
         "  --from-index    Use a published index (overview/opportunities)\n"
         "  --max-index-age-seconds N  Fail if the published snapshot is older than N seconds\n"
-        "                  (query / overview --from-index / opportunities --from-index / breakdown)\n"
+        "                  (query / overview --from-index / opportunities --from-index /\n"
+        "                  breakdown / reclaim-plan)\n"
+        "  --source S      reclaim-plan evidence source: auto, persistent_index, live_scan\n"
+        "  --target-free S reclaim-plan: select overlap-free actionable until S host bytes\n"
         "  --limit N       Number of results (default 20; overview default 10;\n"
         "                  breakdown: top extensions, default 20)\n"
         "  -h, --help      Show this help\n"
@@ -159,6 +164,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         out.command = Command::Opportunities;
     } else if (cmd == L"breakdown") {
         out.command = Command::Breakdown;
+    } else if (cmd == L"reclaim-plan") {
+        out.command = Command::ReclaimPlan;
     } else if (cmd == L"index") {
         // index | index status | index list | index refresh
         if (argc >= 3 && std::wstring_view(argv[2]) == L"status") {
@@ -294,15 +301,60 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             out.fromIndex = true;
             continue;
         }
+        if (arg == L"--source") {
+            if (out.command != Command::ReclaimPlan) {
+                out.error = "--source is only valid with 'reclaim-plan'.";
+                return out;
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == L'\0') {
+                out.error = "--source requires a value.";
+                return out;
+            }
+            const std::wstring raw = argv[++i];
+            std::string text;
+            text.reserve(raw.size());
+            for (const wchar_t ch : raw) {
+                if (ch < 128) {
+                    text.push_back(static_cast<char>(ch));
+                }
+            }
+            ReclaimPlanSource parsed = ReclaimPlanSource::Auto;
+            if (!parseReclaimPlanSource(text, parsed)) {
+                out.error =
+                    "Invalid --source value. Use auto, persistent_index, or "
+                    "live_scan.";
+                return out;
+            }
+            out.reclaimSource = parsed;
+            continue;
+        }
+        if (arg == L"--target-free") {
+            if (out.command != Command::ReclaimPlan) {
+                out.error = "--target-free is only valid with 'reclaim-plan'.";
+                return out;
+            }
+            if (i + 1 >= argc) {
+                out.error = "--target-free requires a value.";
+                return out;
+            }
+            const auto parsed = spacelens::parseSize(std::wstring_view(argv[++i]));
+            if (!parsed.error.empty()) {
+                out.error = "Invalid --target-free value: " + parsed.error;
+                return out;
+            }
+            out.targetFree = parsed.bytes;
+            continue;
+        }
         if (arg == L"--max-index-age-seconds") {
             if (out.command != Command::Query &&
                 out.command != Command::Overview &&
                 out.command != Command::Opportunities &&
-                out.command != Command::Breakdown) {
+                out.command != Command::Breakdown &&
+                out.command != Command::ReclaimPlan) {
                 out.error =
                     "--max-index-age-seconds is only valid with query, "
                     "overview --from-index, opportunities --from-index, "
-                    "or breakdown.";
+                    "breakdown, or reclaim-plan.";
                 return out;
             }
             if (i + 1 >= argc) {
@@ -368,7 +420,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         out.command == Command::IndexRefresh || out.command == Command::Query ||
         out.command == Command::Duplicates || out.command == Command::Overview ||
         out.command == Command::Opportunities ||
-        out.command == Command::Breakdown) {
+        out.command == Command::Breakdown ||
+        out.command == Command::ReclaimPlan) {
         if (out.path.empty()) {
             out.error = "Missing path argument.";
             return out;

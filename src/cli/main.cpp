@@ -106,6 +106,9 @@ int wmain(int argc, wchar_t** argv)
         case spacelens::cli::Command::Breakdown:
             code = spacelens::cli::runBreakdown(args, stopSource.get_token());
             break;
+        case spacelens::cli::Command::ReclaimPlan:
+            code = spacelens::cli::runReclaimPlan(args, stopSource.get_token());
+            break;
         default:
             code = spacelens::cli::ExitCode::InternalError;
             break;

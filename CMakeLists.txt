@@ -99,6 +99,14 @@ add_library(spacelens_core STATIC
     src/core/HashCache.cpp
     src/core/ReclaimAnalysis.hpp
     src/core/ReclaimAnalysis.cpp
+    src/core/PhysicalStorage.hpp
+    src/core/PhysicalStorage.cpp
+    src/core/ReclaimEvidence.hpp
+    src/core/ReclaimEvidence.cpp
+    src/core/ReclaimProvider.hpp
+    src/core/ReclaimProvider.cpp
+    src/core/ReclaimPlan.hpp
+    src/core/ReclaimPlan.cpp
     src/core/StorageIntelligence.hpp
     src/core/StorageIntelligence.cpp
     src/core/StorageAnalysis.hpp
@@ -121,6 +129,8 @@ add_library(spacelens_core STATIC
     src/core/index/IndexSnapshot.cpp
     src/core/index/IndexRefresh.hpp
     src/core/index/IndexRefresh.cpp
+    src/core/index/PhysicalAccounting.hpp
+    src/core/index/PhysicalAccounting.cpp
     src/core/index/IndexCatalog.hpp
     src/core/index/IndexCatalog.cpp
     src/core/index/IndexOverview.hpp
@@ -134,6 +144,8 @@ add_library(spacelens_core STATIC
     src/platform/windows/LocationVolume.cpp
     src/platform/windows/FileIdentity.hpp
     src/platform/windows/FileIdentity.cpp
+    src/platform/windows/SafeProcess.hpp
+    src/platform/windows/SafeProcess.cpp
     src/platform/windows/CleanupMetadataReader.hpp
     src/platform/windows/CleanupMetadataReader.cpp
     src/platform/windows/FileContentHasher.hpp

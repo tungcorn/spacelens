@@ -5,6 +5,13 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+- Physical reclaim intelligence: `spacelens reclaim-plan` reports exact
+  host-byte reclaim evidence (allocated bytes, hard-link coverage,
+  provider ownership) without executing cleanup. Actionable vs
+  review-only stay separate; `--target-free` never selects review-only.
+  Index schema 3 persists physical accounting. Migrated v2 indexes stay
+  queryable but `reclaim-plan --source persistent_index` fail-closes
+  unless `physical_accounting=1`. No MCP reclaim tool.
 - Generic install docs no longer hardcode a current release version.
   README, MCP, and packaged README files describe the latest published
   archives and the current npm distribution instead of a stamped v0.1.4.

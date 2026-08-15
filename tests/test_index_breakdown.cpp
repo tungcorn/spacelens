@@ -547,7 +547,9 @@ SPACELENS_TEST(Breakdown_json_contract)
     SPACELENS_REQUIRE(json.find("\"by_extension\"") != std::string::npos);
     SPACELENS_REQUIRE(json.find("\"by_last_write_age\"") != std::string::npos);
     SPACELENS_REQUIRE(json.find("\"lt_30d\"") != std::string::npos);
-    SPACELENS_REQUIRE(json.find("\"index_schema_version\":2") != std::string::npos);
+    SPACELENS_REQUIRE(json.find(std::string("\"index_schema_version\":") +
+                               std::to_string(kIndexSchemaVersion)) !=
+                      std::string::npos);
 }
 
 SPACELENS_TEST(Breakdown_sum_overflow_is_estimated)

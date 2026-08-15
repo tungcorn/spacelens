@@ -9,7 +9,9 @@ namespace spacelens {
 
 /// Index schema version stored inside the database (not CLI JSON schema_version).
 /// V2 adds file_id/parent_file_id on entries and refresh_checkpoint for USN.
-inline constexpr int kIndexSchemaVersion = 2;
+/// V3 adds physical allocation / hard-link evidence. Reclaim-plan requires
+/// meta physical_accounting=1 (set only after a full v3 build finalize).
+inline constexpr int kIndexSchemaVersion = 3;
 
 /// Paths and keys for SpaceLens-owned index files under LocalAppData.
 /// Never writes into the scanned source tree.

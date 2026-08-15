@@ -10,11 +10,11 @@ maintenance and ordinary-location declarations exist only in the GUI. See
 [`docs/LOCATION_SAFETY.md`](LOCATION_SAFETY.md).
 
 The executable wires `scan`, `top`, `find`, `overview`, `opportunities`,
-`breakdown`, `index`, `index refresh`, `index status`, `index list`, `query`,
-`duplicates`, `capabilities`, `help`, and `version`. Use `capabilities --json`
-to discover flags for a particular build (including `storage_overview`,
-`storage_opportunities`, `indexed_breakdown`, `persistent_index`,
-`indexed_query`, and `incremental_index`).
+`breakdown`, `reclaim-plan`, `index`, `index refresh`, `index status`,
+`index list`, `query`, `duplicates`, `capabilities`, `help`, and `version`.
+Use `capabilities --json` to discover flags for a particular build
+(including `storage_overview`, `storage_opportunities`, `indexed_breakdown`,
+`reclaim_plan`, `persistent_index`, `indexed_query`, and `incremental_index`).
 
 AI harnesses that should not learn CLI syntax can use the separate
 `spacelens-mcp` stdio adapter instead. It reuses the same core analysis
@@ -61,7 +61,7 @@ Representative JSON (fields may grow; treat unknown keys as forward-compatible):
 {
   "schema_version": 1,
   "version": "0.1.0",
-  "commands": ["scan", "top", "find", "index", "index status", "index list", "index refresh", "query", "overview", "opportunities", "breakdown", "duplicates", "capabilities", "help", "version"],
+  "commands": ["scan", "top", "find", "index", "index status", "index list", "index refresh", "query", "overview", "opportunities", "breakdown", "reclaim-plan", "duplicates", "capabilities", "help", "version"],
   "features": {
     "json": true,
     "cancellation": true,
@@ -74,13 +74,14 @@ Representative JSON (fields may grow; treat unknown keys as forward-compatible):
     "storage_overview": true,
     "storage_opportunities": true,
     "indexed_breakdown": true,
+    "reclaim_plan": true,
     "duplicate_detection": true,
     "reclaim_analysis": true
   },
   "read_only": true,
   "filesystem_mutation": false,
   "json_contract_version": 1,
-  "index_schema_version": 2
+  "index_schema_version": 3
 }
 ```
 
@@ -273,6 +274,53 @@ Logical bytes are namespace size, not guaranteed physical disk usage or
 reclaimable space. There is no `safe_to_delete`. There is no MCP
 `storage_breakdown` tool.
 
+### `reclaim-plan`
+
+Plans host-byte reclaim from physical allocation evidence. Planning only.
+Never executes cleanup, never writes an index, and never invents allocated
+bytes from logical size.
+
+```text
+spacelens reclaim-plan <path> [--source auto|persistent_index|live_scan]
+                              [--target-free SIZE] [--limit N]
+                              [--max-index-age-seconds N] [--json]
+```
+
+`--source` (default `auto`):
+
+| Value | Behavior |
+| --- | --- |
+| `auto` | Use an acceptable published index when it has `physical_accounting=1`. If the index is missing, unsupported, or lacks physical accounting, run one live scan. A user `--max-index-age-seconds` that fails (too old / freshness unknown) fail-closes — it does not fall back to live. Never writes an index. |
+| `persistent_index` | Published index only. Exit **6** if missing, **4** if schema unsupported, physical accounting unavailable, too old, or freshness unknown. |
+| `live_scan` | One live scan plus per-file identity/allocation probes. Does not write an index. |
+
+`--from-index` is rejected. `--target-free` selects overlap-free
+**actionable** candidates until the exact host-byte sum meets the target.
+It never auto-selects `review_only` (personal media, archives, VM images,
+incomplete evidence, Protected). `--limit` bounds the displayed lists
+only; target-free walks the full overlap-free actionable set.
+
+JSON (`schema_version: 1`) includes `command: reclaim-plan`,
+`planning_only`, `read_only`, `filesystem_mutation: false`,
+`execution_supported: false`, `actionable[]`, `review_only[]`,
+`selected[]`, and `summary` host-byte totals. Candidates carry existing
+classification/reclaimability/candidate_strength plus physical fields
+(`allocated_bytes`, `allocation_known`, `hard_link_*`,
+`host_reclaim_bytes`, `reclaim_basis`, `reclaim_confidence`,
+`actionability`, `disruption`, `ownership`, `action`). There is no
+`safe_to_delete`, `should_delete`, `deletion_recommended`, or
+`recommended_delete`. `action.execution_supported` is always false.
+
+`host_reclaim_bytes` is exact unique allocated bytes only when every
+filesystem hard link of that identity is inside the candidate. Incomplete
+coverage never inflates exact reclaim. Sparse/compressed files report
+allocated size, not logical size.
+
+Inaccessible root → exit **3**. Missing index (`persistent_index`) →
+exit **6**. Cancel → exit **5**. Other plan failures (too old, physical
+accounting unavailable, scan failed) → exit **4**. There is no MCP
+reclaim tool.
+
 ### `duplicates`
 
 Finds exact file-content copies from a published index, then live-verifies them.
@@ -312,8 +360,10 @@ scan or mutate the filesystem.
 | `--dirs` | Include directories; with `top`, choose largest directories. |
 | `--limit N` | Return no more than `N` results. |
 | `--under PATH` | `query` / `opportunities` / `breakdown`: restrict to `PATH` and descendants. |
-| `--from-index` | `overview` / `opportunities`: use a published index (exit 6 if missing). |
-| `--max-index-age-seconds N` | `query` / `--from-index` overview / `--from-index` opportunities / `breakdown`: fail closed if the published snapshot is older than N seconds (exit 4). No default. |
+| `--from-index` | `overview` / `opportunities`: use a published index (exit 6 if missing). Invalid on `reclaim-plan`. |
+| `--source S` | `reclaim-plan` only: `auto`, `persistent_index`, or `live_scan`. |
+| `--target-free SIZE` | `reclaim-plan` only: select overlap-free actionable candidates until this many exact host bytes. Never selects review-only. |
+| `--max-index-age-seconds N` | `query` / `--from-index` overview / `--from-index` opportunities / `breakdown` / `reclaim-plan`: fail closed if the published snapshot is older than N seconds (exit 4). No default. |
 | `--json` | Write machine-readable JSON to stdout. |
 
 Filter behavior is conservative. Filters do not override Protected or Sensitive

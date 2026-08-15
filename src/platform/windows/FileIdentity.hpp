@@ -10,18 +10,27 @@
 namespace spacelens {
 
 /// NTFS file reference number (64-bit, from BY_HANDLE_FILE_INFORMATION).
+/// Physical allocation comes from FILE_STANDARD_INFO on the same handle.
+/// allocatedBytes is unset when the filesystem/API cannot determine it;
+/// callers must never substitute logical sizeBytes.
 struct FileIdentity {
     std::uint64_t fileId = 0;
     std::uint64_t volumeSerial = 0;
     bool isDirectory = false;
     ByteSize sizeBytes = 0;
+    std::optional<ByteSize> allocatedBytes;
+    bool allocationKnown = false;
+    std::uint32_t numberOfLinks = 0;
+    bool sparse = false;
+    bool compressed = false;
     std::uint64_t lastWriteTicks = 0;
     std::uint64_t lastAccessTicks = 0;
     std::uint32_t attributes = 0;
 };
 
-/// Open path read-only (backup semantics for directories) and read identity + basic attrs.
-/// Returns nullopt on access denied / not found / failure.
+/// Open path read-only (backup semantics for directories) and read identity,
+/// allocation, and link count from one handle. Returns nullopt on access
+/// denied / not found / failure.
 [[nodiscard]] std::optional<FileIdentity> queryFileIdentity(
     const std::wstring& path);
 

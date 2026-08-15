@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/ReclaimPlan.hpp"
 #include "core/Types.hpp"
 
 #include <array>
@@ -27,11 +28,12 @@ enum class Command {
     Overview,
     Opportunities,
     Breakdown,
+    ReclaimPlan,
 };
 
 /// Commands intentionally exposed by the read-only CLI. Keep this list explicit
 /// so destructive verbs cannot be registered accidentally.
-inline constexpr std::array<Command, 15> kRegisteredCommands{
+inline constexpr std::array<Command, 16> kRegisteredCommands{
     Command::Scan,
     Command::Top,
     Command::Find,
@@ -45,6 +47,7 @@ inline constexpr std::array<Command, 15> kRegisteredCommands{
     Command::Overview,
     Command::Opportunities,
     Command::Breakdown,
+    Command::ReclaimPlan,
     Command::Help,
     Command::Version,
 };
@@ -70,6 +73,8 @@ struct ParsedArgs {
     bool fromIndex = false;
     /// Optional published-snapshot max age. Empty = no policy.
     std::optional<std::uint64_t> maxIndexAgeSeconds;
+    ReclaimPlanSource reclaimSource = ReclaimPlanSource::Auto;
+    std::optional<ByteSize> targetFree;
     std::string error;      // non-empty => usage error
 };
 

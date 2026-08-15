@@ -1,4 +1,4 @@
-# Persistent Index (V1 + V2)
+# Persistent Index (V1 + V2 + V3)
 
 SpaceLens builds a **read-only SQLite index** of a scanned root and answers
 repeated size/classification queries without rescanning the filesystem.
@@ -50,8 +50,9 @@ they never open the developer’s real `%LOCALAPPDATA%\SpaceLens`.
 not touch review rows.
 
 - **rootKey**: FNV-1a 64-bit hex of the case-folded normalized root path
-- **index_schema_version**: **2** (CLI JSON still uses `schema_version: 1` for the
-  response envelope)
+- **index_schema_version**: **3** (CLI JSON still uses `schema_version: 1` for the
+  response envelope). V3 adds physical allocation / hard-link columns and
+  meta `physical_accounting`.
 
 ## Schema (logical)
 
@@ -59,7 +60,7 @@ not touch review rows.
 |-------|------|
 | `meta` | `index_schema_version` and key/value metadata |
 | `roots` | One row per DB: path, key, counts, ISO timestamp, status |
-| `entries` | Files/directories + classification/safety/reclaim fields; V2 adds `file_id`, `parent_file_id` (NTFS FRN) |
+| `entries` | Files/directories + classification/safety/reclaim fields; V2 adds `file_id`, `parent_file_id` (NTFS FRN); V3 adds `allocated_bytes` (NULL when unknown), `allocation_known`, `hard_link_count`, `observed_link_count`, `sparse`, `compressed`, `volume_serial`, `hard_link_coverage` |
 | `refresh_checkpoint` | Volume identity, USN journal id, next USN, method, status |
 
 `roots` is **upserted**. Never `DELETE FROM roots` while `entries` exist —
@@ -73,8 +74,25 @@ Opening a V1 database for write migrates in place:
 2. Create `refresh_checkpoint` if missing
 3. Set `index_schema_version = 2`
 
+Opening a V2 database for write migrates to V3 in place:
+
+1. `ALTER TABLE entries ADD COLUMN` physical fields (`allocated_bytes` NULL,
+   `allocation_known` 0, `hard_link_count` / `observed_link_count` 0,
+   `sparse` / `compressed` 0, `volume_serial` 0, `hard_link_coverage`
+   `unknown`)
+2. Set `index_schema_version = 3`
+3. Do **not** set meta `physical_accounting=1`
+
+Migrated v2 rows stay queryable for overview / opportunities / query /
+breakdown. `reclaim-plan --source persistent_index` fail-closes unless
+meta `physical_accounting=1`. That flag is set only after a **full** v3
+`index` finalize (or a refresh of an index that already had the flag).
+An incremental refresh of a migrated v2 must not claim physical
+accounting is complete.
+
 Old indexes remain queryable; incremental refresh needs a new full `index` so
-FRNs and a checkpoint are populated.
+FRNs and a checkpoint are populated. Physical reclaim-plan on the index
+needs a new full `index` so allocation / hard-link evidence is populated.
 
 ## Full build pipeline
 
@@ -83,7 +101,9 @@ ScanEngine (live, read-only)
         ↓
 DirectoryTree + classification / safety / reclaim
         ↓
-IndexStore staging → INSERT entries (with file_id when available)
+IndexStore staging → INSERT entries (with file_id + physical columns)
+        ↓
+finalizePhysicalAccounting (unique allocated rollup; meta physical_accounting=1)
         ↓
 writeRefreshCheckpointAfterFullBuild (best-effort USN cursor)
         ↓

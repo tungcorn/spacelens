@@ -2,8 +2,10 @@
 
 #include "core/Classification.hpp"
 #include "core/FileTime.hpp"
+#include "core/PhysicalStorage.hpp"
 #include "core/ReclaimAnalysis.hpp"
 #include "core/SafetyPolicy.hpp"
+#include "core/index/PhysicalAccounting.hpp"
 #include "platform/windows/FileIdentity.hpp"
 
 #ifndef NOMINMAX
@@ -418,14 +420,17 @@ UpsertTouch upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
         if (isDir && touch.pathChanged) {
             rewriteDescendantPaths(db, oldPath, path);
         }
+        const PhysicalRow phys = physicalRowFromIdentity(id, isDir);
         SqliteStmt upd(
             db,
             "UPDATE entries SET parent_id=?1, kind=?2, name=?3, path=?4, "
             "size_bytes=?5, extension=?6, last_write_ticks=?7, last_access_ticks=?8, "
             "attributes=?9, file_id=?10, parent_file_id=?11, "
             "classification=?12, confidence=?13, rule_id=?14, location_safety=?15, "
-            "reclaimability=?16, candidate_strength=?17 "
-            "WHERE id=?18;");
+            "reclaimability=?16, candidate_strength=?17, "
+            "allocated_bytes=?18, allocation_known=?19, hard_link_count=?20, "
+            "sparse=?21, compressed=?22, volume_serial=?23 "
+            "WHERE id=?24;");
         upd.bindInt64(1, parentEntryId);
         upd.bindInt64(2, isDir ? 1 : 0);
         upd.bindText16(3, name);
@@ -456,12 +461,23 @@ UpsertTouch upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
             upd.bindText(16, toString(reclaim.reclaimability));
             upd.bindText(17, toString(reclaim.strength));
         }
-        upd.bindInt64(18, *existing);
+        if (!isDir && phys.allocatedBytes.has_value()) {
+            upd.bindInt64(18, static_cast<std::int64_t>(*phys.allocatedBytes));
+        } else {
+            upd.bindNull(18);
+        }
+        upd.bindInt64(19, (!isDir && phys.allocationKnown) ? 1 : 0);
+        upd.bindInt64(20, isDir ? 0 : static_cast<std::int64_t>(phys.hardLinkCount));
+        upd.bindInt64(21, phys.sparse ? 1 : 0);
+        upd.bindInt64(22, phys.compressed ? 1 : 0);
+        upd.bindInt64(23, static_cast<std::int64_t>(phys.volumeSerial));
+        upd.bindInt64(24, *existing);
         upd.stepDone();
         ++stats.modified;
         ++stats.rowsChanged;
     } else {
         const std::int64_t newId = nextEntryId(db);
+        const PhysicalRow phys = physicalRowFromIdentity(id, isDir);
         SqliteStmt ins(
             db,
             "INSERT INTO entries("
@@ -469,9 +485,11 @@ UpsertTouch upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
             "extension, last_write_ticks, last_access_ticks, attributes, is_reparse, "
             "classification, confidence, rule_id, location_safety, reclaimability, "
             "candidate_strength, newest_descendant_write, oldest_descendant_write, "
-            "file_id, parent_file_id) "
+            "file_id, parent_file_id, allocated_bytes, allocation_known, "
+            "hard_link_count, observed_link_count, sparse, compressed, "
+            "volume_serial, hard_link_coverage) "
             "VALUES(?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,0,?12,?13,?14,?15,?16,?17,"
-            "?18,?19,?20,?21);");
+            "?18,?19,?20,?21,?22,?23,?24,0,?25,?26,?27,?28);");
         ins.bindInt64(1, newId);
         ins.bindInt64(2, parentEntryId);
         ins.bindInt64(3, isDir ? 1 : 0);
@@ -505,6 +523,17 @@ UpsertTouch upsertEntryFromDisk(SqliteDb& db, const std::wstring& path,
         ins.bindInt64(19, isDir ? static_cast<std::int64_t>(id.lastWriteTicks) : 0);
         ins.bindInt64(20, static_cast<std::int64_t>(id.fileId));
         ins.bindInt64(21, 0);
+        if (!isDir && phys.allocatedBytes.has_value()) {
+            ins.bindInt64(22, static_cast<std::int64_t>(*phys.allocatedBytes));
+        } else {
+            ins.bindNull(22);
+        }
+        ins.bindInt64(23, (!isDir && phys.allocationKnown) ? 1 : 0);
+        ins.bindInt64(24, isDir ? 0 : static_cast<std::int64_t>(phys.hardLinkCount));
+        ins.bindInt64(25, phys.sparse ? 1 : 0);
+        ins.bindInt64(26, phys.compressed ? 1 : 0);
+        ins.bindInt64(27, static_cast<std::int64_t>(phys.volumeSerial));
+        ins.bindText(28, toString(HardLinkCoverage::Unknown));
         ins.stepDone();
         ++stats.added;
         ++stats.rowsChanged;
@@ -1328,6 +1357,12 @@ IndexRefreshResult refreshIndex(const std::wstring& rootPath, std::stop_token st
         upsertCheckpoint(store.db(), newCp);
         r.checkpoint = newCp;
         r.diagCommittedNextUsn = nextCursor;
+
+        if (indexHasPhysicalAccounting(store.db())) {
+            if (!finalizePhysicalAccounting(store.db(), true, stop)) {
+                throw SqliteError("refresh cancelled during physical finalize");
+            }
+        }
 
         txn.commit();
         r.outcome = IndexRefreshOutcome::Refreshed;

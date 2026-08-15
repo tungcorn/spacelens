@@ -175,3 +175,45 @@ SPACELENS_TEST(CliArgs_max_index_age_seconds)
                         L"--fresh"});
     SPACELENS_REQUIRE(!fresh.error.empty());
 }
+
+SPACELENS_TEST(CliArgs_reclaim_plan)
+{
+    auto a = parse({L"spacelens", L"reclaim-plan", L"D:\\data", L"--json"});
+    SPACELENS_REQUIRE(a.error.empty());
+    SPACELENS_REQUIRE(a.command == Command::ReclaimPlan);
+    SPACELENS_REQUIRE(a.json);
+    SPACELENS_REQUIRE(a.reclaimSource == spacelens::ReclaimPlanSource::Auto);
+    SPACELENS_REQUIRE_EQ(a.limit, 20ULL);
+
+    auto live = parse({L"spacelens", L"reclaim-plan", L"D:\\data", L"--source",
+                       L"live_scan", L"--target-free", L"30GB", L"--limit",
+                       L"5", L"--json"});
+    SPACELENS_REQUIRE(live.error.empty());
+    SPACELENS_REQUIRE(live.reclaimSource ==
+                      spacelens::ReclaimPlanSource::LiveScan);
+    SPACELENS_REQUIRE(live.targetFree.has_value());
+    SPACELENS_REQUIRE_EQ(*live.targetFree, 30ULL * 1024ULL * 1024ULL * 1024ULL);
+    SPACELENS_REQUIRE_EQ(live.limit, 5ULL);
+
+    auto idx = parse({L"spacelens", L"reclaim-plan", L"D:\\data", L"--source",
+                      L"persistent_index", L"--max-index-age-seconds", L"3600"});
+    SPACELENS_REQUIRE(idx.error.empty());
+    SPACELENS_REQUIRE(idx.reclaimSource ==
+                      spacelens::ReclaimPlanSource::PersistentIndex);
+    SPACELENS_REQUIRE(idx.maxIndexAgeSeconds.has_value());
+
+    auto badSrc = parse({L"spacelens", L"reclaim-plan", L"D:\\data", L"--source",
+                         L"index_refresh"});
+    SPACELENS_REQUIRE(!badSrc.error.empty());
+
+    auto fromIndex = parse({L"spacelens", L"reclaim-plan", L"D:\\data",
+                            L"--from-index"});
+    SPACELENS_REQUIRE(!fromIndex.error.empty());
+
+    auto del = parse({L"spacelens", L"reclaim-plan", L"D:\\data", L"--delete"});
+    SPACELENS_REQUIRE(!del.error.empty());
+
+    auto scanSrc = parse({L"spacelens", L"scan", L"D:\\data", L"--source",
+                          L"live_scan"});
+    SPACELENS_REQUIRE(!scanSrc.error.empty());
+}

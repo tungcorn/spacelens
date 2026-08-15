@@ -5,7 +5,7 @@ over that evidence. SpaceLens does not embed a model, accept prompts, or
 mutate analyzed files.
 
 ```text
-overview → opportunities → drill-down → specialized queries
+overview → opportunities → breakdown → reclaim-plan → drill-down
 ```
 
 Human-authorized Recycle Bin maintenance stays in the GUI. The CLI and the
@@ -39,6 +39,7 @@ spacelens index status D:\ --json          # optional: one-root details
 spacelens overview D:\ --from-index --json # reuse a chosen snapshot
 spacelens opportunities D:\ --from-index --json
 spacelens breakdown D:\ --json             # what kind of files consume the root
+spacelens reclaim-plan D:\ --json          # exact host-byte reclaim evidence
 spacelens query D:\ --dirs --under D:\Projects\app --limit 20 --json
 spacelens duplicates D:\ --json            # if an index exists
 ```
@@ -57,10 +58,12 @@ storage_query             { "path": "D:\\", "object_type": "directory",
 Start with `spacelens index list --json` to see which roots have a
 published snapshot, how old each is, and whether it is usable
 (`status=ready`, current `index_schema_version`). Then choose a root
-and run `overview` / `opportunities` / `breakdown` / `query`.
+and run `overview` / `opportunities` / `breakdown` / `reclaim-plan` /
+`query`.
 `index list` does not refresh or live-scan. MCP `storage_index_status`
-still requires a known root — there is no list-indexes MCP tool and no
-`storage_breakdown` tool.
+still requires a known root — there is no list-indexes MCP tool, no
+`storage_breakdown` tool, and no reclaim MCP tool. `reclaim-plan` is
+CLI-only.
 
 Prefer a published index when `index list` / `index status` /
 `storage_index_status` shows an acceptable `freshness` / `age_ms` and
@@ -69,7 +72,10 @@ successful generation), not proof the filesystem is unchanged. Indexed
 commands take `--from-index` (overview/opportunities) or `source:
 persistent_index`. `query` / `storage_query`, `breakdown`, and `duplicates` /
 `storage_duplicates` are index-only. They never silently refresh.
-`breakdown` has no MCP tool.
+`breakdown` has no MCP tool. `reclaim-plan` uses `--source
+auto|persistent_index|live_scan` (not `--from-index`). Auto never writes
+an index. Persistent-index reclaim-plan fail-closes unless the snapshot
+has `physical_accounting=1`.
 Optional `--max-index-age-seconds` / `max_index_age_seconds` fails
 closed (exit 4 / domain error) before top-N or aggregates. No default
 max-age. Do not invent `fresh: true`.
@@ -156,6 +162,36 @@ An unrecognized class name matches nothing (it does not silently become
 
 Default `--limit` is 20. Default `--min-size` is 1 MB. `truncated` is true
 when more candidates existed.
+
+### What can realistically reclaim host bytes?
+
+```text
+spacelens reclaim-plan <path> --json
+spacelens reclaim-plan <path> --source persistent_index --json
+spacelens reclaim-plan <path> --target-free 30GB --json
+```
+
+Read `actionable` first (regenerable / cache / provider-owned), then
+`review_only` (personal media, archives, VM images, incomplete evidence,
+Protected). `selected` is the overlap-free actionable subset for
+`--target-free`; it never includes review-only. Fields that are **not**
+the same as `opportunities`:
+
+| Field | Meaning |
+| --- | --- |
+| `logical_bytes` | Namespace size |
+| `allocated_bytes` | Host allocation when known; never estimated from logical |
+| `host_reclaim_bytes` | Exact unique allocated bytes with complete hard-link coverage |
+| `reclaim_confidence` | Verified / Strong / Heuristic / Unknown |
+| `actionability` | ActionableWithoutContentJudgment / RequiresContentJudgment / InformationalOnly |
+| `disruption` | Rebuild / reinstall / redownload / review trade-off |
+| `ownership.provider` | cargo / cmake / dotnet / nuget / npm / pip when markers match |
+
+`execution_supported` is always false. There is no `safe_to_delete`.
+A 180 GB video library can appear in `review_only` with host-byte
+evidence and must not enter `selected`. A sparse VM reports allocated
+bytes, not logical size. Fake `target` / `build` folders without
+markers do not get provider confidence.
 
 ### Which developer / generated / cache areas are large?
 
@@ -249,6 +285,7 @@ decides whether to refresh or rebuild. Query never auto-refreshes.
 | --- | --- |
 | `overview` | 10 directories + 10 files |
 | `opportunities` | 20 items |
+| `reclaim-plan` | 20 displayed items per list; `--target-free` walks all overlap-free actionable |
 | `top` / `find` / `query` | 20 |
 | `duplicates` | verified groups only; `--min-size` default 1 MB; optional derived hash cache in AppData |
 
@@ -291,11 +328,13 @@ User: "My D drive is almost full."
 1. `spacelens overview D:\ --json` — total size and top consumers
 2. `spacelens opportunities D:\ --json` — groups + ranked review list
 3. `spacelens breakdown D:\ --json` — classification / extension / last-write mix
-4. `spacelens query D:\ --dirs --under <top-opportunity> --json` — look inside
-5. `spacelens duplicates D:\ --json` if an index exists
-6. Explain to the human what is large, what looks regenerable, what is old,
-   what is duplicated, and what is uncertain
-7. Do **not** delete anything
+4. `spacelens reclaim-plan D:\ --json` — exact host-byte reclaim evidence
+5. `spacelens query D:\ --dirs --under <top-opportunity> --json` — look inside
+6. `spacelens duplicates D:\ --json` if an index exists
+7. Explain to the human what is large, what looks regenerable, what can
+   reclaim host bytes, what is old, what is duplicated, and what is uncertain
+   — never delete from the CLI or MCP
+8. Do **not** delete anything
 
 ## Storage Intelligence V2
 

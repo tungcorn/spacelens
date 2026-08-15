@@ -58,23 +58,36 @@ than claiming a shipped feature.
   The Shell adapter lives in `spacelens_maintenance` and is not linked into the
   CLI. See [`docs/MAINTENANCE.md`](MAINTENANCE.md).
 - An agent-safe CLI contract with `capabilities`, `scan`, `top`, `find`,
-  `overview`, and `opportunities` surfaces, filters, versioned JSON output,
-  and explicit read-only capability reporting. See
-  [`docs/AGENT_INTERFACE.md`](AGENT_INTERFACE.md).
+  `overview`, `opportunities`, `breakdown`, and `reclaim-plan` surfaces,
+  filters, versioned JSON output, and explicit read-only capability
+  reporting. See [`docs/AGENT_INTERFACE.md`](AGENT_INTERFACE.md).
 
-The CLI wires `scan`, `top`, `find`, `overview`, `opportunities`, `capabilities`,
-`index`, `index refresh`, `index status`, `index list`, `query`, `duplicates`,
-`help`, and `version`.
+The CLI wires `scan`, `top`, `find`, `overview`, `opportunities`,
+`breakdown`, `reclaim-plan`, `capabilities`, `index`, `index refresh`,
+`index status`, `index list`, `query`, `duplicates`, `help`, and
+`version`.
 Analysis filters and versioned JSON (`schema_version: 1`) are implemented. See
 [`docs/CLI.md`](CLI.md), [`docs/INDEX.md`](INDEX.md), and
 [`docs/DUPLICATES.md`](DUPLICATES.md).
 
 **Persistent Index** stores a full SQLite snapshot under
 `%LOCALAPPDATA%\SpaceLens\indexes\<rootKey>\index.db` for fast repeated
-read-only queries (`index_schema_version: 2`). Rebuilds use a staging file and
+read-only queries (`index_schema_version: 3`). Rebuilds use a staging file and
 atomic publish so a failed or cancelled rebuild never destroys the previous good
 index. Queries report `source: persistent_index` and fail with exit code 6 when
-no index exists — there is no silent live-scan fallback.
+no index exists — there is no silent live-scan fallback. Schema 3 persists
+physical allocation and hard-link evidence; `reclaim-plan --source
+persistent_index` requires meta `physical_accounting=1` (set only after a
+full v3 finalize).
+
+**Reclaim Intelligence V1** answers what can realistically reclaim host
+bytes, how many, why, and what the trade-off is. Logical bytes, allocated
+bytes, and `host_reclaim_bytes` stay distinct. Exact reclaim requires
+complete hard-link coverage. Providers (Cargo, CMake, .NET, NuGet, npm,
+pip) are filesystem-first and never execute cleanup. Existing
+`reclaimability` / `candidate_strength` stay; the planner adds
+`reclaim_confidence`, `reclaim_basis`, `actionability`, and `disruption`.
+There is no MCP reclaim tool and no `safe_to_delete`.
 
 **Incremental Index V2** adds a read-only USN Change Journal path:
 `VolumeHandle` / `FileIdentity` / `UsnJournal` / `IndexRefresh`. Full builds

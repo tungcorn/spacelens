@@ -34,6 +34,9 @@ spacelens opportunities D:\ --from-index --json
 
 # Explain what kind of files consume the indexed root
 spacelens breakdown D:\ --json
+
+# Plan host-byte reclaim from physical evidence (planning only; never executes)
+spacelens reclaim-plan D:\ --json
 ```
 
 ## Why SpaceLens?
@@ -49,13 +52,14 @@ spacelens breakdown D:\ --json
 ## Workflow
 
 ```text
-index list  ──>  overview  ──>  opportunities  ──>  breakdown  ──>  query  ──>  duplicates
+index list  ──>  overview  ──>  opportunities  ──>  breakdown  ──>  reclaim-plan  ──>  query  ──>  duplicates
 ```
 
 - **`index list`**: Catalog available indexes, status, and snapshot freshness.
 - **`overview`**: Review high-level indexed storage usage and largest objects.
 - **`opportunities`**: Rank the top-N storage review candidates across the indexed root.
 - **`breakdown`**: Explain what kind of indexed files consume the root (classification, extension, last-write age).
+- **`reclaim-plan`**: Rank overlap-free host-byte reclaim evidence (actionable vs review-only). Planning only; never executes cleanup.
 - **`query`**: Filter specific files or directories by size, age, pattern, or classification.
 - **`duplicates`**: Locate identical content files verified by SHA-256 hashing.
 

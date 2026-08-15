@@ -154,8 +154,10 @@ try {
     Assert-True ($caps.Json.read_only -eq $true) "capabilities read_only is not true"
     Assert-True ($caps.Json.commands -contains "overview") "capabilities missing overview"
     Assert-True ($caps.Json.commands -contains "opportunities") "capabilities missing opportunities"
+    Assert-True ($caps.Json.commands -contains "reclaim-plan") "capabilities missing reclaim-plan"
     Assert-True ($caps.Json.features.storage_overview -eq $true) "features.storage_overview missing"
     Assert-True ($caps.Json.features.storage_opportunities -eq $true) "features.storage_opportunities missing"
+    Assert-True ($caps.Json.features.reclaim_plan -eq $true) "features.reclaim_plan missing"
     Assert-True ($caps.Json.features.filesystem_mutation -eq $false) "features.filesystem_mutation is not false"
     Write-Host "A0 capabilities: overview/opportunities advertised, mutation=false"
 

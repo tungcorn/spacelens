@@ -155,6 +155,16 @@ std::optional<FileIdentity> queryFileIdentity(const std::wstring& path)
 
     BY_HANDLE_FILE_INFORMATION info{};
     const BOOL ok = ::GetFileInformationByHandle(h, &info);
+
+    FILE_STANDARD_INFO standard{};
+    const BOOL haveStandard =
+        ::GetFileInformationByHandleEx(h, FileStandardInfo, &standard,
+                                       sizeof(standard)) != 0;
+
+    FILE_ID_INFO idInfo{};
+    const BOOL haveFileIdInfo =
+        ::GetFileInformationByHandleEx(h, FileIdInfo, &idInfo,
+                                       sizeof(idInfo)) != 0;
     ::CloseHandle(h);
     if (!ok) {
         return std::nullopt;
@@ -166,14 +176,33 @@ std::optional<FileIdentity> queryFileIdentity(const std::wstring& path)
     idx.LowPart = info.nFileIndexLow;
     id.fileId = idx.QuadPart;
     id.volumeSerial = info.dwVolumeSerialNumber;
+    if (haveFileIdInfo && idInfo.VolumeSerialNumber != 0) {
+        id.volumeSerial = idInfo.VolumeSerialNumber;
+    }
     id.isDirectory = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     ULARGE_INTEGER sz;
     sz.HighPart = info.nFileSizeHigh;
     sz.LowPart = info.nFileSizeLow;
     id.sizeBytes = sz.QuadPart;
+    id.numberOfLinks = info.nNumberOfLinks;
+    id.attributes = info.dwFileAttributes;
+    id.sparse = (info.dwFileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0;
+    id.compressed = (info.dwFileAttributes & FILE_ATTRIBUTE_COMPRESSED) != 0;
+    if (haveStandard) {
+        if (standard.AllocationSize.QuadPart >= 0) {
+            id.allocatedBytes =
+                static_cast<ByteSize>(standard.AllocationSize.QuadPart);
+            id.allocationKnown = true;
+        }
+        if (standard.NumberOfLinks > 0) {
+            id.numberOfLinks = standard.NumberOfLinks;
+        }
+        if (standard.Directory != FALSE) {
+            id.isDirectory = true;
+        }
+    }
     id.lastWriteTicks = fileTimeToU64(info.ftLastWriteTime);
     id.lastAccessTicks = fileTimeToU64(info.ftLastAccessTime);
-    id.attributes = info.dwFileAttributes;
     return id;
 }
 
