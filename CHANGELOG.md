@@ -8,6 +8,9 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 - Release prepare dispatches `ci.yml` for the bump commit and verifies
   that run before dispatching publish. A `GITHUB_TOKEN` push does not
   start CI by itself.
+- Release prepare updates `docs/QT_SOURCE_OFFER.md` so the current
+  unified archive matches the new version and the previous archive
+  stays listed as historical. Older v0.1.3–v0.1.0 entries are kept.
 
 ## [0.1.5] — 2026-08-15
 

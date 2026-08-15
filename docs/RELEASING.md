@@ -144,8 +144,9 @@ There is no separate pull request to merge.
    `src/platform`) to `main`.
 2. `release.yml` — **`prepare` job** — classifies `latest-stable-tag..main`.
    If a release is needed, it waits for all required CI checks on the pushed
-   SHA, then calls `prepare-release.ps1` to bump version files, CHANGELOG,
-   and release notes, commits
+   SHA, then calls `prepare-release.ps1` to bump version files, the written
+   Qt source offer (current unified archive plus historical previous),
+   CHANGELOG, and release notes, commits
    `chore(release): prepare SpaceLens vX.Y.Z` directly on `main`, and
    pushes. If `main` moved while preparing the push fails safely (no
    force-push).

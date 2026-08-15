@@ -392,10 +392,127 @@ function Get-SpaceLensPublishPlan {
     }
 }
 
+function Update-SpaceLensQtSourceOfferText {
+    # Advance the current SpaceLens version and unified archive only.
+    # The previous current archive becomes historical. Existing historical
+    # v0.1.3 / v0.1.2 / v0.1.1 / v0.1.0 (GUI-only) entries are preserved.
+    # This is not a global version replace.
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][string]$FromVersion,
+        [Parameter(Mandatory = $true)][string]$ToVersion
+    )
+    $from = ConvertTo-SpaceLensVersion $FromVersion
+    $to = ConvertTo-SpaceLensVersion $ToVersion
+    if (-not $from -or -not $to) {
+        throw "QT_SOURCE_OFFER.md versions must be X.Y.Z (from='$FromVersion' to='$ToVersion')"
+    }
+    if ($from.Text -eq $to.Text) {
+        throw "QT_SOURCE_OFFER.md from and to versions are the same ($($from.Text))"
+    }
+
+    $fromZip = "spacelens-$($from.Tag)-windows-x64.zip"
+    $toZip = "spacelens-$($to.Tag)-windows-x64.zip"
+    $fromZipTick = '`' + $fromZip + '`'
+    $toZipTick = '`' + $toZip + '`'
+    $shippedFrom = "shipped with SpaceLens $($from.Text)"
+    $shippedTo = "shipped with SpaceLens $($to.Text)"
+    $ordinal = [System.StringComparison]::Ordinal
+
+    if ($Text.IndexOf($shippedFrom, $ordinal) -lt 0) {
+        throw "QT_SOURCE_OFFER.md does not name current SpaceLens $($from.Text)"
+    }
+    if ($Text.IndexOf($shippedTo, $ordinal) -ge 0) {
+        throw "QT_SOURCE_OFFER.md already names SpaceLens $($to.Text) as current"
+    }
+
+    $distAt = $Text.IndexOf("distributed with", $ordinal)
+    if ($distAt -lt 0) {
+        throw "QT_SOURCE_OFFER.md is missing the current 'distributed with' archive sentence"
+    }
+    $histAt = $Text.IndexOf("The same offer remains in force", $distAt, $ordinal)
+    if ($histAt -lt 0) {
+        throw "QT_SOURCE_OFFER.md is missing the historical archive sentence"
+    }
+
+    $currentRegion = $Text.Substring($distAt, $histAt - $distAt)
+    $fromZipAt = $currentRegion.IndexOf($fromZipTick, $ordinal)
+    if ($fromZipAt -lt 0) {
+        throw "QT_SOURCE_OFFER.md current archive is not $fromZip"
+    }
+    $secondFrom = $currentRegion.IndexOf($fromZipTick, $fromZipAt + $fromZipTick.Length, $ordinal)
+    if ($secondFrom -ge 0) {
+        throw "QT_SOURCE_OFFER.md current region names $fromZip more than once"
+    }
+    if ($currentRegion.IndexOf($toZipTick, $ordinal) -ge 0) {
+        throw "QT_SOURCE_OFFER.md current region already names $toZip"
+    }
+
+    $historicalArchives = New-Object System.Collections.Generic.List[string]
+    foreach ($m in [regex]::Matches($Text, 'historical\s+v\d+\.\d+\.\d+\s+(?:unified|GUI-only)\s+archive\s+(`[^`]+`)')) {
+        $historicalArchives.Add($m.Groups[1].Value)
+    }
+
+    $newCurrent = $currentRegion.Substring(0, $fromZipAt) + $toZipTick + $currentRegion.Substring($fromZipAt + $fromZipTick.Length)
+    $updated = $Text.Substring(0, $distAt) + $newCurrent + $Text.Substring($histAt)
+
+    $shippedAt = $updated.IndexOf($shippedFrom, $ordinal)
+    if ($shippedAt -lt 0) {
+        throw "QT_SOURCE_OFFER.md lost current SpaceLens $($from.Text) while rewriting"
+    }
+    $updated = $updated.Substring(0, $shippedAt) + $shippedTo + $updated.Substring($shippedAt + $shippedFrom.Length)
+
+    $alreadyHistorical = [regex]::IsMatch(
+        $updated,
+        "historical\s+$([regex]::Escape($from.Tag))\s+unified archive\s+$([regex]::Escape($fromZipTick))"
+    )
+    if (-not $alreadyHistorical) {
+        $intro = "The same offer remains in force for the historical"
+        $histInsertAt = $updated.IndexOf($intro, $ordinal)
+        if ($histInsertAt -lt 0) {
+            throw "QT_SOURCE_OFFER.md historical list intro is missing"
+        }
+        $afterIntro = $histInsertAt + $intro.Length
+        $rest = $updated.Substring($afterIntro)
+        if ($rest -notmatch '^(?<ws>\s+)') {
+            throw "QT_SOURCE_OFFER.md historical list has no whitespace after intro"
+        }
+        $ws = $Matches['ws']
+        $afterWs = $afterIntro + $ws.Length
+        $insertion = "$($from.Tag) unified archive $fromZipTick, the${ws}historical "
+        $updated = $updated.Substring(0, $afterWs) + $insertion + $updated.Substring($afterWs)
+    }
+
+    foreach ($archiveTick in $historicalArchives) {
+        if ($updated.IndexOf($archiveTick, $ordinal) -lt 0) {
+            throw "QT_SOURCE_OFFER.md lost historical coverage: $archiveTick"
+        }
+    }
+    if ($updated.IndexOf($toZipTick, $ordinal) -lt 0) {
+        throw "QT_SOURCE_OFFER.md did not name current archive $toZip"
+    }
+    if ($updated.IndexOf($fromZipTick, $ordinal) -lt 0) {
+        throw "QT_SOURCE_OFFER.md dropped previous archive $fromZip"
+    }
+    if ($updated.IndexOf($shippedTo, $ordinal) -lt 0) {
+        throw "QT_SOURCE_OFFER.md did not name current SpaceLens $($to.Text)"
+    }
+    if ($updated.IndexOf($shippedFrom, $ordinal) -ge 0) {
+        throw "QT_SOURCE_OFFER.md still names SpaceLens $($from.Text) as current"
+    }
+    $qtPin = "cdd3a69967208276bb01af7ace7dba0ba53e679f886a4cbe624225c60fb73f2c"
+    if ($Text.IndexOf($qtPin, $ordinal) -ge 0 -and $updated.IndexOf($qtPin, $ordinal) -lt 0) {
+        throw "QT_SOURCE_OFFER.md lost the Qt source SHA-256 pin"
+    }
+
+    return $updated
+}
+
 function Get-SpaceLensMechanicalVersionFiles {
-    # Product version sources only. Workflows stay version-agnostic so
-    # release/next can be pushed with the default GITHUB_TOKEN (no
-    # `workflows` permission).
+    # Product version sources plus the written Qt source offer. The offer
+    # is rewritten with historical-preserving logic, not a global replace.
+    # Workflows stay version-agnostic so a GITHUB_TOKEN push does not need
+    # the `workflows` permission.
     return @(
         "CMakeLists.txt",
         "packaging/npm/package.json",
@@ -403,7 +520,8 @@ function Get-SpaceLensMechanicalVersionFiles {
         "src/cli/Commands.cpp",
         "src/mcp/Protocol.hpp",
         "src/app/Application.cpp",
-        "src/core/StorageAnalysis.cpp"
+        "src/core/StorageAnalysis.cpp",
+        "docs/QT_SOURCE_OFFER.md"
     )
 }
 
@@ -437,6 +555,26 @@ function Update-SpaceLensMechanicalVersions {
         $utf8 = New-Object System.Text.UTF8Encoding $false
         [System.IO.File]::WriteAllText($path, $updated, $utf8)
         $changed.Add($item.Rel)
+    }
+
+    $offerRel = "docs/QT_SOURCE_OFFER.md"
+    $offerPath = Join-Path $RepoRoot ($offerRel -replace '/', [IO.Path]::DirectorySeparatorChar)
+    if (-not (Test-Path -LiteralPath $offerPath)) {
+        throw "version file missing: $offerRel"
+    }
+    $offerText = Get-Content -LiteralPath $offerPath -Raw
+    $updatedOffer = Update-SpaceLensQtSourceOfferText -Text $offerText -FromVersion $FromVersion -ToVersion $ToVersion
+    if ($updatedOffer -eq $offerText) {
+        throw "did not update version in $offerRel"
+    }
+    $utf8Offer = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($offerPath, $updatedOffer, $utf8Offer)
+    $changed.Add($offerRel)
+
+    foreach ($rel in Get-SpaceLensMechanicalVersionFiles) {
+        if ($rel -notin $changed) {
+            throw "did not update version in $rel"
+        }
     }
     return $changed.ToArray()
 }

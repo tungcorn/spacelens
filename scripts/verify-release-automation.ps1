@@ -130,7 +130,11 @@ if ($release -match 'release-please') {
 }
 
 # ── mechanical version files must not include workflow files ─────────────────
-foreach ($rel in Get-SpaceLensMechanicalVersionFiles) {
+$mechFiles = @(Get-SpaceLensMechanicalVersionFiles)
+if ($mechFiles -notcontains "docs/QT_SOURCE_OFFER.md") {
+    Add-Fail "mechanical version files must include docs/QT_SOURCE_OFFER.md"
+}
+foreach ($rel in $mechFiles) {
     if ($rel -match '(?i)(?:^|/)\.github/workflows/') {
         Add-Fail "mechanical version files must not include $rel"
     }

@@ -1,5 +1,6 @@
-# Prepare mechanical version files, CHANGELOG, and release notes for the
-# next patch. Does not tag, publish, or update release-pin.env.
+# Prepare mechanical version files (including the written Qt source
+# offer), CHANGELOG, and release notes for the next patch. Does not
+# tag, publish, or update release-pin.env.
 
 [CmdletBinding()]
 param(

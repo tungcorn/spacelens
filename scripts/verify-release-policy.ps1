@@ -223,6 +223,9 @@ try {
             Add-Fail "mechanical version files missing required product source $rel"
         }
     }
+    if ("docs/QT_SOURCE_OFFER.md" -notin $mech) {
+        Add-Fail "mechanical version files must include docs/QT_SOURCE_OFFER.md"
+    }
     foreach ($rel in $mech) {
         $dest = Join-Path $prepRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         $dir = Split-Path -Parent $dest
@@ -267,6 +270,36 @@ try {
             Add-Fail "$rel still contains $($from.Text)"
         }
     }
+    if ("docs/QT_SOURCE_OFFER.md" -notin $changed) {
+        Add-Fail "preparing $($to.Text) omitted docs/QT_SOURCE_OFFER.md"
+    }
+    $preparedOffer = Get-Content -LiteralPath (Join-Path $prepRoot "docs\QT_SOURCE_OFFER.md") -Raw
+    $preparedCurrentZip = "spacelens-$($to.Tag)-windows-x64.zip"
+    $preparedPreviousZip = "spacelens-$($from.Tag)-windows-x64.zip"
+    if ($preparedOffer -notmatch [regex]::Escape("shipped with SpaceLens $($to.Text)")) {
+        Add-Fail "prepared QT_SOURCE_OFFER.md must name current SpaceLens $($to.Text)"
+    }
+    if ($preparedOffer -match [regex]::Escape("shipped with SpaceLens $($from.Text)")) {
+        Add-Fail "prepared QT_SOURCE_OFFER.md still names SpaceLens $($from.Text) as current"
+    }
+    if ($preparedOffer -notmatch [regex]::Escape($preparedCurrentZip)) {
+        Add-Fail "verify-package would reject prepared offer: missing $preparedCurrentZip"
+    }
+    if ($preparedOffer -notmatch "historical\s+$([regex]::Escape($from.Tag))\s+unified archive\s+``$([regex]::Escape($preparedPreviousZip))``") {
+        Add-Fail "prepared QT_SOURCE_OFFER.md must keep $($from.Text) as a historical archive"
+    }
+    foreach ($oldZip in @(
+        "spacelens-v0.1.4-windows-x64.zip",
+        "spacelens-v0.1.3-windows-x64.zip",
+        "spacelens-v0.1.2-windows-x64.zip",
+        "spacelens-v0.1.1-windows-x64.zip",
+        "spacelens-gui-v0.1.0-windows-x64.zip"
+    )) {
+        if ($oldZip -eq $preparedCurrentZip) { continue }
+        if ($preparedOffer -notmatch [regex]::Escape($oldZip)) {
+            Add-Fail "prepared QT_SOURCE_OFFER.md lost historical archive $oldZip"
+        }
+    }
     $cmake = Get-Content (Join-Path $prepRoot "CMakeLists.txt") -Raw
     if ($cmake -notmatch "VERSION $($to.Text)") { Add-Fail "temp CMake was not bumped to $($to.Text)" }
     if ($cmake -match "project\(\s*SpaceLens\s+VERSION $($from.Text)") {
@@ -284,6 +317,115 @@ try {
     if ($null -ne $untouched) { Add-Fail "notes without markers must be left alone" }
 } finally {
     Remove-Item -LiteralPath $prepRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Qt source offer: current archive advances; previous current becomes historical.
+$offer014 = @"
+This is a maintainer-controlled written offer for the Qt libraries
+dynamically shipped with SpaceLens 0.1.4. It is not legal advice.
+
+Source for the Qt 6.8.3 modules actually distributed with
+``spacelens-v0.1.4-windows-x64.zip``, for as long as SpaceLens continues
+to distribute those binaries. The same offer remains in force for the historical
+v0.1.3 unified archive ``spacelens-v0.1.3-windows-x64.zip``, the
+historical v0.1.2 unified archive ``spacelens-v0.1.2-windows-x64.zip``, the
+historical v0.1.1 unified archive ``spacelens-v0.1.1-windows-x64.zip``,
+and the historical v0.1.0 GUI-only archive
+``spacelens-gui-v0.1.0-windows-x64.zip``.
+
+- SHA-256: ``cdd3a69967208276bb01af7ace7dba0ba53e679f886a4cbe624225c60fb73f2c``
+"@
+$offer015 = Update-SpaceLensQtSourceOfferText -Text $offer014 -FromVersion "0.1.4" -ToVersion "0.1.5"
+if ($offer015 -notmatch [regex]::Escape("shipped with SpaceLens 0.1.5")) {
+    Add-Fail "0.1.4 -> 0.1.5 offer must name current SpaceLens 0.1.5"
+}
+if ($offer015 -match [regex]::Escape("shipped with SpaceLens 0.1.4")) {
+    Add-Fail "0.1.4 -> 0.1.5 offer must not keep SpaceLens 0.1.4 as current"
+}
+if ($offer015 -notmatch [regex]::Escape("spacelens-v0.1.5-windows-x64.zip")) {
+    Add-Fail "verify-package would reject 0.1.5 offer: missing spacelens-v0.1.5-windows-x64.zip"
+}
+if ($offer015 -notmatch "historical\s+v0\.1\.4\s+unified archive\s+``spacelens-v0\.1\.4-windows-x64\.zip``") {
+    Add-Fail "0.1.4 -> 0.1.5 offer must keep v0.1.4 as a historical archive"
+}
+foreach ($oldZip in @(
+    "spacelens-v0.1.3-windows-x64.zip",
+    "spacelens-v0.1.2-windows-x64.zip",
+    "spacelens-v0.1.1-windows-x64.zip",
+    "spacelens-gui-v0.1.0-windows-x64.zip"
+)) {
+    if ($offer015 -notmatch [regex]::Escape($oldZip)) {
+        Add-Fail "0.1.4 -> 0.1.5 offer lost historical archive $oldZip"
+    }
+}
+if (($offer015 | Select-String -Pattern "spacelens-v0.1.5-windows-x64.zip" -AllMatches).Matches.Count -ne 1) {
+    Add-Fail "0.1.5 current archive must appear exactly once"
+}
+if (($offer015 | Select-String -Pattern "spacelens-v0.1.4-windows-x64.zip" -AllMatches).Matches.Count -ne 1) {
+    Add-Fail "0.1.4 historical archive must appear exactly once"
+}
+if ($offer015 -notmatch "cdd3a69967208276bb01af7ace7dba0ba53e679f886a4cbe624225c60fb73f2c") {
+    Add-Fail "offer rewrite must keep the Qt source SHA-256 pin"
+}
+
+$offer016 = Update-SpaceLensQtSourceOfferText -Text $offer015 -FromVersion "0.1.5" -ToVersion "0.1.6"
+if ($offer016 -notmatch [regex]::Escape("spacelens-v0.1.6-windows-x64.zip")) {
+    Add-Fail "verify-package would reject 0.1.6 offer: missing spacelens-v0.1.6-windows-x64.zip"
+}
+if ($offer016 -notmatch "historical\s+v0\.1\.5\s+unified archive\s+``spacelens-v0\.1\.5-windows-x64\.zip``") {
+    Add-Fail "0.1.5 -> 0.1.6 offer must keep v0.1.5 as a historical archive"
+}
+if ($offer016 -notmatch "historical\s+v0\.1\.4\s+unified archive\s+``spacelens-v0\.1\.4-windows-x64\.zip``") {
+    Add-Fail "0.1.5 -> 0.1.6 offer must still cover historical v0.1.4"
+}
+if ($offer016 -match [regex]::Escape("shipped with SpaceLens 0.1.5")) {
+    Add-Fail "0.1.5 -> 0.1.6 offer must not keep SpaceLens 0.1.5 as current"
+}
+
+try {
+    Update-SpaceLensQtSourceOfferText -Text $offer014 -FromVersion "0.1.5" -ToVersion "0.1.6" | Out-Null
+    Add-Fail "offer rewrite must refuse when the current version is not present"
+} catch { }
+
+$blind = $offer014.Replace("0.1.4", "0.1.5")
+if ($blind -match [regex]::Escape("spacelens-v0.1.4-windows-x64.zip")) {
+    Add-Fail "fixture sanity: a global replace should have erased the 0.1.4 zip"
+}
+if ($offer015 -notmatch [regex]::Escape("spacelens-v0.1.4-windows-x64.zip")) {
+    Add-Fail "offer rewrite must not be a global version replace"
+}
+
+$dryDecision = [pscustomobject]@{
+    Needed          = $true
+    LatestVersion   = (ConvertTo-SpaceLensVersion "0.1.4")
+    NextVersion     = (ConvertTo-SpaceLensVersion "0.1.5")
+    ReleasableCount = 1
+    Releasable      = @([pscustomobject]@{ Hash = "abc1234dead"; Subject = "feat: x" })
+}
+$dryText = Format-SpaceLensDryRun -Decision $dryDecision
+if ($dryText -notmatch 'docs/QT_SOURCE_OFFER.md') {
+    Add-Fail "prepare dry-run must list docs/QT_SOURCE_OFFER.md so a bump cannot omit it"
+}
+
+$omitRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-offer-omit-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $omitRoot | Out-Null
+try {
+    foreach ($rel in @(Get-SpaceLensMechanicalVersionFiles | Where-Object { $_ -ne "docs/QT_SOURCE_OFFER.md" })) {
+        $dest = Join-Path $omitRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        $dir = Split-Path -Parent $dest
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+        Copy-Item -LiteralPath (Join-Path $root ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)) -Destination $dest
+    }
+    try {
+        Update-SpaceLensMechanicalVersions -RepoRoot $omitRoot -FromVersion "0.1.5" -ToVersion "0.1.6" | Out-Null
+        Add-Fail "prepare must fail if docs/QT_SOURCE_OFFER.md is missing"
+    } catch {
+        if ("$($_.Exception.Message)" -notmatch 'QT_SOURCE_OFFER') {
+            Add-Fail "missing offer must fail specifically on QT_SOURCE_OFFER.md, got: $($_.Exception.Message)"
+        }
+    }
+} finally {
+    Remove-Item -LiteralPath $omitRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if ($failures.Count -gt 0) {
