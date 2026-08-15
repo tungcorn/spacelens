@@ -106,10 +106,11 @@ try {
             '`@tungcorn/spacelens@\d+\.\d+\.\d+` is on the public npm registry\.',
             "``@tungcorn/spacelens@$($v.Text)`` is on the public npm registry."
         )
+        $dash = [char]0x2013
         $doc = [regex]::Replace(
             $doc,
-            'Do not retag or republish\r?\n0\.1\.0–0\.\d+\.\d+\.',
-            "Do not retag or republish`n0.1.0–$($v.Text)."
+            "Do not retag or republish\r?\n0\.1\.0${dash}0\.\d+\.\d+\.",
+            "Do not retag or republish`n0.1.0${dash}$($v.Text)."
         )
         [System.IO.File]::WriteAllText($releasing, $doc, $utf8)
     }
