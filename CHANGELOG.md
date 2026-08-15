@@ -5,6 +5,16 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-08-15
+
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.5
+
+<!-- BEGIN GENERATED CHANGELOG 0.1.5 -->
+### Added
+
+- index: add indexed storage breakdown
+<!-- END GENERATED CHANGELOG 0.1.5 -->
+
 ### Indexed storage breakdown
 
 - `spacelens breakdown <root>` reports file-logical-byte mix by stored
