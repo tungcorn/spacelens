@@ -286,8 +286,8 @@ Templates live in `packaging/npm/`. The package name is
 `@tungcorn/spacelens`. `package.json` version must match CMake.
 
 `packaging/npm/release-pin.env` records the **last published** unified
-zip (currently v0.1.4,
-`6265338ef23edee202186627c42bc7d79ce46638fd0de93c04f4fd542a5a20b6`).
+zip (currently v0.1.5,
+`88d60be76cd18266a47e290eacf0cc6e9a5ad13c935561fc8595a319240f2b46`).
 Do not point the pin at a version whose public zip does not exist yet.
 A hash mismatch is a hard stop. Do not substitute a locally rebuilt zip
 for a published pin.
@@ -323,10 +323,10 @@ no `postinstall` download. Node launchers spawn
 `native\spacelens-mcp.exe` with `shell: false` and do not rewrite
 stdout. The MCP launcher must emit protocol-only stdout.
 
-`@tungcorn/spacelens@0.1.4` is on the public npm registry. Historical
+`@tungcorn/spacelens@0.1.5` is on the public npm registry. Historical
 0.1.1–0.1.3 stay published. The root README advertises
 `npm install -g @tungcorn/spacelens`. Do not retag or republish
-0.1.0–0.1.4.
+0.1.0–0.1.5.
 
 `release-pr.yml` no longer runs on push. `update-release-pr.ps1` is
 retained for reference and manual use but is not called by CI.
