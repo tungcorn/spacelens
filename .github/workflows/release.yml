@@ -169,17 +169,56 @@ jobs:
           steps.bump_check.outputs.tag_exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_VERSION: ${{ needs.decide.outputs.version }}
-        shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          # Wait for the original pushed SHA's CI checks — without publish gates.
-          .\\scripts\\verify-release-preflight.ps1 `
-            -Version $env:CURRENT_VERSION `
-            -Publish:$false `
-            -Wait `
-            -WaitMinutes 120 `
-            -Sha $env:GITHUB_SHA
+          set -euo pipefail
+          SHA="${{ github.sha }}"
+          REPO="${{ github.repository }}"
+          REQUIRED=(
+            "Windows / Full Debug"
+            "Windows / Full Release"
+            "Windows / CLI-only Latest"
+            "Quality / MSVC Analyze"
+            "npm / Package"
+            "Release / Policy"
+          )
+          DEADLINE=$((SECONDS + 7200))   # 120 minutes
+          echo "Waiting for required CI checks on ${SHA}..."
+          while true; do
+            CHECKS="$(gh api "repos/${REPO}/commits/${SHA}/check-runs?per_page=100" --jq '.check_runs')"
+            PENDING=()
+            FAILED=()
+            MISSING=()
+            for NAME in "${REQUIRED[@]}"; do
+              ROW="$(echo "$CHECKS" | jq -r --arg n "$NAME" '[.[] | select(.name==$n)] | sort_by(.completed_at) | reverse | .[0] // empty')"
+              if [ -z "$ROW" ]; then
+                MISSING+=("$NAME")
+                continue
+              fi
+              STATUS="$(echo "$ROW" | jq -r '.status')"
+              CONCLUSION="$(echo "$ROW" | jq -r '.conclusion // empty')"
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "  OK: $NAME"
+              elif [ "$STATUS" = "completed" ]; then
+                FAILED+=("$NAME ($STATUS/$CONCLUSION)")
+              else
+                PENDING+=("$NAME ($STATUS)")
+              fi
+            done
+            if [ "${#FAILED[@]}" -gt 0 ]; then
+              echo "Required CI check(s) FAILED: ${FAILED[*]}" >&2
+              exit 1
+            fi
+            if [ "${#MISSING[@]}" -eq 0 ] && [ "${#PENDING[@]}" -eq 0 ]; then
+              echo "All required CI checks passed on ${SHA}."
+              break
+            fi
+            if (( SECONDS >= DEADLINE )); then
+              echo "Timed out waiting for CI (missing: ${MISSING[*]:-none}; pending: ${PENDING[*]:-none})" >&2
+              exit 1
+            fi
+            echo "  Waiting... missing=${MISSING[*]:-none} pending=${PENDING[*]:-none}"
+            sleep 30
+          done
 
       - name: Prepare version bump commit on main
         id: bump
