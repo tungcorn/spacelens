@@ -1,6 +1,18 @@
 #include "core/index/IndexCatalog.hpp"
 
+#include "core/Json.hpp"
 #include "core/index/IndexStore.hpp"
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+
+#include <algorithm>
+#include <sstream>
 
 namespace spacelens {
 
@@ -148,6 +160,207 @@ IndexRootSummary fillFromStatusAndProbe(const std::wstring& rootPath)
 IndexRootSummary summarizeIndexedRoot(const std::wstring& rootPath)
 {
     return fillFromStatusAndProbe(rootPath);
+}
+
+const char* toString(IndexCatalogStatus status) noexcept
+{
+    switch (status) {
+    case IndexCatalogStatus::Ready:
+        return "ready";
+    case IndexCatalogStatus::Incompatible:
+        return "incompatible";
+    case IndexCatalogStatus::Unavailable:
+        return "unavailable";
+    case IndexCatalogStatus::Corrupt:
+        return "corrupt";
+    }
+    return "unavailable";
+}
+
+namespace {
+
+FileTimeTicks catalogNowTicks()
+{
+    FILETIME ft{};
+    ::GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER value;
+    value.LowPart = ft.dwLowDateTime;
+    value.HighPart = ft.dwHighDateTime;
+    return value.QuadPart;
+}
+
+IndexPublishMetadata publishMetadataFrom(const IndexRootInfo& root, SqliteDb& db)
+{
+    IndexPublishMetadata meta;
+    meta.rootIndexedAtTicks = root.indexedAtTicks;
+    meta.rootIndexedAtIso = root.indexedAtIso;
+    if (auto cp = readRefreshCheckpoint(db)) {
+        meta.lastRefreshAtTicks = cp->lastRefreshAtTicks;
+        meta.lastRefreshMethod = cp->lastRefreshMethod;
+        meta.fullIndexedAtTicks = cp->fullIndexedAtTicks;
+    }
+    return meta;
+}
+
+IndexCatalogEntry inspectListedIndex(const ListedIndex& listed, FileTimeTicks now)
+{
+    IndexCatalogEntry entry;
+    entry.rootKey = listed.rootKey;
+    entry.dbPath = listed.dbPath;
+    entry.root = listed.rootPath;
+
+    IndexLocation loc;
+    loc.rootKey = listed.rootKey;
+    loc.dbPath = listed.dbPath;
+    const auto slash = listed.dbPath.find_last_of(L"\\/");
+    if (slash != std::wstring::npos) {
+        loc.indexDir = listed.dbPath.substr(0, slash);
+    }
+
+    try {
+        auto store = IndexStore::openInspect(loc);
+        entry.indexSchemaVersion = store.schemaVersion();
+        auto meta = store.readRootMeta();
+        if (!meta) {
+            entry.status = IndexCatalogStatus::Corrupt;
+            entry.reason = "index_corrupt";
+            return entry;
+        }
+        entry.root = meta->rootPath;
+        entry.fileCount = meta->fileCount;
+        entry.directoryCount = meta->dirCount;
+        entry.logicalBytes = meta->logicalBytes;
+        entry.snapshot = evaluateIndexSnapshot(publishMetadataFrom(*meta, store.db()),
+                                               now);
+        entry.hasPublishedSnapshot = true;
+        if (entry.indexSchemaVersion != kIndexSchemaVersion) {
+            entry.status = IndexCatalogStatus::Incompatible;
+            entry.reason = "unsupported_schema";
+            return entry;
+        }
+        if (meta->status != IndexStatus::Ready) {
+            entry.status = IndexCatalogStatus::Unavailable;
+            entry.reason = "index_not_ready";
+            return entry;
+        }
+        entry.status = IndexCatalogStatus::Ready;
+        return entry;
+    } catch (...) {
+        entry.status = IndexCatalogStatus::Unavailable;
+        entry.reason = "index_open_failed";
+        return entry;
+    }
+}
+
+bool catalogEntryLess(const IndexCatalogEntry& a, const IndexCatalogEntry& b)
+{
+    if (a.root.empty() != b.root.empty()) {
+        return !a.root.empty();
+    }
+    if (a.root.empty()) {
+        return compareIndexRootPath(a.rootKey, b.rootKey) < 0;
+    }
+    const int cmp = compareIndexRootPath(a.root, b.root);
+    if (cmp != 0) {
+        return cmp < 0;
+    }
+    return compareIndexRootPath(a.rootKey, b.rootKey) < 0;
+}
+
+}  // namespace
+
+IndexCatalogListing listPublishedIndexes(FileTimeTicks nowTicks)
+{
+    IndexCatalogListing listing;
+    listing.nowTicks = nowTicks != 0 ? nowTicks : catalogNowTicks();
+    const auto listed = listIndexedRoots();
+    listing.indexes.reserve(listed.size());
+    for (const auto& item : listed) {
+        listing.indexes.push_back(inspectListedIndex(item, listing.nowTicks));
+    }
+    std::sort(listing.indexes.begin(), listing.indexes.end(), catalogEntryLess);
+    return listing;
+}
+
+std::string indexCatalogToJson(const IndexCatalogListing& listing)
+{
+    std::ostringstream os;
+    os << "{"
+       << "\"schema_version\":1,"
+       << "\"ok\":true,"
+       << "\"command\":\"index_list\","
+       << "\"source\":\"persistent_index\","
+       << "\"indexes\":[";
+    bool first = true;
+    for (const auto& entry : listing.indexes) {
+        if (!first) {
+            os << ',';
+        }
+        first = false;
+        os << "{"
+           << "\"root\":" << jsonString(entry.root) << ','
+           << "\"path\":" << jsonString(entry.dbPath) << ','
+           << "\"root_key\":" << jsonString(entry.rootKey) << ','
+           << "\"index_schema_version\":" << entry.indexSchemaVersion << ','
+           << "\"status\":" << jsonString(toString(entry.status));
+        if (!entry.reason.empty()) {
+            os << ",\"reason\":" << jsonString(entry.reason)
+               << ",\"error\":" << jsonString(entry.reason);
+        }
+        if (entry.fileCount) {
+            os << ",\"file_count\":" << jsonUInt(*entry.fileCount);
+        }
+        if (entry.directoryCount) {
+            os << ",\"directory_count\":" << jsonUInt(*entry.directoryCount);
+        }
+        if (entry.logicalBytes) {
+            os << ",\"logical_bytes\":" << jsonUInt(*entry.logicalBytes);
+        }
+        if (entry.hasPublishedSnapshot) {
+            if (!entry.snapshot.publishedAtUtc.empty()) {
+                os << ",\"indexed_at\":" << jsonString(entry.snapshot.publishedAtUtc);
+            }
+            IndexAgeDecision decision;
+            decision.evidence = entry.snapshot;
+            os << ",\"freshness\":"
+               << indexFreshnessJsonObject(entry.snapshot, decision);
+        }
+        os << '}';
+    }
+    os << "]}\n";
+    return os.str();
+}
+
+std::string formatIndexCatalogHuman(const IndexCatalogListing& listing)
+{
+    if (listing.indexes.empty()) {
+        return "No published indexes under " +
+               utf8FromWide(spaceLensIndexesRoot()) + "\n";
+    }
+    std::ostringstream os;
+    for (const auto& entry : listing.indexes) {
+        if (entry.root.empty()) {
+            os << "(unreadable " << utf8FromWide(entry.rootKey) << ')';
+        } else {
+            os << utf8FromWide(entry.root);
+        }
+        os << "  " << toString(entry.status);
+        if (entry.hasPublishedSnapshot) {
+            if (entry.snapshot.ageState == SnapshotAgeState::Known &&
+                entry.snapshot.ageSeconds) {
+                os << "  " << *entry.snapshot.ageSeconds << 's';
+            } else if (entry.snapshot.ageState == SnapshotAgeState::ClockSkew) {
+                os << "  clock skew";
+            } else {
+                os << "  age unknown";
+            }
+            if (entry.snapshot.publishKind != SnapshotPublishKind::Unknown) {
+                os << "  " << toString(entry.snapshot.publishKind);
+            }
+        }
+        os << '\n';
+    }
+    return os.str();
 }
 
 std::vector<IndexRootSummary> listIndexSummaries()

@@ -104,7 +104,8 @@ commands until they resolve from the official WinGet source.
   `unique_review_bytes` (logical review bytes on published index
   evidence — not guaranteed freed disk space). Exact is not live:
   indexed JSON reports published-snapshot `index.freshness`; optional
-  `--max-index-age-seconds` fails closed
+  `--max-index-age-seconds` fails closed. `index list --json` is the
+  agent catalog (status + freshness; no refresh)
 - Optional USN-based incremental refresh (`index refresh`) — read-only journal
   access; full rebuild required on discontinuity or access denied
 - Read-only CLI with human and machine-readable (`--json`) output for

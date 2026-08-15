@@ -169,7 +169,7 @@ Agents should treat any non-supported state as **run `index` (full rebuild)**.
 | `index <path>` | Full rebuild + best-effort checkpoint |
 | `index refresh <path>` | USN incremental apply when possible |
 | `index status <path>` | Index age/counts + `incremental_refresh` block |
-| `index list` | List published indexes under AppData |
+| `index list` | Compact published-index catalog (status + freshness; no refresh) |
 | `query <path> …` | Read-only SQL against published DB |
 | `opportunities <path> --from-index` | Exact top-N review candidates across the whole index |
 
@@ -220,6 +220,13 @@ generation**, not `index.db` mtime and not a live-filesystem probe.
   auto-refresh. No live fallback. `index status` reports honest age and
   never applies the gate. `duplicates` is exempt (index candidates, then
   live hash verify).
+- `index list --json` is the agent catalog entry: every usable published
+  root includes the same `freshness` object (one captured `now` per
+  invocation). Status is `ready` / `incompatible` / `unavailable` /
+  `corrupt`. Listing does not migrate V1 indexes, probe USN, or scan the
+  analyzed filesystem. Broken entries stay visible; they do not fail the
+  catalog. `index list` and `index status` agree on published timestamp
+  and freshness for current-schema ready roots.
 
 `unique_review_estimated` is true only when checked byte addition
 overflows `uint64` (the public value saturates at `2^64-1` and is not

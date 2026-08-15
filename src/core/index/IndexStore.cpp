@@ -237,6 +237,15 @@ IndexStore IndexStore::openRead(const IndexLocation& loc)
     return store;
 }
 
+IndexStore IndexStore::openInspect(const IndexLocation& loc)
+{
+    if (!indexDatabaseExists(loc)) {
+        throw SqliteError("index database not found");
+    }
+    SqliteDb readonly(loc.dbPath, SqliteOpen::ReadOnly);
+    return IndexStore(loc, std::move(readonly));
+}
+
 IndexStore IndexStore::openReadWrite(const IndexLocation& loc)
 {
     if (!indexDatabaseExists(loc)) {
@@ -304,6 +313,11 @@ bool IndexStore::schemaSupported() const
     } catch (...) {
         return false;
     }
+}
+
+int IndexStore::schemaVersion() const
+{
+    return readSchemaVersion(const_cast<SqliteDb&>(m_db));
 }
 
 void IndexStore::writeRootMeta(const IndexRootInfo& info)

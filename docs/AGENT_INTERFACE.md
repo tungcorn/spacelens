@@ -34,9 +34,10 @@ For "My drive is almost full. Find what I should review.":
 
 ```powershell
 spacelens capabilities --json
-spacelens index status D:\ --json          # optional: reuse a snapshot?
-spacelens overview D:\ --json              # one live scan
-spacelens opportunities D:\ --json         # ranked review candidates
+spacelens index list --json                # discover published snapshots
+spacelens index status D:\ --json          # optional: one-root details
+spacelens overview D:\ --from-index --json # reuse a chosen snapshot
+spacelens opportunities D:\ --from-index --json
 spacelens query D:\ --dirs --under D:\Projects\app --limit 20 --json
 spacelens duplicates D:\ --json            # if an index exists
 ```
@@ -52,11 +53,18 @@ storage_query             { "path": "D:\\", "object_type": "directory",
                             "under": "D:\\Projects\\app", "limit": 20 }
 ```
 
-Prefer a published index when `index status` / `storage_index_status` shows
-an acceptable `index.freshness` / `age_ms` and `status`. Exact is not
-live: `age_ms` is the published snapshot age (latest successful
-generation), not proof the filesystem is unchanged. Indexed commands
-take `--from-index` (overview/opportunities) or `source:
+Start with `spacelens index list --json` to see which roots have a
+published snapshot, how old each is, and whether it is usable
+(`status=ready`, current `index_schema_version`). Then choose a root
+and run `overview` / `opportunities` / `query`. `index list` does not
+refresh or live-scan. MCP `storage_index_status` still requires a
+known root — there is no list-indexes MCP tool.
+
+Prefer a published index when `index list` / `index status` /
+`storage_index_status` shows an acceptable `freshness` / `age_ms` and
+`status`. Exact is not live: age is the published snapshot age (latest
+successful generation), not proof the filesystem is unchanged. Indexed
+commands take `--from-index` (overview/opportunities) or `source:
 persistent_index`. `query` / `storage_query` and `duplicates` /
 `storage_duplicates` are index-only. They never silently refresh.
 Optional `--max-index-age-seconds` / `max_index_age_seconds` fails

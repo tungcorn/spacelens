@@ -282,6 +282,32 @@ try {
     $idx = Invoke-CliJson -Arguments @("index", $fixture, "--json")
     Assert-True ($idx.Json.ok -eq $true) "index failed: $($idx.Raw)"
 
+    $catalog = Invoke-CliJson -Arguments @("index", "list", "--json")
+    Assert-True ($catalog.Json.schema_version -eq 1) "index list schema_version"
+    Assert-True ($catalog.Json.command -eq "index_list") "index list command"
+    Assert-True ($null -ne $catalog.Json.indexes) "index list missing indexes"
+    Assert-True ($catalog.Raw -notmatch '"fresh"\s*:') "index list leaked bare fresh"
+    $catalogHit = $null
+    foreach ($entry in @($catalog.Json.indexes)) {
+        if ($null -ne $entry.root -and ($entry.root -like "*$fixture*" -or $fixture -like "$($entry.root)*")) {
+            $catalogHit = $entry
+            break
+        }
+    }
+    if ($null -eq $catalogHit) {
+        foreach ($entry in @($catalog.Json.indexes)) {
+            if ($null -ne $entry.root -and $entry.status -eq "ready") {
+                $catalogHit = $entry
+                break
+            }
+        }
+    }
+    Assert-True ($null -ne $catalogHit) "index list has no usable published root"
+    Assert-True ($catalogHit.status -eq "ready") "index list status"
+    Assert-True ($null -ne $catalogHit.freshness) "index list missing freshness"
+    Assert-True ($catalogHit.freshness.basis -eq "published_snapshot") "index list freshness basis"
+    Write-Host "H catalog: index list --json freshness/status present"
+
     $idxOverview = Invoke-CliJson -Arguments @("overview", $fixture, "--from-index", "--json")
     Assert-True ($idxOverview.Json.source -eq "persistent_index") "indexed overview source"
     Assert-True ($idxOverview.Json.ok -eq $true) "indexed overview not ok"

@@ -115,6 +115,30 @@ std::wstring normalizeIndexRoot(std::wstring_view path)
     return normalizePathForPolicy(path);
 }
 
+int compareIndexRootPath(std::wstring_view a, std::wstring_view b)
+{
+    const std::wstring na = normalizeIndexRoot(a);
+    const std::wstring nb = normalizeIndexRoot(b);
+    const std::size_t n = na.size() < nb.size() ? na.size() : nb.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        const wchar_t ca = static_cast<wchar_t>(std::towlower(na[i]));
+        const wchar_t cb = static_cast<wchar_t>(std::towlower(nb[i]));
+        if (ca < cb) {
+            return -1;
+        }
+        if (ca > cb) {
+            return 1;
+        }
+    }
+    if (na.size() < nb.size()) {
+        return -1;
+    }
+    if (na.size() > nb.size()) {
+        return 1;
+    }
+    return 0;
+}
+
 std::wstring rootKeyFor(std::wstring_view normalizedRoot)
 {
     std::wstring lower;

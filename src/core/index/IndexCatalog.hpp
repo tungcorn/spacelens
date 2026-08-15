@@ -3,6 +3,7 @@
 #include "core/index/IndexPaths.hpp"
 #include "core/index/IndexQuery.hpp"
 #include "core/index/IndexRefresh.hpp"
+#include "core/index/IndexSnapshot.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -75,6 +76,46 @@ inline constexpr std::uint64_t kOldAndLargeOlderThanDays = 90;
 
 /// Enumerate published indexes and summarize each (best-effort).
 [[nodiscard]] std::vector<IndexRootSummary> listIndexSummaries();
+
+/// Compact catalog usability. Distinct from GUI `IndexFreshness` and from
+/// `roots.status`. Listing never probes USN or migrates schema.
+enum class IndexCatalogStatus {
+    Ready,
+    Incompatible,
+    Unavailable,
+    Corrupt
+};
+
+[[nodiscard]] const char* toString(IndexCatalogStatus status) noexcept;
+
+struct IndexCatalogEntry {
+    std::wstring root;
+    std::wstring rootKey;
+    std::wstring dbPath;
+    int indexSchemaVersion = 0;
+    IndexCatalogStatus status = IndexCatalogStatus::Unavailable;
+    std::string reason;
+    bool hasPublishedSnapshot = false;
+    IndexSnapshotEvidence snapshot{};
+    std::optional<std::uint64_t> fileCount;
+    std::optional<std::uint64_t> directoryCount;
+    std::optional<ByteSize> logicalBytes;
+};
+
+struct IndexCatalogListing {
+    FileTimeTicks nowTicks = 0;
+    std::vector<IndexCatalogEntry> indexes;
+};
+
+/// Discover published indexes under SpaceLens-owned AppData.
+/// One `now` for every entry. Read-only: no migrate, refresh, USN, or scan.
+[[nodiscard]] IndexCatalogListing listPublishedIndexes(FileTimeTicks nowTicks = 0);
+
+/// Agent JSON for `index list --json`. Additive; no `fresh: true`.
+[[nodiscard]] std::string indexCatalogToJson(const IndexCatalogListing& listing);
+
+/// Concise human rows: root, status, age, publish kind.
+[[nodiscard]] std::string formatIndexCatalogHuman(const IndexCatalogListing& listing);
 
 /// Build IndexQuerySpec from simple UI fields (shared CLI/GUI filter semantics).
 [[nodiscard]] IndexQuerySpec makeBrowserQuerySpec(

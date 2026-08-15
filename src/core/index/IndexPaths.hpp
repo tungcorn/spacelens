@@ -39,6 +39,10 @@ struct IndexLocation {
 /// except drive roots). Does not touch the filesystem.
 [[nodiscard]] std::wstring normalizeIndexRoot(std::wstring_view path);
 
+/// Case-insensitive compare of normalized index roots. Negative / 0 / positive.
+/// Does not touch the filesystem.
+[[nodiscard]] int compareIndexRootPath(std::wstring_view a, std::wstring_view b);
+
 /// Stable filesystem-safe key for a normalized root (hex hash).
 [[nodiscard]] std::wstring rootKeyFor(std::wstring_view normalizedRoot);
 

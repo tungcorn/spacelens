@@ -205,7 +205,11 @@ spacelens index list [--json]
 
 `status` reports existence, age, counts, readiness, and an
 `incremental_refresh` block (supported/state/reason/checkpoint). `list`
-enumerates published indexes under AppData. Neither command mutates user data.
+enumerates published indexes under AppData as a compact catalog: root,
+schema, status, cheap counts, and the same published-snapshot
+`freshness` object as `index status`. Listing is inspect-only — it does
+not refresh, live-scan, hash, or migrate schema. Empty catalog is
+success (`indexes: []`). Neither command mutates user data.
 
 ### `index refresh`
 

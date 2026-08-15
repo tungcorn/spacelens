@@ -867,66 +867,11 @@ ExitCode runIndexRefresh(const ParsedArgs& args, std::stop_token stop)
 
 ExitCode runIndexList(const ParsedArgs& args)
 {
-    const auto listed = spacelens::listIndexedRoots();
+    const auto listing = spacelens::listPublishedIndexes();
     if (args.json) {
-        std::cout << "{"
-                  << "\"schema_version\":" << kSchemaVersion << ","
-                  << "\"ok\":true,"
-                  << "\"command\":\"index_list\","
-                  << "\"source\":\"persistent_index\","
-                  << "\"indexes\":[";
-        bool first = true;
-        for (const auto& item : listed) {
-            IndexLocation loc;
-            loc.rootKey = item.rootKey;
-            loc.dbPath = item.dbPath;
-            loc.indexDir = item.dbPath;  // unused for open by path
-            // Open by db path via locate is awkward; open file directly.
-            try {
-                // Reconstruct location from key only for openRead needs full loc.
-                IndexLocation openLoc;
-                openLoc.rootKey = item.rootKey;
-                openLoc.dbPath = item.dbPath;
-                openLoc.indexDir = item.dbPath.substr(
-                    0, item.dbPath.find_last_of(L"\\/"));
-                auto store = IndexStore::openRead(openLoc);
-                auto meta = store.readRootMeta();
-                if (!first) {
-                    std::cout << ",";
-                }
-                first = false;
-                std::cout << "{"
-                          << "\"root\":"
-                          << jsonString(meta ? meta->rootPath : L"") << ","
-                          << "\"path\":" << jsonString(item.dbPath) << ","
-                          << "\"root_key\":" << jsonString(item.rootKey);
-                if (meta) {
-                    std::cout << ",\"indexed_at\":"
-                              << jsonString(meta->indexedAtIso)
-                              << ",\"logical_bytes\":"
-                              << jsonUInt(meta->logicalBytes);
-                }
-                std::cout << "}";
-            } catch (...) {
-                if (!first) {
-                    std::cout << ",";
-                }
-                first = false;
-                std::cout << "{\"path\":" << jsonString(item.dbPath)
-                          << ",\"root_key\":" << jsonString(item.rootKey)
-                          << ",\"error\":\"open_failed\"}";
-            }
-        }
-        std::cout << "]}\n";
+        std::cout << spacelens::indexCatalogToJson(listing);
     } else {
-        if (listed.empty()) {
-            std::cout << "No indexes found under "
-                      << narrow(spaceLensIndexesRoot()) << "\n";
-        }
-        for (const auto& item : listed) {
-            std::cout << narrow(item.rootKey) << "  " << narrow(item.dbPath)
-                      << "\n";
-        }
+        std::cout << spacelens::formatIndexCatalogHuman(listing);
     }
     return ExitCode::Success;
 }

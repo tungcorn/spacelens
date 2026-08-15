@@ -7,6 +7,13 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ### Added
 
+- Index Catalog Agent Entry V1: `spacelens index list --json` is a
+  compact published-index catalog (root, schema, status, cheap counts,
+  Honesty V1 `freshness`). One captured `now` per invocation.
+  Deterministic root order. Broken entries stay visible. Listing does
+  not refresh, live-scan, hash, or migrate schema. No new MCP tool.
+  Schema stays `index_schema_version: 2` and JSON `schema_version: 1`.
+  Version stays 0.1.3.
 - Indexed Freshness Honesty V1: indexed `overview` / `opportunities` /
   `query` / `index status` report published-snapshot age via additive
   `index.freshness` (`basis=published_snapshot`, `age_state`,

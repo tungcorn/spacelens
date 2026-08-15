@@ -41,6 +41,9 @@ public:
     /// read-only (`query_only`); older schemas migrate on a write connection.
     [[nodiscard]] static IndexStore openRead(const IndexLocation& loc);
 
+    /// Open published index read-only for catalog inspection. Never migrates.
+    [[nodiscard]] static IndexStore openInspect(const IndexLocation& loc);
+
     /// Open published index for incremental refresh (read/write, no staging).
     [[nodiscard]] static IndexStore openReadWrite(const IndexLocation& loc);
 
@@ -62,6 +65,9 @@ public:
 
     /// Validate schema version; throws SqliteError / returns false if unsupported.
     [[nodiscard]] bool schemaSupported() const;
+
+    /// Persisted `index_schema_version`, or 0 when missing/unreadable.
+    [[nodiscard]] int schemaVersion() const;
 
 private:
     IndexStore(IndexLocation loc, SqliteDb db);
