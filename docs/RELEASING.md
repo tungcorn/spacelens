@@ -39,7 +39,9 @@ There is no GUI-only zip for v0.1.1 and later. Historical
 npm package.
 
 These are verification artifacts. They are not a public GitHub Release
-until Release Automation V2 publishes from `main` (`publish=true`).
+until the pending `release/next` PR is merged to `main` and
+`release.yml` publishes (`publish` decided automatically, or
+`workflow_dispatch` with `publish=true` for recovery).
 
 ## Independent CLI and GUI gates
 
@@ -122,6 +124,8 @@ certificate is provided separately.
 | Windows / Full Release | windows-2022 | 6.8.3 | tests, CLI safety, package staging |
 | Windows / CLI-only Latest | windows-latest | none | `SPACELENS_BUILD_GUI=OFF`, safety, 2k stress smoke, distribution selftest |
 | Quality / MSVC Analyze | windows-2022 | none | `/analyze` on core + CLI |
+| npm / Package | windows-2022 | none | templates; pack-from-release only when pin matches |
+| Release / Policy | ubuntu-latest | none | releasable-commit policy, dry-run, workflow static checks |
 
 Concurrency cancels superseded runs. Default `contents: read`. No secrets are
 exposed to pull requests. Third-party actions are pinned to full SHAs.
@@ -129,50 +133,127 @@ exposed to pull requests. Third-party actions are pinned to full SHAs.
 `.github/workflows/quality.yml` is a manual 100k+ stress job. It is not a
 required pull-request check.
 
+## Normal release path
+
+SpaceLens does **not** cut a stable release for every product commit.
+Product-worthy commits on `main` maintain one pending pull request from
+`release/next`. A human merges that PR when they want to publish.
+
+1. Push `feat:` / `fix:` / `perf:` (or a mislabeled commit that touches
+   `src/core`, `src/cli`, `src/mcp`, `src/app`, `src/ui`, or
+   `src/platform`) to `main`.
+2. `release-pr.yml` classifies `latest-stable-tag..main`, prepares the
+   **next patch** only (V1 does not infer major/minor), and opens or
+   updates exactly one PR titled
+   `chore(release): prepare SpaceLens vX.Y.Z`.
+3. `docs:` / `test:` / `ci:` / `chore:` / `style:` / `build:` commits do
+   not open a release by themselves. `refactor:` does not unless it
+   touches a product path.
+4. Generated notes live between `<!-- BEGIN GENERATED NOTES -->` markers.
+   Human edits outside the markers are preserved when the PR is
+   refreshed. If a notes file has no markers, it is left alone.
+5. Merging the PR is the publish approval. `release.yml` on `main` sees
+   CMake equal to the next patch of the latest stable tag, waits for
+   required CI (including `Release / Policy`), rebuilds, tags that
+   merge commit, publishes the GitHub Release, dispatches npm Trusted
+   Publishing, then pins `release-pin.env` from the **public** unified
+   zip and dispatches `ci.yml` (a `GITHUB_TOKEN` push does not trigger
+   workflows by itself).
+6. The pin commit keeps CMake at the released version while the tag
+   exists, so it does not open another release.
+
+Inspect locally without publishing:
+
+```powershell
+.\scripts\release-needed.ps1 -DryRun
+.\scripts\decide-release.ps1
+.\scripts\prepare-release.ps1 -DryRun
+.\scripts\verify-release-policy.ps1
+.\scripts\verify-release-automation.ps1
+```
+
+Do not run `prepare-release.ps1` without `-DryRun` on `main`.
+
 ## Git tags and GitHub Releases
 
-`.github/workflows/release.yml` is **manual `workflow_dispatch` only**.
-It no longer runs on tag push. Inputs:
+googleapis/release-please is **not** used. It would own the tag and
+GitHub Release and cannot express dual-zip packaging, npm OIDC from the
+public zip, the public hash pin, or CMake/`#define` version files.
+
+`.github/workflows/release.yml` runs on push to `main` and keeps
+**manual `workflow_dispatch`** as recovery. It does not run on tag
+push. Publication concurrency group: `spacelens-release`
+(`cancel-in-progress: false`). The pending-PR updater uses
+`spacelens-release-pr`.
+
+Dispatch inputs (recovery / dry-run):
 
 | Input | Default | Meaning |
 |-------|---------|---------|
 | `version` | `0.1.4` | Must equal CMake `project(VERSION …)` and `packaging/npm/package.json` |
 | `publish` | `false` | Dry-run when false; create tag + GitHub Release + npm dispatch when true |
 
-Dry-run (`publish=false`) builds, tests, packages, hashes, and stages the
-npm tarball from **this run's** unified zip. It must not create a tag,
-GitHub Release, or npm publication.
+On push to `main`, `scripts/decide-release.ps1` publishes only when
+CMake already equals the next patch of the latest **stable** `vX.Y.Z`
+tag (the merged release-prep commit). A pin commit does not match that
+rule. Prerelease tags such as `v0.1.5-rc.1` are ignored when selecting
+the latest stable tag.
+
+Dry-run (`publish=false` via dispatch) builds, tests, packages, hashes,
+and stages the npm tarball from **this run's** unified zip. It must not
+create a tag, GitHub Release, or npm publication. Ordinary
+non-release pushes to `main` skip the Windows package job.
 
 A GitHub Release is created only when **all** of the following are true:
 
-1. `publish=true`
+1. decide selected `publish=true` (auto next-patch or dispatch recovery)
 2. the ref is `main`
-3. `scripts/verify-release-preflight.ps1 -Publish` succeeds: version
-   matches CMake and package.json, the tag does not exist locally or on
-   origin, the GitHub Release does not exist, npm does not already have
-   that version, and required CI check-runs on this SHA are success
+3. `scripts/verify-release-preflight.ps1 -Publish -Wait` succeeds:
+   version matches CMake and package.json, the tag does not point at
+   another SHA, required CI check-runs on this SHA are success
    (`Windows / Full Debug`, `Windows / Full Release`,
-   `Windows / CLI-only Latest`, `Quality / MSVC Analyze`, `npm / Package`)
+   `Windows / CLI-only Latest`, `Quality / MSVC Analyze`, `npm / Package`,
+   `Release / Policy`). An existing GitHub Release or npm version for
+   this tag is verified (required assets, not draft/prerelease) rather
+   than treated as a hard error, so a rerun does not duplicate them.
 4. both distribution gates pass (`cli_eligible` and `gui_eligible`)
 
-The workflow then creates an annotated tag at `$GITHUB_SHA`, pushes it,
-and runs `gh release create --latest --verify-tag`. It does **not** pass
-`--prerelease` or `--draft`. It refuses to move an existing tag or
-replace an existing Release. If the tag already points at this SHA and
-the Release does not exist (tag pushed, create failed), retry is
-allowed and only the Release is created.
+The workflow then creates an annotated tag at `$GITHUB_SHA` if needed,
+and runs `gh release create --latest --verify-tag` only when the Release
+does not already exist. It does **not** pass `--prerelease` or
+`--draft`. It refuses to move an existing tag or replace an existing
+Release. If the tag already points at this SHA and the Release does not
+exist (tag pushed, create failed), retry is allowed and only the
+Release is created.
 
 The unified zip, headless zip (`spacelens-cli-*`), and `SHA256SUMS.txt`
 are attached.
 `docs/release-notes/<tag>.md` is the Release body when that file exists.
 
+After npm is on the registry, `update-release-pin.ps1` downloads the
+**public** unified zip, requires observed SHA-256 == `SHA256SUMS.txt`,
+and commits
+`chore(npm): pin pack-from-release to public vX.Y.Z hash` on `main`
+after the tag. It does not hash a local rebuild or the CI staging
+artifact. If the pin already matches, it does not create another commit.
+
 v0.1.4 is the current latest Release from this workflow. Historical
 v0.1.0, v0.1.1, v0.1.2, and v0.1.3 remain published and must not be
 retagged, redrafted, or have their assets replaced.
 
-If GitHub publication succeeds and npm later fails, leave the GitHub
-Release alone. Retry only `npm-publish.yml`, and only if
-`@tungcorn/spacelens@<version>` does not already exist.
+Partial failure is forward-only. Do not roll back a public tag:
+
+- GitHub success / npm fail: leave the Release; retry only
+  `npm-publish.yml` if the version is not on the registry.
+- npm success / verification fail: report; forward-fix; do not delete
+  the Release or unpublish npm.
+- pin fail: the public release stands; retry the pin job.
+- pin success / post-release CI fail: diagnose forward; do not move
+  the tag.
+
+If auto-publish fails after the tag exists, recover with
+`workflow_dispatch` on `release.yml` from the tagged commit, or on
+`npm-publish.yml` if only npm is missing. Do not retag.
 
 ## npm
 

@@ -5,6 +5,12 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+### Release process
+
+- Patch releases are prepared on `release/next` and published after that
+  PR is merged to `main`. `docs:` / `test:` / `ci:` / `chore:` commits
+  do not open a release by themselves.
+
 ## [0.1.4] — 2026-08-15
 
 Indexed intelligence is now more exact, scalable, and honest. v0.1.3
