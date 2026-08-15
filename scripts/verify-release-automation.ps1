@@ -41,14 +41,41 @@ if ($release -notmatch 'name:\s*Prepare release on main') {
 if ($release -notmatch 'prepare-release\.ps1') {
     Add-Fail "release.yml prepare job must call prepare-release.ps1"
 }
-if ($release -notmatch 'gh workflow run release\.yml') {
-    Add-Fail "release.yml prepare job must dispatch release.yml for the bump commit"
-}
 if ($release -notmatch 'contents:\s*write') {
     Add-Fail "release.yml prepare job must have contents: write permission"
 }
 if ($release -notmatch 'actions:\s*write') {
     Add-Fail "release.yml prepare job must have actions: write permission (for dispatch)"
+}
+
+# Prepare flow must dispatch CI for the bump SHA, then publish — never the reverse.
+$prepareSlice = $null
+if ($release -match '(?s)name:\s*Prepare release on main(?<prep>.*)name:\s*Preflight') {
+    $prepareSlice = $Matches['prep']
+} else {
+    Add-Fail "could not isolate the prepare job from release.yml"
+}
+if ($prepareSlice) {
+    if ($prepareSlice -notmatch 'gh workflow run ci\.yml') {
+        Add-Fail "prepare job must dispatch ci.yml for the bump commit"
+    }
+    if ($prepareSlice -notmatch 'gh workflow run release\.yml') {
+        Add-Fail "prepare job must dispatch release.yml after CI"
+    }
+    $ciAt = $prepareSlice.IndexOf('gh workflow run ci.yml')
+    $relAt = $prepareSlice.IndexOf('gh workflow run release.yml')
+    if ($ciAt -lt 0 -or $relAt -lt 0 -or $ciAt -gt $relAt) {
+        Add-Fail "prepare job must dispatch ci.yml before release.yml"
+    }
+    if ($prepareSlice -notmatch 'head_sha') {
+        Add-Fail "prepare job must verify dispatched CI head_sha is the bump commit"
+    }
+    if ($prepareSlice -notmatch 'main moved before CI dispatch') {
+        Add-Fail "prepare job must fail safely if main moved before CI dispatch"
+    }
+    if ($prepareSlice -notmatch 'main moved before publish dispatch') {
+        Add-Fail "prepare job must fail safely if main moved before publish dispatch"
+    }
 }
 
 # ── Safety invariants ────────────────────────────────────────────────────────
@@ -65,6 +92,24 @@ if ($npm -notmatch 'id-token:\s*write') { Add-Fail "npm-publish.yml must keep OI
 if ($npm -match 'NPM_TOKEN') { Add-Fail "npm-publish.yml must not mention NPM_TOKEN" }
 if ($release -match 'NPM_TOKEN') { Add-Fail "release.yml must not mention NPM_TOKEN" }
 if ($ci -notmatch 'Release / Policy') { Add-Fail "ci.yml must run Release / Policy" }
+
+# Preflight must wait for the six required checks on the exact bump SHA.
+$preflight = Get-Content (Join-Path $root "scripts\verify-release-preflight.ps1") -Raw
+foreach ($check in @(
+    "Windows / Full Debug",
+    "Windows / Full Release",
+    "Windows / CLI-only Latest",
+    "Quality / MSVC Analyze",
+    "npm / Package",
+    "Release / Policy"
+)) {
+    if ($preflight -notmatch [regex]::Escape($check)) {
+        Add-Fail "preflight must wait for required CI check '$check'"
+    }
+}
+if ($preflight -notmatch 'commits/\$Commit/check-runs' -and $preflight -notmatch 'commits/\$\{Sha\}/check-runs' -and $preflight -notmatch 'commits/\$Sha/check-runs') {
+    Add-Fail "preflight must query check-runs on the exact commit SHA"
+}
 
 # ── pin job must dispatch ci.yml (no longer dispatches release-pr.yml) ───────
 if ($release -notmatch 'gh workflow run ci\.yml') {

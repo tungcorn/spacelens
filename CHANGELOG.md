@@ -5,6 +5,10 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+- Release prepare dispatches `ci.yml` for the bump commit and verifies
+  that run before dispatching publish. A `GITHUB_TOKEN` push does not
+  start CI by itself.
+
 ## [0.1.5] — 2026-08-15
 
 https://github.com/tungcorn/spacelens/releases/tag/v0.1.5

@@ -59,8 +59,9 @@ jobs:
   # ---------------------------------------------------------------------------
   # prepare: runs on a plain main push when decide did NOT select publish.
   # Waits for the pushed SHA's CI, then commits the version bump directly on
-  # main and dispatches a workflow_dispatch run of this same workflow to
-  # publish the bump commit.
+  # main. A GITHUB_TOKEN push does not trigger workflows, so this job must
+  # dispatch ci.yml on the exact bump SHA, verify that run, then dispatch
+  # this workflow with publish=true. If main moved, fail safely.
   # ---------------------------------------------------------------------------
   prepare:
     name: Prepare release on main
@@ -144,9 +145,24 @@ jobs:
             TAG_EXISTS=true
           fi
 
-          echo "already_bumped=${ALREADY_BUMPED}  tag_exists=${TAG_EXISTS}"
+          BUMP_SHA=""
+          if [ "$ALREADY_BUMPED" = "true" ] && [ "$TAG_EXISTS" != "true" ]; then
+            MAIN_SHA="$(git rev-parse origin/main)"
+            SUBJECT="$(git log -1 --format=%s origin/main)"
+            EXPECTED="chore(release): prepare SpaceLens ${NEXT_TAG}"
+            EXPECTED_ALT="release: prepare SpaceLens ${NEXT_TAG}"
+            if [ "$SUBJECT" = "$EXPECTED" ] || [ "$SUBJECT" = "$EXPECTED_ALT" ]; then
+              BUMP_SHA="$MAIN_SHA"
+              echo "origin/main is still the bump commit ${BUMP_SHA}"
+            else
+              echo "origin/main moved past the bump (subject='${SUBJECT}'); will not dispatch publish for another SHA"
+            fi
+          fi
+
+          echo "already_bumped=${ALREADY_BUMPED}  tag_exists=${TAG_EXISTS}  bump_sha=${BUMP_SHA}"
           echo "already_bumped=${ALREADY_BUMPED}" >> "$GITHUB_OUTPUT"
           echo "tag_exists=${TAG_EXISTS}" >> "$GITHUB_OUTPUT"
+          echo "bump_sha=${BUMP_SHA}" >> "$GITHUB_OUTPUT"
 
 
       - name: Skip — bump already on main or tag exists
@@ -286,24 +302,82 @@ jobs:
           }
           Write-Host "Pushed bump commit $bumpSha to main."
 
-      - name: Dispatch publish pipeline for bump commit
+      - name: Dispatch CI then publish for bump commit
         if: >
           steps.release_check.outputs.needed == 'true' &&
-          steps.bump_check.outputs.already_bumped != 'true' &&
           steps.bump_check.outputs.tag_exists != 'true' &&
-          steps.bump.outputs.bump_sha != ''
+          (steps.bump.outputs.bump_sha != '' ||
+           steps.bump_check.outputs.bump_sha != '')
         env:
           GH_TOKEN: ${{ github.token }}
           NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
+          BUMP_SHA: ${{ steps.bump.outputs.bump_sha || steps.bump_check.outputs.bump_sha }}
         run: |
           set -euo pipefail
+          REPO="${{ github.repository }}"
+          BUMP="${BUMP_SHA}"
+          if [ -z "$BUMP" ]; then
+            echo "bump SHA missing; refusing to dispatch" >&2
+            exit 1
+          fi
+
+          git fetch origin main
+          ORIGIN_HEAD="$(git rev-parse origin/main)"
+          if [ "$ORIGIN_HEAD" != "$BUMP" ]; then
+            echo "main moved before CI dispatch: origin/main=${ORIGIN_HEAD} bump=${BUMP}. Failing safely." >&2
+            exit 1
+          fi
+
+          SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Dispatching ci.yml --ref main for bump ${BUMP}"
+          gh workflow run ci.yml --repo "$REPO" --ref main
+
+          RUN_ID=""
+          DEADLINE=$((SECONDS + 180))
+          while (( SECONDS < DEADLINE )); do
+            MAP="$(gh api "/repos/${REPO}/actions/workflows/ci.yml/runs?event=workflow_dispatch&per_page=20" \
+              --jq --arg since "$SINCE" '
+                [.workflow_runs[]
+                  | select(.created_at >= $since)
+                  | {id, head_sha, created_at}]')"
+            WRONG="$(printf '%s' "$MAP" | jq -r --arg bump "$BUMP" \
+              '[.[] | select(.head_sha != $bump)] | .[0].head_sha // empty')"
+            if [ -n "$WRONG" ]; then
+              echo "CI dispatch attached to ${WRONG}, not bump ${BUMP}. Failing safely." >&2
+              exit 1
+            fi
+            RUN_ID="$(printf '%s' "$MAP" | jq -r --arg bump "$BUMP" \
+              '[.[] | select(.head_sha == $bump)] | sort_by(.created_at) | reverse | .[0].id // empty')"
+            if [ -n "$RUN_ID" ]; then
+              break
+            fi
+            sleep 5
+          done
+          if [ -z "$RUN_ID" ]; then
+            echo "failed to find ci.yml workflow_dispatch run on bump ${BUMP}" >&2
+            exit 1
+          fi
+          HEAD="$(gh api "/repos/${REPO}/actions/runs/${RUN_ID}" --jq .head_sha)"
+          if [ "$HEAD" != "$BUMP" ]; then
+            echo "ci.yml run ${RUN_ID} head_sha=${HEAD} != bump ${BUMP}. Failing safely." >&2
+            exit 1
+          fi
+          echo "CI run ${RUN_ID} is attached to bump ${BUMP}"
+
+          git fetch origin main
+          ORIGIN_HEAD="$(git rev-parse origin/main)"
+          if [ "$ORIGIN_HEAD" != "$BUMP" ]; then
+            echo "main moved before publish dispatch: origin/main=${ORIGIN_HEAD} bump=${BUMP}. Failing safely." >&2
+            exit 1
+          fi
+
           echo "Dispatching release.yml workflow_dispatch for v${NEXT_VERSION} publish=true"
           gh workflow run release.yml \
-            --repo "${{ github.repository }}" \
+            --repo "$REPO" \
             --ref main \
             -f "version=${NEXT_VERSION}" \
             -F "publish=true"
-          echo "Dispatched. The publish pipeline will wait for CI of the bump commit."
+          echo "Dispatched publish. Preflight waits for the six required CI checks on ${BUMP}."
 
   preflight:
     name: Preflight

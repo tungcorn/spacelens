@@ -150,14 +150,18 @@ There is no separate pull request to merge.
    pushes. If `main` moved while preparing the push fails safely (no
    force-push).
 3. Because a `GITHUB_TOKEN` push does not automatically trigger another
-   workflow run, the `prepare` job explicitly dispatches `release.yml` via
-   `workflow_dispatch` with `version=X.Y.Z publish=true`.
+   workflow run, the `prepare` job first dispatches `ci.yml` on `main`,
+   verifies that run's `head_sha` is the exact bump commit, then
+   dispatches `release.yml` via `workflow_dispatch` with
+   `version=X.Y.Z publish=true`. If `main` moved before either dispatch,
+   prepare fails safely and does not publish another SHA.
 4. The dispatched run detects the bump commit (`decide-release.ps1` sees
    `workflow_dispatch` with `publish=true`) and enters the full publish
-   pipeline: waits for CI of the bump commit, builds, tests, packages,
-   tags **that exact bump commit**, publishes the GitHub Release, dispatches
-   npm Trusted Publishing, then pins `release-pin.env` from the **public**
-   unified zip and dispatches `ci.yml`.
+   pipeline: Preflight waits for the six required CI checks on **that
+   exact bump SHA**, then builds, tests, packages, tags **that exact bump
+   commit**, publishes the GitHub Release, dispatches npm Trusted
+   Publishing, then pins `release-pin.env` from the **public** unified zip
+   and dispatches `ci.yml`.
 5. `docs:` / `test:` / `ci:` / `chore:` / `style:` / `build:` commits do
    not release by themselves. `refactor:` does not unless it touches a
    product path.
