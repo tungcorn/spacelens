@@ -10,11 +10,11 @@ maintenance and ordinary-location declarations exist only in the GUI. See
 [`docs/LOCATION_SAFETY.md`](LOCATION_SAFETY.md).
 
 The executable wires `scan`, `top`, `find`, `overview`, `opportunities`,
-`index`, `index refresh`, `index status`, `index list`, `query`, `duplicates`,
-`capabilities`, `help`, and `version`. Use `capabilities --json` to discover
-flags for a particular build (including `storage_overview`,
-`storage_opportunities`, `persistent_index`, `indexed_query`, and
-`incremental_index`).
+`breakdown`, `index`, `index refresh`, `index status`, `index list`, `query`,
+`duplicates`, `capabilities`, `help`, and `version`. Use `capabilities --json`
+to discover flags for a particular build (including `storage_overview`,
+`storage_opportunities`, `indexed_breakdown`, `persistent_index`,
+`indexed_query`, and `incremental_index`).
 
 AI harnesses that should not learn CLI syntax can use the separate
 `spacelens-mcp` stdio adapter instead. It reuses the same core analysis
@@ -61,7 +61,7 @@ Representative JSON (fields may grow; treat unknown keys as forward-compatible):
 {
   "schema_version": 1,
   "version": "0.1.0",
-  "commands": ["scan", "top", "find", "index", "index status", "index list", "index refresh", "query", "overview", "opportunities", "duplicates", "capabilities", "help", "version"],
+  "commands": ["scan", "top", "find", "index", "index status", "index list", "index refresh", "query", "overview", "opportunities", "breakdown", "duplicates", "capabilities", "help", "version"],
   "features": {
     "json": true,
     "cancellation": true,
@@ -73,6 +73,7 @@ Representative JSON (fields may grow; treat unknown keys as forward-compatible):
     "filters": true,
     "storage_overview": true,
     "storage_opportunities": true,
+    "indexed_breakdown": true,
     "duplicate_detection": true,
     "reclaim_analysis": true
   },
@@ -241,6 +242,37 @@ Missing index → exit code **6** (`index_not_found`). Successful JSON includes
 when the snapshot is too old, unknown, or clock-skewed. No default
 max-age. `index status` reports honest age and does not take this flag.
 
+### `breakdown`
+
+Explains what kind of **file** data consumes a published index. Index-only.
+No live scan, no refresh, no `--from-index`.
+
+```text
+spacelens breakdown <path> [--under PATH] [--limit N]
+                          [--max-index-age-seconds N] [--json]
+```
+
+Totals are **file logical bytes** (`entries.size_bytes` where `kind=0`).
+Directories never contribute, including their `recursive_size`. Each file
+is counted once per independent dimension: stored `classification`,
+normalized `extension` (empty string = no extension), and last-write age
+(`last_write_ticks`, not last-access). Age buckets are fixed:
+`<30d` / `30-90d` / `90-365d` / `>=365d` / `unknown` / `future`. Exact
+30 / 90 / 365 day ages land in the upper bucket.
+
+`--limit` bounds the extension list (default 20, max 200). Remaining
+extensions fold into an exact `other` aggregate so the bounded output
+still reconciles. Classification and age are not truncated.
+
+`--under` is component-safe (`D:\foo` does not match `D:\foobar`; drive
+root `D:\` works). Optional `--max-index-age-seconds` fails closed
+before aggregation. Missing index → exit **6**. Stale / unknown
+snapshot → exit **4**. Cancel → exit **5**.
+
+Logical bytes are namespace size, not guaranteed physical disk usage or
+reclaimable space. There is no `safe_to_delete`. There is no MCP
+`storage_breakdown` tool.
+
 ### `duplicates`
 
 Finds exact file-content copies from a published index, then live-verifies them.
@@ -279,9 +311,9 @@ scan or mutate the filesystem.
 | `--files` | Include files; with `top`, choose largest files. |
 | `--dirs` | Include directories; with `top`, choose largest directories. |
 | `--limit N` | Return no more than `N` results. |
-| `--under PATH` | `query` / `opportunities`: restrict to `PATH` and descendants. |
+| `--under PATH` | `query` / `opportunities` / `breakdown`: restrict to `PATH` and descendants. |
 | `--from-index` | `overview` / `opportunities`: use a published index (exit 6 if missing). |
-| `--max-index-age-seconds N` | `query` / `--from-index` overview / `--from-index` opportunities: fail closed if the published snapshot is older than N seconds (exit 4). No default. |
+| `--max-index-age-seconds N` | `query` / `--from-index` overview / `--from-index` opportunities / `breakdown`: fail closed if the published snapshot is older than N seconds (exit 4). No default. |
 | `--json` | Write machine-readable JSON to stdout. |
 
 Filter behavior is conservative. Filters do not override Protected or Sensitive

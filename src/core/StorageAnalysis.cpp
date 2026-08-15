@@ -3,6 +3,7 @@
 #include "core/DuplicateDetection.hpp"
 #include "core/Json.hpp"
 #include "core/ScanEngine.hpp"
+#include "core/index/IndexBreakdown.hpp"
 #include "core/index/IndexPaths.hpp"
 #include "core/index/IndexSnapshot.hpp"
 #include "platform/windows/CleanupMetadataReader.hpp"
@@ -499,6 +500,76 @@ std::string indexQueryToJson(const IndexQueryResult& result)
     return os.str();
 }
 
+std::string indexBreakdownToJson(const IndexedBreakdown& result)
+{
+    std::ostringstream os;
+    os << "{"
+       << "\"schema_version\":" << kSchemaVersion << ","
+       << "\"ok\":" << jsonBool(result.ok) << ","
+       << "\"command\":\"breakdown\","
+       << "\"source\":\"persistent_index\","
+       << "\"root\":" << jsonString(result.location.rootPath) << ","
+       << "\"under\":"
+       << (result.under.empty() ? std::string("null") : jsonString(result.under))
+       << ","
+       << "\"limit\":" << jsonUInt(result.limit) << ","
+       << "\"total_file_count\":" << jsonUInt(result.total_file_count) << ","
+       << "\"total_logical_bytes\":" << jsonUInt(result.total_logical_bytes) << ","
+       << "\"logical_bytes_estimated\":"
+       << jsonBool(result.logical_bytes_estimated) << ","
+       << "\"by_classification\":[";
+    for (std::size_t i = 0; i < result.by_classification.size(); ++i) {
+        if (i > 0) {
+            os << ",";
+        }
+        const auto& g = result.by_classification[i];
+        os << "{\"classification\":" << jsonString(g.key)
+           << ",\"file_count\":" << jsonUInt(g.file_count)
+           << ",\"logical_bytes\":" << jsonUInt(g.logical_bytes) << "}";
+    }
+    os << "],\"by_extension\":{\"groups\":[";
+    for (std::size_t i = 0; i < result.by_extension.size(); ++i) {
+        if (i > 0) {
+            os << ",";
+        }
+        const auto& g = result.by_extension[i];
+        os << "{\"extension\":" << jsonString(g.key)
+           << ",\"file_count\":" << jsonUInt(g.file_count)
+           << ",\"logical_bytes\":" << jsonUInt(g.logical_bytes) << "}";
+    }
+    os << "],\"other\":{"
+       << "\"extension_groups\":"
+       << jsonUInt(result.extension_other.extension_groups)
+       << ",\"file_count\":" << jsonUInt(result.extension_other.file_count)
+       << ",\"logical_bytes\":" << jsonUInt(result.extension_other.logical_bytes)
+       << "}},\"by_last_write_age\":[";
+    for (std::size_t i = 0; i < result.by_last_write_age.size(); ++i) {
+        if (i > 0) {
+            os << ",";
+        }
+        const auto& g = result.by_last_write_age[i];
+        os << "{\"bucket\":" << jsonString(g.key)
+           << ",\"file_count\":" << jsonUInt(g.file_count)
+           << ",\"logical_bytes\":" << jsonUInt(g.logical_bytes) << "}";
+    }
+    os << "],\"index\":{"
+       << "\"path\":" << jsonString(result.location.dbPath) << ","
+       << "\"indexed_at\":"
+       << jsonString(result.snapshot.publishedAtUtc.empty()
+                         ? result.root.indexedAtIso
+                         : result.snapshot.publishedAtUtc)
+       << ","
+       << "\"age_ms\":" << jsonUInt(result.snapshot.ageMs) << ","
+       << "\"freshness\":"
+       << indexFreshnessJsonObject(result.snapshot, result.ageDecision) << ","
+       << "\"index_schema_version\":" << kIndexSchemaVersion << "}";
+    if (!result.error.empty()) {
+        os << ",\"error\":" << jsonString(result.error);
+    }
+    os << "}\n";
+    return os.str();
+}
+
 std::string indexStatusToJson(const IndexQueryResult& status,
                               const IndexRefreshResult& probe)
 {
@@ -569,7 +640,7 @@ std::string cliCapabilitiesJson()
        << "\"json_contract_version\":" << kSchemaVersion << ","
        << "\"commands\":[\"scan\",\"top\",\"find\",\"index\","
           "\"index status\",\"index list\",\"index refresh\",\"query\","
-          "\"overview\",\"opportunities\",\"duplicates\","
+          "\"overview\",\"opportunities\",\"breakdown\",\"duplicates\","
           "\"capabilities\",\"help\",\"version\"],"
        << "\"features\":{"
        << "\"json\":true,"
@@ -582,6 +653,7 @@ std::string cliCapabilitiesJson()
        << "\"filters\":true,"
        << "\"storage_overview\":true,"
        << "\"storage_opportunities\":true,"
+       << "\"indexed_breakdown\":true,"
        << "\"duplicate_detection\":true,"
        << "\"reclaim_analysis\":true"
        << "},"

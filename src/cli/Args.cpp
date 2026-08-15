@@ -83,6 +83,7 @@ std::string helpText()
         "  spacelens query <path> (--files|--dirs) [filters] [--under P] [--limit N] [--max-index-age-seconds N] [--json]\n"
         "  spacelens overview <path> [--from-index] [--limit N] [--max-index-age-seconds N] [--json]\n"
         "  spacelens opportunities <path> [--from-index] [--min-size S] [--older-than D] [--classification C] [--under P] [--limit N] [--max-index-age-seconds N] [--json]\n"
+        "  spacelens breakdown <path> [--under P] [--limit N] [--max-index-age-seconds N] [--json]\n"
         "  spacelens duplicates <path> [--min-size S] [--json]\n"
         "  spacelens capabilities [--json]\n"
         "  spacelens help\n"
@@ -94,7 +95,7 @@ std::string helpText()
         "  --older-than D   Last-write age in whole days\n"
         "  --classification C  Classification name\n"
         "  --strength S     Reclaim candidate strength (query; e.g. Strong)\n"
-        "  --under P        Restrict query/opportunities to P and descendants\n"
+        "  --under P        Restrict query/opportunities/breakdown to P and descendants\n"
         "\n"
         "Options:\n"
         "  --json          Machine-readable JSON on stdout\n"
@@ -102,14 +103,15 @@ std::string helpText()
         "  --dirs          Directories mode (top/query)\n"
         "  --from-index    Use a published index (overview/opportunities)\n"
         "  --max-index-age-seconds N  Fail if the published snapshot is older than N seconds\n"
-        "                  (query / overview --from-index / opportunities --from-index)\n"
-        "  --limit N       Number of results (default 20; overview default 10)\n"
+        "                  (query / overview --from-index / opportunities --from-index / breakdown)\n"
+        "  --limit N       Number of results (default 20; overview default 10;\n"
+        "                  breakdown: top extensions, default 20)\n"
         "  -h, --help      Show this help\n"
         "\n"
         "Index notes:\n"
         "  index builds a snapshot under %LOCALAPPDATA%\\SpaceLens\\indexes\n"
         "  index refresh applies USN deltas when safe; else full_rebuild_required\n"
-        "  query uses the persistent index only (no live rescan fallback)\n"
+        "  query / breakdown use the persistent index only (no live rescan fallback)\n"
         "  duplicates finds exact file-content copies from an index, then live-verifies\n"
         "  Source filesystem remains read-only; SpaceLens never mutates the USN journal\n"
         "\n"
@@ -155,6 +157,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         out.limit = 10;
     } else if (cmd == L"opportunities") {
         out.command = Command::Opportunities;
+    } else if (cmd == L"breakdown") {
+        out.command = Command::Breakdown;
     } else if (cmd == L"index") {
         // index | index status | index list | index refresh
         if (argc >= 3 && std::wstring_view(argv[2]) == L"status") {
@@ -293,10 +297,12 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         if (arg == L"--max-index-age-seconds") {
             if (out.command != Command::Query &&
                 out.command != Command::Overview &&
-                out.command != Command::Opportunities) {
+                out.command != Command::Opportunities &&
+                out.command != Command::Breakdown) {
                 out.error =
                     "--max-index-age-seconds is only valid with query, "
-                    "overview --from-index, or opportunities --from-index.";
+                    "overview --from-index, opportunities --from-index, "
+                    "or breakdown.";
                 return out;
             }
             if (i + 1 >= argc) {
@@ -313,8 +319,9 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         }
         if (arg == L"--under") {
             if (out.command != Command::Query &&
-                out.command != Command::Opportunities) {
-                out.error = "--under is only valid with query/opportunities.";
+                out.command != Command::Opportunities &&
+                out.command != Command::Breakdown) {
+                out.error = "--under is only valid with query/opportunities/breakdown.";
                 return out;
             }
             if (i + 1 >= argc || argv[i + 1][0] == L'\0') {
@@ -360,7 +367,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         out.command == Command::IndexStatus ||
         out.command == Command::IndexRefresh || out.command == Command::Query ||
         out.command == Command::Duplicates || out.command == Command::Overview ||
-        out.command == Command::Opportunities) {
+        out.command == Command::Opportunities ||
+        out.command == Command::Breakdown) {
         if (out.path.empty()) {
             out.error = "Missing path argument.";
             return out;

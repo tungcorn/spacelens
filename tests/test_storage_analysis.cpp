@@ -28,6 +28,8 @@ SPACELENS_TEST(StorageAnalysis_capabilities_flags)
     const auto cli = cliCapabilitiesJson();
     SPACELENS_REQUIRE(cli.find("\"filesystem_mutation\":false") != std::string::npos);
     SPACELENS_REQUIRE(cli.find("\"read_only\":true") != std::string::npos);
+    SPACELENS_REQUIRE(cli.find("\"indexed_breakdown\":true") != std::string::npos);
+    SPACELENS_REQUIRE(cli.find("\"breakdown\"") != std::string::npos);
     SPACELENS_REQUIRE(cli.find("delete") == std::string::npos);
 
     const auto mcp = mcpCapabilitiesJson();
@@ -35,6 +37,7 @@ SPACELENS_TEST(StorageAnalysis_capabilities_flags)
     SPACELENS_REQUIRE(mcp.find("\"read_only\":true") != std::string::npos);
     SPACELENS_REQUIRE(mcp.find("\"interface\":\"mcp\"") != std::string::npos);
     SPACELENS_REQUIRE(mcp.find("storage_overview") != std::string::npos);
+    SPACELENS_REQUIRE(mcp.find("storage_breakdown") == std::string::npos);
     SPACELENS_REQUIRE(mcp.find("index_refresh") == std::string::npos ||
                       mcp.find("\"index_refresh\":false") != std::string::npos);
     SPACELENS_REQUIRE(mcp.find("storage_index_refresh") == std::string::npos);

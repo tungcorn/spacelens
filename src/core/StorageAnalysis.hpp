@@ -2,6 +2,7 @@
 
 #include "core/Duplicates.hpp"
 #include "core/StorageIntelligence.hpp"
+#include "core/index/IndexBreakdown.hpp"
 #include "core/index/IndexQuery.hpp"
 #include "core/index/IndexRefresh.hpp"
 
@@ -82,6 +83,7 @@ struct IndexStatusDocument {
 [[nodiscard]] IndexStatusDocument analyzeIndexStatus(const std::wstring& root);
 
 [[nodiscard]] std::string indexQueryToJson(const IndexQueryResult& result);
+[[nodiscard]] std::string indexBreakdownToJson(const IndexedBreakdown& result);
 [[nodiscard]] std::string indexStatusToJson(const IndexQueryResult& status,
                                             const IndexRefreshResult& probe);
 [[nodiscard]] std::string cliCapabilitiesJson();

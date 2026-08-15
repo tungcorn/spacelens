@@ -30,6 +30,7 @@ set(SPACELENS_TEST_SOURCES
     test_storage_analysis.cpp
     test_indexed_intelligence.cpp
     test_index_freshness.cpp
+    test_index_breakdown.cpp
     test_mcp_json.cpp
     test_mcp_protocol.cpp
     TestRunner.hpp

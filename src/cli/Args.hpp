@@ -26,11 +26,12 @@ enum class Command {
     Duplicates,
     Overview,
     Opportunities,
+    Breakdown,
 };
 
 /// Commands intentionally exposed by the read-only CLI. Keep this list explicit
 /// so destructive verbs cannot be registered accidentally.
-inline constexpr std::array<Command, 14> kRegisteredCommands{
+inline constexpr std::array<Command, 15> kRegisteredCommands{
     Command::Scan,
     Command::Top,
     Command::Find,
@@ -43,6 +44,7 @@ inline constexpr std::array<Command, 14> kRegisteredCommands{
     Command::Duplicates,
     Command::Overview,
     Command::Opportunities,
+    Command::Breakdown,
     Command::Help,
     Command::Version,
 };

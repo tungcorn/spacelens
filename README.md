@@ -31,6 +31,9 @@ spacelens overview D:\ --from-index --json
 
 # Discover top storage review opportunities from snapshot index
 spacelens opportunities D:\ --from-index --json
+
+# Explain what kind of files consume the indexed root
+spacelens breakdown D:\ --json
 ```
 
 ## Why SpaceLens?
@@ -46,12 +49,13 @@ spacelens opportunities D:\ --from-index --json
 ## Workflow
 
 ```text
-index list  ──>  overview  ──>  opportunities  ──>  query  ──>  duplicates
+index list  ──>  overview  ──>  opportunities  ──>  breakdown  ──>  query  ──>  duplicates
 ```
 
 - **`index list`**: Catalog available indexes, status, and snapshot freshness.
 - **`overview`**: Review high-level indexed storage usage and largest objects.
 - **`opportunities`**: Rank the top-N storage review candidates across the indexed root.
+- **`breakdown`**: Explain what kind of indexed files consume the root (classification, extension, last-write age).
 - **`query`**: Filter specific files or directories by size, age, pattern, or classification.
 - **`duplicates`**: Locate identical content files verified by SHA-256 hashing.
 

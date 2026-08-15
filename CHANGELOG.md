@@ -5,6 +5,14 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+### Indexed storage breakdown
+
+- `spacelens breakdown <root>` reports file-logical-byte mix by stored
+  classification, extension (top-N plus exact `other`), and last-write
+  age. Index-only. Directories never contribute. Optional `--under` and
+  `--max-index-age-seconds` reuse the existing prefix and freshness
+  gates. No MCP tool. No GUI chart.
+
 ### Release process
 
 - Patch releases are prepared on `release/next` and published after that

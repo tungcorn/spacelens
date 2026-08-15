@@ -205,6 +205,24 @@ try {
         "unique_review_estimated must be false for this small matching set"
     Write-Host ("unique_review_bytes={0} estimated={1}" -f `
             $unique, $opp.Json.summary.unique_review_estimated)
+
+    $bd = Invoke-CliJson -Arguments @("breakdown", $fixture, "--json")
+    Assert-True ($bd.Json.ok -eq $true) "breakdown not ok"
+    Assert-True ($bd.Json.command -eq "breakdown") "breakdown command"
+    Assert-True ($bd.Json.source -eq "persistent_index") "breakdown source"
+    Assert-True ($bd.Json.total_file_count -ge ($decoyCount + 3)) "breakdown file_count"
+    $classBytes = [uint64]0
+    foreach ($g in @($bd.Json.by_classification)) { $classBytes += [uint64]$g.logical_bytes }
+    $extBytes = [uint64]$bd.Json.by_extension.other.logical_bytes
+    foreach ($g in @($bd.Json.by_extension.groups)) { $extBytes += [uint64]$g.logical_bytes }
+    $ageBytes = [uint64]0
+    foreach ($g in @($bd.Json.by_last_write_age)) { $ageBytes += [uint64]$g.logical_bytes }
+    Assert-True ($classBytes -eq [uint64]$bd.Json.total_logical_bytes) "classification bytes drift"
+    Assert-True ($extBytes -eq [uint64]$bd.Json.total_logical_bytes) "extension bytes drift"
+    Assert-True ($ageBytes -eq [uint64]$bd.Json.total_logical_bytes) "age bytes drift"
+    Assert-True ($bd.Raw -notmatch "safe_to_delete") "breakdown leaked safe_to_delete"
+    Write-Host ("breakdown files={0} bytes={1}" -f $bd.Json.total_file_count, $bd.Json.total_logical_bytes)
+
     Write-Host "INDEXED_INTELLIGENCE_SCALING_V1 + exact aggregates verify script passed"
 } finally {
     if ($null -eq $previousDataRoot -or $previousDataRoot -eq "") {

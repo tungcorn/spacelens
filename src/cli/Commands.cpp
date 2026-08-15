@@ -11,6 +11,7 @@
 #include "core/SizeFormatter.hpp"
 #include "core/StorageAnalysis.hpp"
 #include "core/StorageIntelligence.hpp"
+#include "core/index/IndexBreakdown.hpp"
 #include "core/index/IndexCatalog.hpp"
 #include "core/index/IndexBuilder.hpp"
 #include "core/index/IndexPaths.hpp"
@@ -1212,6 +1213,114 @@ ExitCode runOpportunities(const ParsedArgs& args, std::stop_token stop)
     return ExitCode::Success;
 }
 
+void printHumanBreakdown(const IndexedBreakdown& result)
+{
+    std::cout << "Root:          " << narrow(result.location.rootPath) << "\n"
+              << "Source:        persistent_index\n";
+    if (!result.under.empty()) {
+        std::cout << "Under:         " << narrow(result.under) << "\n";
+    }
+    std::cout << "Files:         " << result.total_file_count << "\n"
+              << "Logical bytes: " << SizeFormatter::format(result.total_logical_bytes);
+    if (result.logical_bytes_estimated) {
+        std::cout << " (estimated)";
+    }
+    std::cout << "\n"
+              << formatSnapshotAgeHuman(result.snapshot) << "\n"
+              << "\nBy classification\n"
+              << "SIZE           FILES    CLASSIFICATION\n";
+    for (const auto& g : result.by_classification) {
+        const std::string size = SizeFormatter::format(g.logical_bytes);
+        std::cout << size;
+        if (size.size() < 14) {
+            std::cout << std::string(14 - size.size(), ' ');
+        } else {
+            std::cout << ' ';
+        }
+        std::cout << g.file_count << "  " << g.key << "\n";
+    }
+    std::cout << "\nBy extension (top " << result.limit << ")\n"
+              << "SIZE           FILES    EXTENSION\n";
+    for (const auto& g : result.by_extension) {
+        const std::string size = SizeFormatter::format(g.logical_bytes);
+        std::cout << size;
+        if (size.size() < 14) {
+            std::cout << std::string(14 - size.size(), ' ');
+        } else {
+            std::cout << ' ';
+        }
+        const std::string ext = g.key.empty() ? std::string("(none)") : g.key;
+        std::cout << g.file_count << "  " << ext << "\n";
+    }
+    if (result.extension_other.extension_groups > 0) {
+        const std::string size =
+            SizeFormatter::format(result.extension_other.logical_bytes);
+        std::cout << size;
+        if (size.size() < 14) {
+            std::cout << std::string(14 - size.size(), ' ');
+        } else {
+            std::cout << ' ';
+        }
+        std::cout << result.extension_other.file_count << "  other ("
+                  << result.extension_other.extension_groups << " extensions)\n";
+    }
+    std::cout << "\nBy last-write age\n"
+              << "SIZE           FILES    BUCKET\n";
+    for (const auto& g : result.by_last_write_age) {
+        const std::string size = SizeFormatter::format(g.logical_bytes);
+        std::cout << size;
+        if (size.size() < 14) {
+            std::cout << std::string(14 - size.size(), ' ');
+        } else {
+            std::cout << ' ';
+        }
+        WriteAgeBucket bucket = WriteAgeBucket::Unknown;
+        if (g.key == "lt_30d") {
+            bucket = WriteAgeBucket::Lt30d;
+        } else if (g.key == "d30_90") {
+            bucket = WriteAgeBucket::D30_90;
+        } else if (g.key == "d90_365") {
+            bucket = WriteAgeBucket::D90_365;
+        } else if (g.key == "ge_365d") {
+            bucket = WriteAgeBucket::Ge365d;
+        } else if (g.key == "future") {
+            bucket = WriteAgeBucket::Future;
+        }
+        std::cout << g.file_count << "  " << writeAgeBucketHuman(bucket) << "\n";
+    }
+}
+
+ExitCode runBreakdown(const ParsedArgs& args, std::stop_token stop)
+{
+    IndexedBreakdownSpec spec;
+    spec.pathPrefix = args.under;
+    spec.limit = args.limit;
+    spec.nowTicks = nowFileTime();
+    spec.maxIndexAgeSeconds = args.maxIndexAgeSeconds;
+    const auto result = queryIndexedBreakdown(args.path, spec, stop);
+
+    if (args.json) {
+        std::cout << spacelens::indexBreakdownToJson(result);
+    } else if (!result.ok) {
+        const std::string gateText = formatIndexAgeGateError(result.ageDecision);
+        if (!gateText.empty()) {
+            std::cerr << gateText << "\n";
+        } else {
+            std::cerr << "breakdown failed: " << result.error << "\n";
+        }
+    } else {
+        printHumanBreakdown(result);
+    }
+
+    if (!result.ok && result.error == "index_not_found") {
+        return ExitCode::IndexNotFound;
+    }
+    if (!result.ok && result.error == "cancelled") {
+        return ExitCode::Cancelled;
+    }
+    return result.ok ? ExitCode::Success : ExitCode::ScanFailed;
+}
+
 ExitCode runCapabilities(const ParsedArgs& args)
 {
     if (args.json) {
@@ -1219,12 +1328,14 @@ ExitCode runCapabilities(const ParsedArgs& args)
     } else {
         std::cout << "spacelens " << SPACELENS_VERSION_STRING << "\n"
                   << "commands: scan top find index index-refresh query "
-                     "overview opportunities duplicates capabilities help version\n"
+                     "overview opportunities breakdown duplicates "
+                     "capabilities help version\n"
                   << "read_only: true\n"
                   << "filesystem_mutation: false\n"
                   << "features: json, cancellation, classification, filters, "
                      "persistent_index, indexed_query, incremental_index, "
                      "storage_overview, storage_opportunities, "
+                     "indexed_breakdown, "
                      "duplicate_detection, reclaim_analysis\n"
                   << "not available: filesystem_mutation\n"
                   << "index_schema_version: " << kIndexSchemaVersion << "\n";

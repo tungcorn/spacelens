@@ -73,6 +73,9 @@ public:
     void stepDone();  // expects SQLITE_DONE
 
     [[nodiscard]] std::int64_t columnInt64(int index) const;
+    [[nodiscard]] double columnDouble(int index) const;
+    /// SQLite column type: 1 INTEGER, 2 FLOAT, 3 TEXT, 4 BLOB, 5 NULL.
+    [[nodiscard]] int columnType(int index) const;
     [[nodiscard]] std::string columnText(int index) const;
     [[nodiscard]] std::wstring columnText16(int index) const;
     [[nodiscard]] std::vector<std::uint8_t> columnBlob(int index) const;

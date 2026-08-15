@@ -172,6 +172,7 @@ Agents should treat any non-supported state as **run `index` (full rebuild)**.
 | `index list` | Compact published-index catalog (status + freshness; no refresh) |
 | `query <path> …` | Read-only SQL against published DB |
 | `opportunities <path> --from-index` | Exact top-N review candidates across the whole index |
+| `breakdown <path>` | Index-only file-logical-byte mix by classification, extension, last-write age |
 
 Indexed `opportunities` does **not** prefetch a 200-row prefix and rank
 in C++. `queryIndexedOpportunities` applies the inclusion predicate and
@@ -214,12 +215,20 @@ generation**, not `index.db` mtime and not a live-filesystem probe.
   `clock_skew`), `publish_kind`, and `age_seconds` when known. There is
   no `fresh: true`.
 - Optional `--max-index-age-seconds N` / MCP `max_index_age_seconds`
-  fails closed **before** Query A/B / top-N: `age <= N` is allowed;
-  older, unknown, or clock-skew is rejected (`index_too_old` or
-  `index_freshness_unknown`, exit **4**). No default policy. No
-  auto-refresh. No live fallback. `index status` reports honest age and
-  never applies the gate. `duplicates` is exempt (index candidates, then
-  live hash verify).
+  fails closed **before** Query A/B / top-N / breakdown aggregation:
+  `age <= N` is allowed; older, unknown, or clock-skew is rejected
+  (`index_too_old` or `index_freshness_unknown`, exit **4**). No default
+  policy. No auto-refresh. No live fallback. `index status` reports
+  honest age and never applies the gate. `duplicates` is exempt (index
+  candidates, then live hash verify). `breakdown` is index-only and
+  uses the same published-snapshot gate; it never scans or refreshes.
+
+`breakdown` aggregates **files only** (`kind = 0`, `size_bytes`). A
+directory's `recursive_size` is never added. The three dimensions are
+independent: stored classification, stored extension (top-N plus exact
+`other`), and last-write age buckets. Totals must reconcile. Memory
+does not scale with file count. Logical bytes are index namespace
+size, not physical usage or reclaimable space.
 - `index list --json` is the agent catalog entry: every usable published
   root includes the same `freshness` object (one captured `now` per
   invocation). Status is `ready` / `incompatible` / `unavailable` /

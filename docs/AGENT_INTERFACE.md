@@ -38,6 +38,7 @@ spacelens index list --json                # discover published snapshots
 spacelens index status D:\ --json          # optional: one-root details
 spacelens overview D:\ --from-index --json # reuse a chosen snapshot
 spacelens opportunities D:\ --from-index --json
+spacelens breakdown D:\ --json             # what kind of files consume the root
 spacelens query D:\ --dirs --under D:\Projects\app --limit 20 --json
 spacelens duplicates D:\ --json            # if an index exists
 ```
@@ -56,17 +57,19 @@ storage_query             { "path": "D:\\", "object_type": "directory",
 Start with `spacelens index list --json` to see which roots have a
 published snapshot, how old each is, and whether it is usable
 (`status=ready`, current `index_schema_version`). Then choose a root
-and run `overview` / `opportunities` / `query`. `index list` does not
-refresh or live-scan. MCP `storage_index_status` still requires a
-known root — there is no list-indexes MCP tool.
+and run `overview` / `opportunities` / `breakdown` / `query`.
+`index list` does not refresh or live-scan. MCP `storage_index_status`
+still requires a known root — there is no list-indexes MCP tool and no
+`storage_breakdown` tool.
 
 Prefer a published index when `index list` / `index status` /
 `storage_index_status` shows an acceptable `freshness` / `age_ms` and
 `status`. Exact is not live: age is the published snapshot age (latest
 successful generation), not proof the filesystem is unchanged. Indexed
 commands take `--from-index` (overview/opportunities) or `source:
-persistent_index`. `query` / `storage_query` and `duplicates` /
+persistent_index`. `query` / `storage_query`, `breakdown`, and `duplicates` /
 `storage_duplicates` are index-only. They never silently refresh.
+`breakdown` has no MCP tool.
 Optional `--max-index-age-seconds` / `max_index_age_seconds` fails
 closed (exit 4 / domain error) before top-N or aggregates. No default
 max-age. Do not invent `fresh: true`.
@@ -287,11 +290,12 @@ User: "My D drive is almost full."
 
 1. `spacelens overview D:\ --json` — total size and top consumers
 2. `spacelens opportunities D:\ --json` — groups + ranked review list
-3. `spacelens query D:\ --dirs --under <top-opportunity> --json` — look inside
-4. `spacelens duplicates D:\ --json` if an index exists
-5. Explain to the human what is large, what looks regenerable, what is old,
+3. `spacelens breakdown D:\ --json` — classification / extension / last-write mix
+4. `spacelens query D:\ --dirs --under <top-opportunity> --json` — look inside
+5. `spacelens duplicates D:\ --json` if an index exists
+6. Explain to the human what is large, what looks regenerable, what is old,
    what is duplicated, and what is uncertain
-6. Do **not** delete anything
+7. Do **not** delete anything
 
 ## Storage Intelligence V2
 

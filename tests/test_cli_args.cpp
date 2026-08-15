@@ -128,6 +128,18 @@ SPACELENS_TEST(CliArgs_overview_and_opportunities)
 
     auto underScan = parse({L"spacelens", L"scan", L"D:\\", L"--under", L"D:\\x"});
     SPACELENS_REQUIRE(!underScan.error.empty());
+
+    auto bd = parse({L"spacelens", L"breakdown", L"D:\\data", L"--under",
+                     L"D:\\data\\Projects", L"--limit", L"5", L"--json"});
+    SPACELENS_REQUIRE(bd.error.empty());
+    SPACELENS_REQUIRE(bd.command == Command::Breakdown);
+    SPACELENS_REQUIRE(bd.under == L"D:\\data\\Projects");
+    SPACELENS_REQUIRE_EQ(bd.limit, 5ULL);
+    SPACELENS_REQUIRE(bd.json);
+
+    auto bdFromIndex = parse({L"spacelens", L"breakdown", L"D:\\data",
+                              L"--from-index"});
+    SPACELENS_REQUIRE(!bdFromIndex.error.empty());
 }
 
 SPACELENS_TEST(CliArgs_max_index_age_seconds)
@@ -151,6 +163,13 @@ SPACELENS_TEST(CliArgs_max_index_age_seconds)
     auto dups = parse({L"spacelens", L"duplicates", L"D:\\data",
                        L"--max-index-age-seconds", L"10"});
     SPACELENS_REQUIRE(!dups.error.empty());
+
+    auto bd = parse({L"spacelens", L"breakdown", L"D:\\data",
+                     L"--max-index-age-seconds", L"3600"});
+    SPACELENS_REQUIRE(bd.error.empty());
+    SPACELENS_REQUIRE(bd.command == Command::Breakdown);
+    SPACELENS_REQUIRE(bd.maxIndexAgeSeconds.has_value());
+    SPACELENS_REQUIRE_EQ(*bd.maxIndexAgeSeconds, 3600ULL);
 
     auto fresh = parse({L"spacelens", L"query", L"D:\\data", L"--files",
                         L"--fresh"});

@@ -2,6 +2,7 @@
 
 #include "core/FileTime.hpp"
 #include "core/StorageIntelligence.hpp"
+#include "core/index/IndexPathPrefix.hpp"
 #include "core/index/IndexRefresh.hpp"
 #include "core/index/IndexSnapshot.hpp"
 #include "sqlite3.h"
@@ -116,49 +117,6 @@ std::string escapeLike(std::string_view text)
     return out;
 }
 
-/// Same escaping for UTF-16 paths. Required because Windows paths contain `\`
-/// and pathPrefix uses `LIKE ? ESCAPE '\'`.
-std::wstring escapeLikeWide(std::wstring_view text)
-{
-    std::wstring out;
-    out.reserve(text.size() * 2);
-    for (wchar_t ch : text) {
-        if (ch == L'%' || ch == L'_' || ch == L'\\') {
-            out.push_back(L'\\');
-        }
-        out.push_back(ch);
-    }
-    return out;
-}
-
-/// Exact bind keeps a drive-root trailing slash (`D:\`). LIKE is built from
-/// the slash-stripped base (`D:`) so ESCAPE '\' yields `D:\\%` and matches
-/// `D:\Users\...`. Binding the unstripped `D:\` would LIKE-escape into
-/// `D:\\\\%` and match nothing.
-void bindPathPrefix(SqliteStmt& stmt, int& idx, std::wstring prefix)
-{
-    for (wchar_t& ch : prefix) {
-        if (ch == L'/') {
-            ch = L'\\';
-        }
-    }
-    while (prefix.size() > 3 &&
-           (prefix.back() == L'\\' || prefix.back() == L'/')) {
-        prefix.pop_back();
-    }
-    stmt.bindText16(idx++, prefix);
-    std::wstring likeBase = prefix;
-    while (!likeBase.empty() &&
-           (likeBase.back() == L'\\' || likeBase.back() == L'/')) {
-        likeBase.pop_back();
-    }
-    std::wstring likePat = escapeLikeWide(likeBase);
-    likePat.push_back(L'\\');
-    likePat.push_back(L'\\');
-    likePat.push_back(L'%');
-    stmt.bindText16(idx++, likePat);
-}
-
 void appendInList(std::ostringstream& sql, const char* column,
                   const std::vector<std::string>& values)
 {
@@ -253,8 +211,7 @@ void appendCommonFilters(std::ostringstream& sql, const IndexQuerySpec& spec)
         sql << " AND parent_id = (SELECT id FROM entries WHERE root_id = 1 AND "
                "path = ? LIMIT 1)";
     } else if (!spec.pathPrefix.empty()) {
-        sql << " AND (path = ? COLLATE NOCASE OR path LIKE ? ESCAPE '\\' "
-               "COLLATE NOCASE)";
+        sql << kIndexedPathPrefixSql;
     }
 }
 
@@ -301,7 +258,7 @@ void bindFilters(SqliteStmt& stmt, int& idx, const IndexQuerySpec& spec,
     if (!spec.browsePath.empty()) {
         stmt.bindText16(idx++, spec.browsePath);
     } else if (!spec.pathPrefix.empty()) {
-        bindPathPrefix(stmt, idx, spec.pathPrefix);
+        bindIndexedPathPrefix(stmt, idx, spec.pathPrefix);
     }
 }
 
@@ -352,8 +309,7 @@ void appendOpportunityExtras(std::ostringstream& sql,
         sql << " AND classification = ?";
     }
     if (!spec.pathPrefix.empty()) {
-        sql << " AND (path = ? COLLATE NOCASE OR path LIKE ? ESCAPE '\\' "
-               "COLLATE NOCASE)";
+        sql << kIndexedPathPrefixSql;
     }
     if (!spec.excludePath.empty()) {
         sql << " AND path <> ? COLLATE NOCASE";
@@ -374,7 +330,7 @@ void bindOpportunityFilters(SqliteStmt& stmt, int& idx,
         stmt.bindText(idx++, *spec.classification);
     }
     if (!spec.pathPrefix.empty()) {
-        bindPathPrefix(stmt, idx, spec.pathPrefix);
+        bindIndexedPathPrefix(stmt, idx, spec.pathPrefix);
     }
     if (!spec.excludePath.empty()) {
         std::wstring exclude = spec.excludePath;

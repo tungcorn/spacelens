@@ -268,6 +268,16 @@ std::int64_t SqliteStmt::columnInt64(int index) const
     return static_cast<std::int64_t>(sqlite3_column_int64(m_stmt, index));
 }
 
+double SqliteStmt::columnDouble(int index) const
+{
+    return sqlite3_column_double(m_stmt, index);
+}
+
+int SqliteStmt::columnType(int index) const
+{
+    return sqlite3_column_type(m_stmt, index);
+}
+
 std::string SqliteStmt::columnText(int index) const
 {
     const unsigned char* text = sqlite3_column_text(m_stmt, index);
