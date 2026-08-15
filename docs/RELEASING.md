@@ -180,8 +180,8 @@ Templates live in `packaging/npm/`. The package name is
 `@tungcorn/spacelens`. `package.json` version must match CMake.
 
 `packaging/npm/release-pin.env` records the **last published** unified
-zip (currently v0.1.3,
-`ddac8a6b9433ff6685029dfb6fa6e1abf76e30da4722346244e9ce93d343978d`).
+zip (currently v0.1.4,
+`6265338ef23edee202186627c42bc7d79ce46638fd0de93c04f4fd542a5a20b6`).
 Do not point the pin at a version whose public zip does not exist yet.
 A hash mismatch is a hard stop. Do not substitute a locally rebuilt zip
 for a published pin.
@@ -217,12 +217,10 @@ no `postinstall` download. Node launchers spawn
 `native\spacelens-mcp.exe` with `shell: false` and do not rewrite
 stdout. The MCP launcher must emit protocol-only stdout.
 
-`@tungcorn/spacelens@0.1.3` is on the public npm registry. v0.1.4 is
-published by dispatching `npm-publish.yml` after the v0.1.4 GitHub
-Release exists. The root README advertises
-`npm install -g @tungcorn/spacelens`. After a successful 0.1.4
-publication, update `release-pin.env` to the new public hash so CI
-pack-from-release works again. Do not retag or republish 0.1.3.
+`@tungcorn/spacelens@0.1.4` is on the public npm registry. Historical
+0.1.1–0.1.3 stay published. The root README advertises
+`npm install -g @tungcorn/spacelens`. Do not retag or republish
+0.1.0–0.1.4.
 
 npm uninstall must not delete `%LOCALAPPDATA%\SpaceLens\`.
 
