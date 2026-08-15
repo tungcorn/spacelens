@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 permissions:
@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.detect.outputs.docs_only }}
+      pin_only: ${{ steps.detect.outputs.pin_only }}
       run_expensive: ${{ steps.detect.outputs.run_expensive }}
     steps:
       - name: Checkout
@@ -299,6 +300,20 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  pin-verify:
+    name: Pin / Verify
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.pin_only == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify release pin format
+        shell: pwsh
+        run: .\scripts\verify-release-pin.ps1
+
   release-policy:
     name: Release / Policy
     needs: detect-changes
@@ -317,6 +332,10 @@ jobs:
       - name: Release policy and automation
         shell: pwsh
         run: |
+          .\scripts\test-detect-ci-changes.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\scripts\verify-release-pin.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\scripts\verify-release-policy.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\scripts\verify-release-automation.ps1

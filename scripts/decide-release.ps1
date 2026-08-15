@@ -36,6 +36,10 @@ $version = $cmake
 $publish = $false
 $runPipeline = $false
 $reason = ""
+$prepareNeeded = $false
+
+$commits = Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head $HeadSha -RepoRoot $RepoRoot
+$releaseDecision = Get-SpaceLensReleaseDecision -Commits $commits -LatestVersion $latest
 
 if ($EventName -eq "workflow_dispatch") {
     if (-not $RequestedVersion) {
@@ -82,12 +86,19 @@ if ($EventName -eq "workflow_dispatch") {
     }
 }
 
+$prepareNeeded = Get-SpaceLensPrepareNeed `
+    -RunPipeline $runPipeline `
+    -EventName $EventName `
+    -ReleaseNeeded ([bool]$releaseDecision.Needed)
+
 Write-Host "decide_event=$EventName"
 Write-Host "decide_version=$($version.Text)"
 Write-Host "decide_latest=$($latest.Text)"
 Write-Host "decide_next_patch=$($next.Text)"
 Write-Host "decide_publish=$($publish.ToString().ToLowerInvariant())"
 Write-Host "decide_run_pipeline=$($runPipeline.ToString().ToLowerInvariant())"
+Write-Host "decide_prepare_needed=$($prepareNeeded.ToString().ToLowerInvariant())"
+Write-Host "decide_release_needed=$($releaseDecision.Needed.ToString().ToLowerInvariant())"
 Write-Host "decide_reason=$reason"
 
 if ($env:GITHUB_OUTPUT) {
@@ -95,6 +106,7 @@ if ($env:GITHUB_OUTPUT) {
     "tag=$($version.Tag)" | Out-File $env:GITHUB_OUTPUT -Append
     "publish=$($publish.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Append
     "run_pipeline=$($runPipeline.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Append
+    "prepare_needed=$($prepareNeeded.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Append
     "reason=$reason" | Out-File $env:GITHUB_OUTPUT -Append
 }
 

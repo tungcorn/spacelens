@@ -110,6 +110,109 @@ if (Test-SpaceLensAutoPublishCommit -CMakeVersion "0.1.4" -LatestStableVersion "
     Add-Fail "unbumped CMake must not auto-publish"
 }
 
+# Multiline CMake project(VERSION) must parse (already_bumped cannot require one line).
+$multiCmake = @"
+project(SpaceLens
+    VERSION 0.1.5
+    DESCRIPTION "native"
+    LANGUAGES CXX
+)
+"@
+try {
+    $parsedMulti = Get-SpaceLensCMakeVersionFromText $multiCmake
+    if ($parsedMulti.Text -ne "0.1.5") { Add-Fail "multiline CMake must parse as 0.1.5" }
+} catch {
+    Add-Fail "multiline CMake project(VERSION) must parse: $($_.Exception.Message)"
+}
+
+# Event matrix A–H (offline). Real defects stay red; expected no-ops do not prepare/publish.
+$docsPush = Get-SpaceLensAutomationIntent -EventName "push" -Subject "docs: tighten README" `
+    -Paths @("README.md") -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5"
+if ($docsPush.RunPipeline -or $docsPush.PrepareNeeded -or $docsPush.RunExpensiveCi -or -not $docsPush.DocsOnly) {
+    Add-Fail "A docs-only push must be cheap CI, no prepare, no publish"
+}
+
+$chorePush = Get-SpaceLensAutomationIntent -EventName "push" -Subject "ci: harden automatic release workflow" `
+    -Paths @(".github/workflows/release.yml", "scripts/SpaceLensRelease.ps1") `
+    -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5"
+if ($chorePush.RunPipeline -or $chorePush.PrepareNeeded) {
+    Add-Fail "B ci/chore-only push must not prepare or publish"
+}
+if (-not $chorePush.RunExpensiveCi) {
+    Add-Fail "B workflow/script changes must still run expensive CI"
+}
+
+$featPush = Get-SpaceLensAutomationIntent -EventName "push" -Subject "feat(index): catalog roots" `
+    -Paths @("src/core/index/IndexCatalog.cpp") -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5"
+if (-not $featPush.PrepareNeeded -or $featPush.RunPipeline -or $featPush.NextVersion.Text -ne "0.1.6") {
+    Add-Fail "C one feat push must prepare exactly one next patch and not publish yet"
+}
+
+$multiFeat = Get-SpaceLensAutomationIntent -EventName "push" -Subject "feat(cli): print count" `
+    -Paths @("src/cli/Commands.cpp") -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5" `
+    -RangeCommits @(
+        (New-Commit "feat(index): catalog roots" @("src/core/index/IndexCatalog.cpp")),
+        (New-Commit "fix(index): drive-root under" @("src/core/index/IndexQuery.cpp")),
+        (New-Commit "feat(cli): print count" @("src/cli/Commands.cpp"))
+    )
+if (-not $multiFeat.PrepareNeeded -or $multiFeat.NextVersion.Text -ne "0.1.6") {
+    Add-Fail "D multiple feat/fix commits in one push must still be one patch"
+}
+
+$bumpPush = Get-SpaceLensAutomationIntent -EventName "push" `
+    -Subject "chore(release): prepare SpaceLens v0.1.6" `
+    -Paths @("CMakeLists.txt", "packaging/npm/package.json", "CHANGELOG.md") `
+    -CMakeVersion "0.1.6" -LatestStableVersion "0.1.5" -ParentCMakeVersion "0.1.5" `
+    -HeadSha "bumpsha"
+if (-not $bumpPush.RunPipeline -or -not $bumpPush.Publish -or $bumpPush.PrepareNeeded -or -not $bumpPush.LoopExcluded) {
+    Add-Fail "E generated bump must publish and must not recursively prepare"
+}
+if ($bumpPush.EnsureCi -ne "dispatch") {
+    Add-Fail "E bump publish without existing CI must dispatch CI once"
+}
+$bumpReuse = Get-SpaceLensAutomationIntent -EventName "push" `
+    -Subject "chore(release): prepare SpaceLens v0.1.6" `
+    -Paths @("CMakeLists.txt") -CMakeVersion "0.1.6" -LatestStableVersion "0.1.5" `
+    -ParentCMakeVersion "0.1.5" -HeadSha "bumpsha" `
+    -ExistingCiRuns @([pscustomobject]@{ status = "in_progress"; conclusion = "" })
+if ($bumpReuse.EnsureCi -ne "reuse") {
+    Add-Fail "E must not dispatch a second CI run when one is already in progress"
+}
+
+$pinPush = Get-SpaceLensAutomationIntent -EventName "push" `
+    -Subject "chore(npm): pin pack-from-release to public v0.1.5 hash" `
+    -Paths @("packaging/npm/release-pin.env", "docs/RELEASING.md") `
+    -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5"
+if ($pinPush.RunPipeline -or $pinPush.PrepareNeeded -or $pinPush.DispatchCiAfterPin -or -not $pinPush.PinOnly -or $pinPush.RunExpensiveCi) {
+    Add-Fail "F pin commit must not release and must not run expensive CI"
+}
+
+$recovery = Get-SpaceLensAutomationIntent -EventName "workflow_dispatch" `
+    -Subject "chore(release): prepare SpaceLens v0.1.5" `
+    -Paths @("CMakeLists.txt") -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5" `
+    -PublishInput "true" -HeadSha "pubsha" -TagPeelSha "pubsha" `
+    -ExistingCiRuns @([pscustomobject]@{ status = "completed"; conclusion = "success" })
+if (-not $recovery.RunPipeline -or -not $recovery.Publish -or $recovery.PrepareNeeded) {
+    Add-Fail "G recovery dispatch must run the publish pipeline without preparing another bump"
+}
+if ($recovery.EnsureCi -ne "reuse") {
+    Add-Fail "G recovery must reuse successful CI on the already-published SHA"
+}
+
+$gPlan = Get-SpaceLensPublishPlan -PreparedVersion "0.1.5" -LatestStableVersion "0.1.4" `
+    -TagPeelSha "abc" -HeadSha "abc" -GitHubReleaseExists $true -NpmVersionExists $true `
+    -CurrentPinVersion "0.1.5" -CurrentPinSha256 ("a" * 64) -PublicUnifiedSha256 ("a" * 64)
+if (-not $gPlan.AlreadyComplete -or $gPlan.CreateTag -or $gPlan.CreateRelease -or $gPlan.PublishNpm) {
+    Add-Fail "G already-published rerun must be idempotent"
+}
+
+if ((Get-SpaceLensEnsureCiDecision -Runs @()) -ne "dispatch") {
+    Add-Fail "H missing CI must dispatch (recovery without a PR)"
+}
+$moved = Get-SpaceLensPublishPlan -PreparedVersion "0.1.5" -LatestStableVersion "0.1.4" `
+    -TagPeelSha "old" -HeadSha "new"
+if (-not $moved.Refuse) { Add-Fail "H must refuse to move an existing tag" }
+
 # Publish plan G: rerun after public release exists → no duplicate.
 $g = Get-SpaceLensPublishPlan -PreparedVersion "0.1.5" -LatestStableVersion "0.1.4" `
     -TagPeelSha "abc" -HeadSha "abc" -GitHubReleaseExists $true -NpmVersionExists $true `

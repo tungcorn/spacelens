@@ -10,25 +10,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-function Test-IsDocFile([string]$path) {
-    $p = $path.Replace("\", "/").Trim().ToLowerInvariant()
-    if ([string]::IsNullOrWhiteSpace($p)) { return $false }
-
-    if ($p -eq "readme.md" -or $p -eq "changelog.md" -or $p -eq "contributing.md" -or $p -eq "license") {
-        return $true
-    }
-    if ($p.StartsWith("docs/")) {
-        return $true
-    }
-    if ($p.EndsWith(".md")) {
-        if ($p.StartsWith("src/") -or $p.StartsWith("tests/") -or $p.StartsWith("scripts/") -or $p.StartsWith("packaging/") -or $p.StartsWith(".github/") -or $p.StartsWith("cmake/") -or $p.StartsWith("third_party/")) {
-            return $false
-        }
-        return $true
-    }
-    return $false
-}
+. (Join-Path $PSScriptRoot "SpaceLensRelease.ps1")
 
 $statusLines = @()
 
@@ -99,32 +81,15 @@ foreach ($f in $allPaths) {
     Write-Host "  - $f"
 }
 
-$runExpensive = $true
-$docsOnly = $false
+$cls = Get-SpaceLensCiChangeClass -Paths $allPaths
+$docsOnlyStr = if ($cls.DocsOnly) { "true" } else { "false" }
+$pinOnlyStr = if ($cls.PinOnly) { "true" } else { "false" }
+$runExpensiveStr = if ($cls.RunExpensive) { "true" } else { "false" }
 
-if ($allPaths.Count -gt 0) {
-    $nonDocFound = $false
-    foreach ($f in $allPaths) {
-        if (-not (Test-IsDocFile $f)) {
-            $nonDocFound = $true
-            Write-Host "Non-doc file detected: $f"
-            break
-        }
-    }
-    if (-not $nonDocFound) {
-        $docsOnly = $true
-        $runExpensive = $false
-    }
-} else {
-    Write-Host "No changed file list available or 0 files changed. Defaulting to full CI."
-}
-
-$docsOnlyStr = if ($docsOnly) { "true" } else { "false" }
-$runExpensiveStr = if ($runExpensive) { "true" } else { "false" }
-
-Write-Host "Decision: docs_only=$docsOnlyStr, run_expensive=$runExpensiveStr"
+Write-Host "Decision: docs_only=$docsOnlyStr, pin_only=$pinOnlyStr, run_expensive=$runExpensiveStr"
 
 if ($OutputFile) {
     "docs_only=$docsOnlyStr" | Out-File -FilePath $OutputFile -Append
+    "pin_only=$pinOnlyStr" | Out-File -FilePath $OutputFile -Append
     "run_expensive=$runExpensiveStr" | Out-File -FilePath $OutputFile -Append
 }

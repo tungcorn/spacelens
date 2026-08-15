@@ -5,9 +5,19 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
-- Release prepare dispatches `ci.yml` for the bump commit and verifies
-  that run before dispatching publish. A `GITHUB_TOKEN` push does not
-  start CI by itself.
+- Release Decide skips prepare on expected no-op pushes (docs/chore/pin,
+  or no releasable commits). That is success, not a red workflow.
+- Prepare treats multiline `project(VERSION)` as already-bumped instead
+  of re-running `prepare-release` and failing.
+- `ensure-ci-run.ps1` reuses a successful or in-progress CI run on the
+  exact SHA and dispatches `ci.yml` only when one is missing. Recovery
+  `workflow_dispatch` no longer needs a rescue PR.
+- Pin commits do not dispatch another full CI/release cycle. Pin-only
+  pushes run a cheap `Pin / Verify` gate.
+- `wait-npm` retries `npm view` after Trusted Publishing so registry
+  propagation is not a false failure.
+- Push CI concurrency is per-SHA so a later docs/pin commit cannot
+  cancel the six required checks on a bump SHA.
 - Release prepare updates `docs/QT_SOURCE_OFFER.md` so the current
   unified archive matches the new version and the previous archive
   stays listed as historical. Older v0.1.3–v0.1.0 entries are kept.

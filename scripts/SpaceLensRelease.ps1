@@ -140,6 +140,161 @@ function Test-SpaceLensReleaseLoopSubject {
     return $false
 }
 
+function Test-SpaceLensDocPath {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Path)
+    $p = $Path.Replace("\", "/").Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($p)) { return $false }
+    if ($p -eq "readme.md" -or $p -eq "changelog.md" -or $p -eq "contributing.md" -or $p -eq "license") {
+        return $true
+    }
+    if ($p.StartsWith("docs/")) {
+        return $true
+    }
+    if ($p.EndsWith(".md")) {
+        if ($p.StartsWith("src/") -or $p.StartsWith("tests/") -or $p.StartsWith("scripts/") -or $p.StartsWith("packaging/") -or $p.StartsWith(".github/") -or $p.StartsWith("cmake/") -or $p.StartsWith("third_party/")) {
+            return $false
+        }
+        return $true
+    }
+    return $false
+}
+
+function Test-SpaceLensPinOnlyPath {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Path)
+    $p = $Path.Replace("\", "/").Trim().ToLowerInvariant()
+    return $p -eq "packaging/npm/release-pin.env"
+}
+
+function Get-SpaceLensCiChangeClass {
+    param([AllowEmptyCollection()][string[]]$Paths = @())
+    $clean = @($Paths | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    if ($clean.Count -eq 0) {
+        return [pscustomobject]@{
+            DocsOnly      = $false
+            PinOnly       = $false
+            RunExpensive  = $true
+        }
+    }
+    $hasPin = $false
+    $hasOther = $false
+    foreach ($path in $clean) {
+        if (Test-SpaceLensPinOnlyPath $path) {
+            $hasPin = $true
+            continue
+        }
+        if (-not (Test-SpaceLensDocPath $path)) {
+            $hasOther = $true
+        }
+    }
+    if ($hasOther) {
+        return [pscustomobject]@{
+            DocsOnly     = $false
+            PinOnly      = $false
+            RunExpensive = $true
+        }
+    }
+    if ($hasPin) {
+        return [pscustomobject]@{
+            DocsOnly     = $false
+            PinOnly      = $true
+            RunExpensive = $false
+        }
+    }
+    return [pscustomobject]@{
+        DocsOnly     = $true
+        PinOnly      = $false
+        RunExpensive = $false
+    }
+}
+
+function Get-SpaceLensPrepareNeed {
+    param(
+        [bool]$RunPipeline = $false,
+        [string]$EventName = "",
+        [bool]$ReleaseNeeded = $false
+    )
+    if ($EventName -eq "workflow_dispatch") { return $false }
+    if ($RunPipeline) { return $false }
+    return [bool]$ReleaseNeeded
+}
+
+function Get-SpaceLensEnsureCiDecision {
+    param([AllowEmptyCollection()][object[]]$Runs = @())
+    foreach ($run in @($Runs)) {
+        if ([string]$run.conclusion -eq "success") { return "reuse" }
+    }
+    foreach ($run in @($Runs)) {
+        $status = [string]$run.status
+        if ($status -in @("in_progress", "queued", "waiting", "pending", "requested")) {
+            return "reuse"
+        }
+    }
+    return "dispatch"
+}
+
+function Get-SpaceLensAutomationIntent {
+    param(
+        [Parameter(Mandatory = $true)][string]$EventName,
+        [string]$Subject = "",
+        [string[]]$Paths = @(),
+        [Parameter(Mandatory = $true)][string]$CMakeVersion,
+        [Parameter(Mandatory = $true)][string]$LatestStableVersion,
+        [string]$ParentCMakeVersion = "",
+        [string]$HeadSha = "head",
+        [string]$TagPeelSha = "",
+        [string]$PublishInput = "",
+        [object[]]$RangeCommits = @(),
+        [object[]]$ExistingCiRuns = @()
+    )
+    $ciClass = Get-SpaceLensCiChangeClass -Paths $Paths
+    $commits = @($RangeCommits)
+    if ($commits.Count -eq 0 -and $Subject) {
+        $commits = @([pscustomobject]@{ Subject = $Subject; Paths = $Paths })
+    }
+    $decision = Get-SpaceLensReleaseDecision -Commits $commits -LatestVersion $LatestStableVersion
+    $parent = $null
+    if ($ParentCMakeVersion) { $parent = $ParentCMakeVersion }
+    $auto = Test-SpaceLensAutoPublishCommit `
+        -CMakeVersion $CMakeVersion `
+        -LatestStableVersion $LatestStableVersion `
+        -ParentCMakeVersion $parent `
+        -HeadSha $HeadSha `
+        -TagPeelSha $TagPeelSha
+
+    $runPipeline = $false
+    $publish = $false
+    if ($EventName -eq "workflow_dispatch") {
+        $runPipeline = $true
+        $publish = ($PublishInput -eq "true")
+    } elseif ($auto) {
+        $runPipeline = $true
+        $publish = $true
+    }
+
+    $prepareNeeded = Get-SpaceLensPrepareNeed `
+        -RunPipeline $runPipeline `
+        -EventName $EventName `
+        -ReleaseNeeded ([bool]$decision.Needed)
+    $ensureCi = "skip"
+    if ($runPipeline -and $publish) {
+        $ensureCi = Get-SpaceLensEnsureCiDecision -Runs $ExistingCiRuns
+    }
+
+    return [pscustomobject]@{
+        RunPipeline        = [bool]$runPipeline
+        Publish            = [bool]$publish
+        PrepareNeeded      = [bool]$prepareNeeded
+        ReleaseNeeded      = [bool]$decision.Needed
+        NextVersion        = $decision.NextVersion
+        DocsOnly           = [bool]$ciClass.DocsOnly
+        PinOnly            = [bool]$ciClass.PinOnly
+        RunExpensiveCi     = [bool]$ciClass.RunExpensive
+        DispatchCiAfterPin = $false
+        EnsureCi           = $ensureCi
+        LoopExcluded       = [bool](Test-SpaceLensReleaseLoopSubject $Subject)
+    }
+}
+
 function Test-SpaceLensReleasePrepSubject {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Subject,

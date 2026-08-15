@@ -36,6 +36,7 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
       publish: ${{ steps.plan.outputs.publish }}
       run_pipeline: ${{ steps.plan.outputs.run_pipeline }}
+      prepare_needed: ${{ steps.plan.outputs.prepare_needed }}
       reason: ${{ steps.plan.outputs.reason }}
     steps:
       - name: Checkout
@@ -69,7 +70,8 @@ jobs:
     if: >
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.decide.outputs.run_pipeline != 'true'
+      needs.decide.outputs.run_pipeline != 'true' &&
+      needs.decide.outputs.prepare_needed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 150
     permissions:
@@ -122,47 +124,46 @@ jobs:
         env:
           NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
           NEXT_TAG: ${{ steps.release_check.outputs.next_tag }}
+        shell: pwsh
         run: |
-          # This step uses bash to avoid pwsh external-process exit-code propagation.
-          set -eo pipefail
-          git fetch origin main 2>/dev/null || true
+          $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
+          . .\scripts\SpaceLensRelease.ps1
+          git fetch origin main 2>$null | Out-Null
 
-          ALREADY_BUMPED=false
-          # Read CMake version on origin/main and compare to next version
-          CMAKE_TEXT="$(git show "origin/main:CMakeLists.txt" 2>/dev/null || true)"
-          if [ -n "$CMAKE_TEXT" ]; then
-            MAIN_CMAKE="$(echo "$CMAKE_TEXT" | grep -oP '(?<=project\(SpaceLens VERSION )\d+\.\d+\.\d+' || true)"
-            echo "main_cmake=${MAIN_CMAKE}  next=${NEXT_VERSION}"
-            if [ "$MAIN_CMAKE" = "$NEXT_VERSION" ]; then
-              ALREADY_BUMPED=true
-            fi
-          fi
+          $alreadyBumped = $false
+          $cmakeText = & git show "origin/main:CMakeLists.txt" 2>$null | Out-String
+          if ("$cmakeText".Trim()) {
+            $mainCmake = Get-SpaceLensCMakeVersionFromText $cmakeText
+            Write-Host "main_cmake=$($mainCmake.Text)  next=$env:NEXT_VERSION"
+            if ($mainCmake.Text -eq $env:NEXT_VERSION) {
+              $alreadyBumped = $true
+            }
+          }
 
-          # Check if tag exists on origin (git ls-remote returns empty if not present)
-          TAG_SHA="$(git ls-remote origin "refs/tags/${NEXT_TAG}" | awk '{print $1}' || true)"
-          TAG_EXISTS=false
-          if [ -n "$TAG_SHA" ]; then
-            TAG_EXISTS=true
-          fi
+          $tagSha = ((& git ls-remote origin "refs/tags/$env:NEXT_TAG") -split '\s+')[0]
+          $tagExists = -not [string]::IsNullOrWhiteSpace($tagSha)
 
-          BUMP_SHA=""
-          if [ "$ALREADY_BUMPED" = "true" ] && [ "$TAG_EXISTS" != "true" ]; then
-            MAIN_SHA="$(git rev-parse origin/main)"
-            SUBJECT="$(git log -1 --format=%s origin/main)"
-            EXPECTED="chore(release): prepare SpaceLens ${NEXT_TAG}"
-            EXPECTED_ALT="release: prepare SpaceLens ${NEXT_TAG}"
-            if [ "$SUBJECT" = "$EXPECTED" ] || [ "$SUBJECT" = "$EXPECTED_ALT" ]; then
-              BUMP_SHA="$MAIN_SHA"
-              echo "origin/main is still the bump commit ${BUMP_SHA}"
-            else
-              echo "origin/main moved past the bump (subject='${SUBJECT}'); will not dispatch publish for another SHA"
-            fi
-          fi
+          $bumpSha = ""
+          if ($alreadyBumped -and -not $tagExists) {
+            $mainSha = (& git rev-parse origin/main).Trim()
+            $subject = (& git log -1 --format=%s origin/main).Trim()
+            if (Test-SpaceLensReleasePrepSubject $subject -ExpectedVersion $env:NEXT_VERSION) {
+              $bumpSha = $mainSha
+              Write-Host "origin/main is still the bump commit $bumpSha"
+            } else {
+              Write-Host "origin/main moved past the bump (subject='$subject'); will not dispatch publish for another SHA"
+            }
+          }
 
-          echo "already_bumped=${ALREADY_BUMPED}  tag_exists=${TAG_EXISTS}  bump_sha=${BUMP_SHA}"
-          echo "already_bumped=${ALREADY_BUMPED}" >> "$GITHUB_OUTPUT"
-          echo "tag_exists=${TAG_EXISTS}" >> "$GITHUB_OUTPUT"
-          echo "bump_sha=${BUMP_SHA}" >> "$GITHUB_OUTPUT"
+          $alreadyStr = $alreadyBumped.ToString().ToLowerInvariant()
+          $tagStr = $tagExists.ToString().ToLowerInvariant()
+          Write-Host "already_bumped=$alreadyStr  tag_exists=$tagStr  bump_sha=$bumpSha"
+          "already_bumped=$alreadyStr" | Out-File $env:GITHUB_OUTPUT -Append
+          "tag_exists=$tagStr" | Out-File $env:GITHUB_OUTPUT -Append
+          "bump_sha=$bumpSha" | Out-File $env:GITHUB_OUTPUT -Append
 
 
       - name: Skip — bump already on main or tag exists
@@ -312,72 +313,60 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
           BUMP_SHA: ${{ steps.bump.outputs.bump_sha || steps.bump_check.outputs.bump_sha }}
+        shell: pwsh
         run: |
-          set -euo pipefail
-          REPO="${{ github.repository }}"
-          BUMP="${BUMP_SHA}"
-          if [ -z "$BUMP" ]; then
-            echo "bump SHA missing; refusing to dispatch" >&2
-            exit 1
-          fi
+          $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
+          $repo = $env:GITHUB_REPOSITORY
+          $bump = "$env:BUMP_SHA".Trim()
+          if (-not $bump) { throw "bump SHA missing; refusing to dispatch" }
 
           git fetch origin main
-          ORIGIN_HEAD="$(git rev-parse origin/main)"
-          if [ "$ORIGIN_HEAD" != "$BUMP" ]; then
-            echo "main moved before CI dispatch: origin/main=${ORIGIN_HEAD} bump=${BUMP}. Failing safely." >&2
-            exit 1
-          fi
+          $originHead = (& git rev-parse origin/main).Trim()
+          if ($originHead -ne $bump) {
+            throw "main moved before CI dispatch: origin/main=$originHead bump=$bump. Failing safely."
+          }
 
-          SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "Dispatching ci.yml --ref main for bump ${BUMP}"
-          gh workflow run ci.yml --repo "$REPO" --ref main
-
-          RUN_ID=""
-          DEADLINE=$((SECONDS + 180))
-          while (( SECONDS < DEADLINE )); do
-            MAP="$(gh api "/repos/${REPO}/actions/workflows/ci.yml/runs?event=workflow_dispatch&per_page=20" \
-              --jq --arg since "$SINCE" '
-                [.workflow_runs[]
-                  | select(.created_at >= $since)
-                  | {id, head_sha, created_at}]')"
-            WRONG="$(printf '%s' "$MAP" | jq -r --arg bump "$BUMP" \
-              '[.[] | select(.head_sha != $bump)] | .[0].head_sha // empty')"
-            if [ -n "$WRONG" ]; then
-              echo "CI dispatch attached to ${WRONG}, not bump ${BUMP}. Failing safely." >&2
-              exit 1
-            fi
-            RUN_ID="$(printf '%s' "$MAP" | jq -r --arg bump "$BUMP" \
-              '[.[] | select(.head_sha == $bump)] | sort_by(.created_at) | reverse | .[0].id // empty')"
-            if [ -n "$RUN_ID" ]; then
-              break
-            fi
-            sleep 5
-          done
-          if [ -z "$RUN_ID" ]; then
-            echo "failed to find ci.yml workflow_dispatch run on bump ${BUMP}" >&2
-            exit 1
-          fi
-          HEAD="$(gh api "/repos/${REPO}/actions/runs/${RUN_ID}" --jq .head_sha)"
-          if [ "$HEAD" != "$BUMP" ]; then
-            echo "ci.yml run ${RUN_ID} head_sha=${HEAD} != bump ${BUMP}. Failing safely." >&2
-            exit 1
-          fi
-          echo "CI run ${RUN_ID} is attached to bump ${BUMP}"
+          .\scripts\ensure-ci-run.ps1 -Sha $bump -Repo $repo -Ref main -DispatchIfMissing -DiscoverSeconds 15
+          if ($LASTEXITCODE -ne 0) { throw "ensure-ci-run.ps1 failed" }
 
           git fetch origin main
-          ORIGIN_HEAD="$(git rev-parse origin/main)"
-          if [ "$ORIGIN_HEAD" != "$BUMP" ]; then
-            echo "main moved before publish dispatch: origin/main=${ORIGIN_HEAD} bump=${BUMP}. Failing safely." >&2
-            exit 1
-          fi
+          $originHead = (& git rev-parse origin/main).Trim()
+          if ($originHead -ne $bump) {
+            throw "main moved before publish dispatch: origin/main=$originHead bump=$bump. Failing safely."
+          }
 
-          echo "Dispatching release.yml workflow_dispatch for v${NEXT_VERSION} publish=true"
-          gh workflow run release.yml \
-            --repo "$REPO" \
-            --ref main \
-            -f "version=${NEXT_VERSION}" \
-            -F "publish=true"
-          echo "Dispatched publish. Preflight waits for the six required CI checks on ${BUMP}."
+          Write-Host "Dispatching release.yml workflow_dispatch for v$($env:NEXT_VERSION) publish=true"
+          gh workflow run release.yml --repo $repo --ref main -f "version=$($env:NEXT_VERSION)" -F "publish=true"
+          if ($LASTEXITCODE -ne 0) { throw "failed to dispatch release.yml" }
+          Write-Host "Dispatched publish. Preflight waits for the six required CI checks on $bump."
+
+  ensure-ci:
+    name: Ensure CI on this SHA
+    needs: decide
+    if: ${{ needs.decide.outputs.run_pipeline == 'true' && needs.decide.outputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Reuse or dispatch CI for this SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
+          .\scripts\ensure-ci-run.ps1 -Sha $env:GITHUB_SHA -Repo $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF_NAME -DispatchIfMissing
+          if ($LASTEXITCODE -ne 0) { throw "ensure-ci-run.ps1 failed" }
 
   preflight:
     name: Preflight
@@ -789,9 +778,17 @@ jobs:
             echo "npm-publish.yml failed. GitHub Release ${VERSION} is immutable. Do not retag." >&2
             exit 1
           fi
-          got="$(npm view "@tungcorn/spacelens@${VERSION}" version)"
+          got=""
+          for _try in $(seq 1 18); do
+            got="$(npm view "@tungcorn/spacelens@${VERSION}" version 2>/dev/null || true)"
+            if [ "$got" = "$VERSION" ]; then
+              break
+            fi
+            echo "npm view not yet visible (try ${_try}/18, got='${got}'); retrying"
+            sleep 10
+          done
           if [ "$got" != "$VERSION" ]; then
-            echo "npm view returned '$got' wanted ${VERSION}" >&2
+            echo "npm view returned '$got' wanted ${VERSION} after retries" >&2
             exit 1
           fi
           latest="$(npm view @tungcorn/spacelens version)"
@@ -836,5 +833,4 @@ jobs:
           } else {
             Write-Host "release pin already current; not committing"
           }
-          gh workflow run ci.yml --ref main
-          if ($LASTEXITCODE -ne 0) { throw "failed to dispatch ci.yml after pin" }
+          Write-Host "Pin verified from the public asset; not dispatching full CI."

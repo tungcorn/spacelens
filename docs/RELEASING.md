@@ -127,8 +127,11 @@ certificate is provided separately.
 | npm / Package | windows-2022 | none | templates; pack-from-release only when pin matches |
 | Release / Policy | ubuntu-latest | none | releasable-commit policy, dry-run, workflow static checks |
 
-Concurrency cancels superseded runs. Default `contents: read`. No secrets are
-exposed to pull requests. Third-party actions are pinned to full SHAs.
+Push and `workflow_dispatch` CI use a per-SHA concurrency group so a later
+docs-only or pin commit cannot cancel the six required checks on a bump
+SHA. Pull requests still cancel superseded PR runs. Default
+`contents: read`. No secrets are exposed to pull requests. Third-party
+actions are pinned to full SHAs.
 
 `.github/workflows/quality.yml` is a manual 100k+ stress job. It is not a
 required pull-request check.
@@ -142,32 +145,41 @@ There is no separate pull request to merge.
 1. Push `feat:` / `fix:` / `perf:` (or a mislabeled commit that touches
    `src/core`, `src/cli`, `src/mcp`, `src/app`, `src/ui`, or
    `src/platform`) to `main`.
-2. `release.yml` — **`prepare` job** — classifies `latest-stable-tag..main`.
-   If a release is needed, it waits for all required CI checks on the pushed
-   SHA, then calls `prepare-release.ps1` to bump version files, the written
-   Qt source offer (current unified archive plus historical previous),
-   CHANGELOG, and release notes, commits
+2. `release.yml` **Decide** always succeeds or fails on a real defect.
+   Expected no-ops (`docs:` / `ci:` / `chore:` / pin commits, or no
+   releasable commits since the latest stable tag) set `prepare_needed=false`
+   and **skip** the prepare job. That is a green workflow, not a red
+   "nothing to do" failure.
+3. When a release is needed, **`prepare`** waits for the six required CI
+   checks on the pushed SHA, then calls `prepare-release.ps1` to bump
+   version files, the written Qt source offer (current unified archive
+   plus historical previous), CHANGELOG, and release notes, commits
    `chore(release): prepare SpaceLens vX.Y.Z` directly on `main`, and
    pushes. If `main` moved while preparing the push fails safely (no
-   force-push).
-3. Because a `GITHUB_TOKEN` push does not automatically trigger another
-   workflow run, the `prepare` job first dispatches `ci.yml` on `main`,
-   verifies that run's `head_sha` is the exact bump commit, then
-   dispatches `release.yml` via `workflow_dispatch` with
-   `version=X.Y.Z publish=true`. If `main` moved before either dispatch,
-   prepare fails safely and does not publish another SHA.
-4. The dispatched run detects the bump commit (`decide-release.ps1` sees
-   `workflow_dispatch` with `publish=true`) and enters the full publish
-   pipeline: Preflight waits for the six required CI checks on **that
-   exact bump SHA**, then builds, tests, packages, tags **that exact bump
+   force-push). Already-prepared CMake (multiline `project(VERSION)`)
+   is treated as idempotent, not as a failed bump.
+4. Because a `GITHUB_TOKEN` push does not automatically trigger another
+   workflow run, prepare calls `ensure-ci-run.ps1` on the exact bump SHA
+   (reuses a successful or in-progress CI run; dispatches `ci.yml` only
+   when none exists), verifies that run's `head_sha`, then dispatches
+   `release.yml` with `version=X.Y.Z publish=true`. If `main` moved
+   before either step, prepare fails safely and does not publish another
+   SHA.
+5. The dispatched run enters the publish pipeline. **Ensure CI on this
+   SHA** makes `workflow_dispatch` recovery valid by itself: it reuses
+   green checks or dispatches CI for that SHA (no rescue PR). Preflight
+   then waits for the six required checks on **that exact bump SHA**,
+   then the workflow builds, tests, packages, tags **that exact bump
    commit**, publishes the GitHub Release, dispatches npm Trusted
-   Publishing, then pins `release-pin.env` from the **public** unified zip
-   and dispatches `ci.yml`.
-5. `docs:` / `test:` / `ci:` / `chore:` / `style:` / `build:` commits do
+   Publishing (retries `npm view` until the registry is visible), and
+   pins `release-pin.env` from the **public** unified zip. The pin
+   commit does **not** dispatch another full CI or release cycle.
+6. `docs:` / `test:` / `ci:` / `chore:` / `style:` / `build:` commits do
    not release by themselves. `refactor:` does not unless it touches a
-   product path.
-6. Multiple product commits pushed together produce **one** patch release.
-7. Generated notes live between `<!-- BEGIN GENERATED NOTES -->` markers.
+   product path. Pin-only changes run Detect + `Pin / Verify` +
+   Release / Policy.
+7. Multiple product commits pushed together produce **one** patch release.
+8. Generated notes live between `<!-- BEGIN GENERATED NOTES -->` markers.
    If a notes file has no markers, it is left alone.
 
 Inspect locally without publishing:
@@ -249,10 +261,12 @@ and commits
 `chore(npm): pin pack-from-release to public vX.Y.Z hash` on `main`
 after the tag. It does not hash a local rebuild or the CI staging
 artifact. If the pin already matches, it does not create another commit.
+The pin job does not dispatch `ci.yml`; publication already proved the
+immutable public asset.
 
-v0.1.4 is the current latest Release from this workflow. Historical
-v0.1.0, v0.1.1, v0.1.2, and v0.1.3 remain published and must not be
-retagged, redrafted, or have their assets replaced.
+v0.1.5 is the current latest Release from this workflow. Historical
+v0.1.0, v0.1.1, v0.1.2, v0.1.3, and v0.1.4 remain published and must not
+be retagged, redrafted, or have their assets replaced.
 
 `release-pr.yml` is **retired** in V2. The `release/next` branch and
 any pending PR are no longer used. The `prepare` job in `release.yml`
@@ -278,7 +292,9 @@ only npm is missing, dispatch `npm-publish.yml`. Do not retag.
 
 If the `prepare` job pushed the bump commit but the dispatch to the
 publish pipeline failed, run `release.yml` via `workflow_dispatch`
-with the bump version and `publish=true` manually.
+with the bump version and `publish=true` manually. Recovery dispatches
+CI for that SHA when the six checks are missing. Do not open a
+temporary PR to manufacture required checks.
 
 ## npm
 
