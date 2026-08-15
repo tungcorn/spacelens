@@ -196,8 +196,12 @@ Dispatch inputs (recovery / dry-run):
 
 | Input | Default | Meaning |
 |-------|---------|---------|
-| `version` | `0.1.4` | Must equal CMake `project(VERSION …)` and `packaging/npm/package.json` |
+| `version` | *(required, no default)* | Must equal CMake `project(VERSION …)` and `packaging/npm/package.json` |
 | `publish` | `false` | Dry-run when false; create tag + GitHub Release + npm dispatch when true |
+
+`prepare-release.ps1` does not edit `.github/workflows/**`. Workflow
+`workflow_dispatch` version inputs stay version-agnostic so `release/next`
+can be pushed with the default `GITHUB_TOKEN` (no `workflows` permission).
 
 On push to `main`, `scripts/decide-release.ps1` publishes only when
 CMake equals the next patch of the latest **stable** `vX.Y.Z` tag

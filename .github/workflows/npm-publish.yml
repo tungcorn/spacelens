@@ -6,7 +6,6 @@ on:
       version:
         description: SpaceLens version (must match packaging/npm/package.json)
         required: true
-        default: "0.1.4"
       publish:
         description: Publish the verified tarball to registry.npmjs.org
         type: boolean

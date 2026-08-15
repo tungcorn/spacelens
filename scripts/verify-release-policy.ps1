@@ -203,16 +203,70 @@ try {
 $prepRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-prep-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $prepRoot | Out-Null
 try {
-    foreach ($rel in Get-SpaceLensMechanicalVersionFiles) {
+    $mech = @(Get-SpaceLensMechanicalVersionFiles)
+    foreach ($rel in $mech) {
+        if ($rel -match '(?i)(?:^|/)\.github/workflows/') {
+            Add-Fail "mechanical version files must not include $rel"
+        }
+    }
+    $requiredSources = @(
+        "CMakeLists.txt",
+        "packaging/npm/package.json",
+        "src/cli/main.cpp",
+        "src/cli/Commands.cpp",
+        "src/mcp/Protocol.hpp",
+        "src/app/Application.cpp",
+        "src/core/StorageAnalysis.cpp"
+    )
+    foreach ($rel in $requiredSources) {
+        if ($rel -notin $mech) {
+            Add-Fail "mechanical version files missing required product source $rel"
+        }
+    }
+    foreach ($rel in $mech) {
         $dest = Join-Path $prepRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         $dir = Split-Path -Parent $dest
         if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
         $src = Join-Path $root ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
         Copy-Item -LiteralPath $src -Destination $dest
     }
+    $workflowRels = @(
+        ".github/workflows/release.yml",
+        ".github/workflows/npm-publish.yml"
+    )
+    $workflowBefore = @{}
+    foreach ($rel in $workflowRels) {
+        $dest = Join-Path $prepRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        $dir = Split-Path -Parent $dest
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+        $src = Join-Path $root ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+        Copy-Item -LiteralPath $src -Destination $dest
+        $workflowBefore[$rel] = Get-Content -LiteralPath $dest -Raw
+    }
     $from = Get-SpaceLensCMakeVersion -RepoRoot $prepRoot
     $to = Get-SpaceLensNextPatchVersion $from
-    Update-SpaceLensMechanicalVersions -RepoRoot $prepRoot -FromVersion $from.Text -ToVersion $to.Text | Out-Null
+    $changed = @(Update-SpaceLensMechanicalVersions -RepoRoot $prepRoot -FromVersion $from.Text -ToVersion $to.Text)
+    foreach ($rel in $workflowRels) {
+        if ($rel -in $changed) {
+            Add-Fail "preparing $($to.Text) reported a change to $rel"
+        }
+        $after = Get-Content -LiteralPath (Join-Path $prepRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)) -Raw
+        if ($after -ne $workflowBefore[$rel]) {
+            Add-Fail "preparing $($to.Text) modified $rel"
+        }
+    }
+    foreach ($rel in $requiredSources) {
+        if ($rel -notin $changed) {
+            Add-Fail "preparing $($to.Text) did not bump required product source $rel"
+        }
+        $text = Get-Content -LiteralPath (Join-Path $prepRoot ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)) -Raw
+        if ($text -notmatch [regex]::Escape($to.Text)) {
+            Add-Fail "$rel was not bumped to $($to.Text)"
+        }
+        if ($text -match [regex]::Escape($from.Text)) {
+            Add-Fail "$rel still contains $($from.Text)"
+        }
+    }
     $cmake = Get-Content (Join-Path $prepRoot "CMakeLists.txt") -Raw
     if ($cmake -notmatch "VERSION $($to.Text)") { Add-Fail "temp CMake was not bumped to $($to.Text)" }
     if ($cmake -match "project\(\s*SpaceLens\s+VERSION $($from.Text)") {

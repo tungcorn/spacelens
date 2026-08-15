@@ -18,6 +18,8 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 - Patch releases are prepared on `release/next` and published after that
   PR is merged to `main`. `docs:` / `test:` / `ci:` / `chore:` commits
   do not open a release by themselves.
+- Release preparation does not edit `.github/workflows/**`. Dispatch
+  version inputs stay required and have no version-specific default.
 
 ## [0.1.4] — 2026-08-15
 

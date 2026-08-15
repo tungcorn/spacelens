@@ -393,6 +393,9 @@ function Get-SpaceLensPublishPlan {
 }
 
 function Get-SpaceLensMechanicalVersionFiles {
+    # Product version sources only. Workflows stay version-agnostic so
+    # release/next can be pushed with the default GITHUB_TOKEN (no
+    # `workflows` permission).
     return @(
         "CMakeLists.txt",
         "packaging/npm/package.json",
@@ -400,9 +403,7 @@ function Get-SpaceLensMechanicalVersionFiles {
         "src/cli/Commands.cpp",
         "src/mcp/Protocol.hpp",
         "src/app/Application.cpp",
-        "src/core/StorageAnalysis.cpp",
-        ".github/workflows/release.yml",
-        ".github/workflows/npm-publish.yml"
+        "src/core/StorageAnalysis.cpp"
     )
 }
 
@@ -420,9 +421,7 @@ function Update-SpaceLensMechanicalVersions {
         @{ Rel = "src/cli/Commands.cpp"; Pattern = '(#define SPACELENS_VERSION_STRING ")' + $from + '(")'; Replace = "`${1}$ToVersion`${2}" },
         @{ Rel = "src/app/Application.cpp"; Pattern = '(#define SPACELENS_VERSION_STRING ")' + $from + '(")'; Replace = "`${1}$ToVersion`${2}" },
         @{ Rel = "src/core/StorageAnalysis.cpp"; Pattern = '(#define SPACELENS_VERSION_STRING ")' + $from + '(")'; Replace = "`${1}$ToVersion`${2}" },
-        @{ Rel = "src/mcp/Protocol.hpp"; Pattern = '(#define SPACELENS_MCP_VERSION ")' + $from + '(")'; Replace = "`${1}$ToVersion`${2}" },
-        @{ Rel = ".github/workflows/release.yml"; Pattern = '(default:\s*")' + $from + '(")'; Replace = "`${1}$ToVersion`${2}" },
-        @{ Rel = ".github/workflows/npm-publish.yml"; Pattern = '(default:\s*")' + $from + '(")'; Replace = "`${1}$ToVersion`${2}" }
+        @{ Rel = "src/mcp/Protocol.hpp"; Pattern = '(#define SPACELENS_MCP_VERSION ")' + $from + '(")'; Replace = "`${1}$ToVersion`${2}" }
     )
     $changed = New-Object System.Collections.Generic.List[string]
     foreach ($item in $replacements) {

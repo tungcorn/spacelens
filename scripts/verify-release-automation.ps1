@@ -28,13 +28,34 @@ if ($release -notmatch 'workflow_dispatch:') { Add-Fail "release.yml must keep w
 if ($release -notmatch 'push:') { Add-Fail "release.yml must run on push to main" }
 if ($release -notmatch 'group:\s*spacelens-release') { Add-Fail "release.yml concurrency must be spacelens-release" }
 if ($release -notmatch 'cancel-in-progress:\s*false') { Add-Fail "release publication must not cancel in-progress runs" }
+if ($release -notmatch '(?s)workflow_dispatch:.*?version:.*?required:\s*true') {
+    Add-Fail "release.yml version input must remain required"
+}
+if ($npm -notmatch '(?s)workflow_dispatch:.*?version:.*?required:\s*true') {
+    Add-Fail "npm-publish.yml version input must remain required"
+}
+if ($release -match 'default:\s*"\d+\.\d+\.\d+"') {
+    Add-Fail "release.yml must not hardcode a version-specific workflow_dispatch default"
+}
+if ($npm -match 'default:\s*"\d+\.\d+\.\d+"') {
+    Add-Fail "npm-publish.yml must not hardcode a version-specific workflow_dispatch default"
+}
 if ($npm -notmatch 'id-token:\s*write') { Add-Fail "npm-publish.yml must keep OIDC id-token: write" }
 if ($npm -match 'NPM_TOKEN') { Add-Fail "npm-publish.yml must not mention NPM_TOKEN" }
 if ($release -match 'NPM_TOKEN') { Add-Fail "release.yml must not mention NPM_TOKEN" }
 if ($pr -match 'NPM_TOKEN') { Add-Fail "release-pr.yml must not mention NPM_TOKEN" }
 if ($pr -notmatch 'group:\s*spacelens-release-pr') { Add-Fail "release-pr.yml concurrency group missing" }
 if ($pr -notmatch 'pull-requests:\s*write') { Add-Fail "release-pr.yml needs pull-requests: write on the updater job" }
+if ($pr -match '(?m)^\s+workflows:') {
+    Add-Fail "release-pr.yml must not request workflows permission; workflows stay version-agnostic"
+}
 if ($ci -notmatch 'Release / Policy') { Add-Fail "ci.yml must run Release / Policy" }
+
+foreach ($rel in Get-SpaceLensMechanicalVersionFiles) {
+    if ($rel -match '(?i)(?:^|/)\.github/workflows/') {
+        Add-Fail "mechanical version files must not include $rel"
+    }
+}
 
 foreach ($rel in @(
     ".github/workflows/release.yml",
@@ -96,6 +117,12 @@ if ($release -match 'select\(\.head_sha == \$sha\)') {
 # Dry-run the current tree (may or may not be releasable after this milestone).
 & (Join-Path $PSScriptRoot "release-needed.ps1") -DryRun | Out-Host
 & (Join-Path $PSScriptRoot "decide-release.ps1") | Out-Host
+$prepDry = & (Join-Path $PSScriptRoot "prepare-release.ps1") -DryRun | Out-String
+if ($LASTEXITCODE -ne 0) {
+    Add-Fail "prepare-release.ps1 -DryRun failed"
+} elseif ($prepDry -match '\.github/workflows/') {
+    Add-Fail "prepare-release dry-run must not list .github/workflows files"
+}
 
 if ($failures.Count -gt 0) {
     Write-Host "verify-release-automation: $($failures.Count) failure(s)"
