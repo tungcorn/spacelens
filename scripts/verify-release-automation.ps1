@@ -1,4 +1,6 @@
-# Static checks for Release Automation V1 workflows. No publication.
+# Static checks for Release Automation V2 workflows. No publication.
+# V2: push to main → prepare job bumps version directly on main → dispatch
+# publish pipeline. No release/next PR.
 
 [CmdletBinding()]
 param()
@@ -20,10 +22,10 @@ function Get-Workflow([string]$Rel) {
 }
 
 $release = Get-Workflow ".github/workflows/release.yml"
-$npm = Get-Workflow ".github/workflows/npm-publish.yml"
-$pr = Get-Workflow ".github/workflows/release-pr.yml"
-$ci = Get-Workflow ".github/workflows/ci.yml"
+$npm     = Get-Workflow ".github/workflows/npm-publish.yml"
+$ci      = Get-Workflow ".github/workflows/ci.yml"
 
+# ── release.yml structural invariants ───────────────────────────────────────
 if ($release -notmatch 'workflow_dispatch:') { Add-Fail "release.yml must keep workflow_dispatch recovery" }
 if ($release -notmatch 'push:') { Add-Fail "release.yml must run on push to main" }
 if ($release -notmatch 'group:\s*spacelens-release') { Add-Fail "release.yml concurrency must be spacelens-release" }
@@ -31,36 +33,94 @@ if ($release -notmatch 'cancel-in-progress:\s*false') { Add-Fail "release public
 if ($release -notmatch '(?s)workflow_dispatch:.*?version:.*?required:\s*true') {
     Add-Fail "release.yml version input must remain required"
 }
-if ($npm -notmatch '(?s)workflow_dispatch:.*?version:.*?required:\s*true') {
-    Add-Fail "npm-publish.yml version input must remain required"
+
+# ── V2 prepare job ───────────────────────────────────────────────────────────
+if ($release -notmatch 'name:\s*Prepare release on main') {
+    Add-Fail "release.yml must contain 'Prepare release on main' job (V2 prepare)"
 }
+if ($release -notmatch 'prepare-release\.ps1') {
+    Add-Fail "release.yml prepare job must call prepare-release.ps1"
+}
+if ($release -notmatch 'gh workflow run release\.yml') {
+    Add-Fail "release.yml prepare job must dispatch release.yml for the bump commit"
+}
+if ($release -notmatch 'contents:\s*write') {
+    Add-Fail "release.yml prepare job must have contents: write permission"
+}
+if ($release -notmatch 'actions:\s*write') {
+    Add-Fail "release.yml prepare job must have actions: write permission (for dispatch)"
+}
+
+# ── Safety invariants ────────────────────────────────────────────────────────
 if ($release -match 'default:\s*"\d+\.\d+\.\d+"') {
     Add-Fail "release.yml must not hardcode a version-specific workflow_dispatch default"
 }
 if ($npm -match 'default:\s*"\d+\.\d+\.\d+"') {
     Add-Fail "npm-publish.yml must not hardcode a version-specific workflow_dispatch default"
 }
+if ($npm -notmatch '(?s)workflow_dispatch:.*?version:.*?required:\s*true') {
+    Add-Fail "npm-publish.yml version input must remain required"
+}
 if ($npm -notmatch 'id-token:\s*write') { Add-Fail "npm-publish.yml must keep OIDC id-token: write" }
 if ($npm -match 'NPM_TOKEN') { Add-Fail "npm-publish.yml must not mention NPM_TOKEN" }
 if ($release -match 'NPM_TOKEN') { Add-Fail "release.yml must not mention NPM_TOKEN" }
-if ($pr -match 'NPM_TOKEN') { Add-Fail "release-pr.yml must not mention NPM_TOKEN" }
-if ($pr -notmatch 'group:\s*spacelens-release-pr') { Add-Fail "release-pr.yml concurrency group missing" }
-if ($pr -notmatch 'pull-requests:\s*write') { Add-Fail "release-pr.yml needs pull-requests: write on the updater job" }
-if ($pr -match '(?m)^\s+workflows:') {
-    Add-Fail "release-pr.yml must not request workflows permission; workflows stay version-agnostic"
-}
 if ($ci -notmatch 'Release / Policy') { Add-Fail "ci.yml must run Release / Policy" }
 
+# ── pin job must dispatch ci.yml (no longer dispatches release-pr.yml) ───────
+if ($release -notmatch 'gh workflow run ci\.yml') {
+    Add-Fail "pin job must dispatch ci.yml after pin commit"
+}
+if ($release -match 'gh workflow run release-pr\.yml') {
+    Add-Fail "pin job must not dispatch release-pr.yml (retired in V2)"
+}
+
+# ── npm publish poll guard ───────────────────────────────────────────────────
+if ($release -match 'select\(\.head_sha == \$sha\)') {
+    Add-Fail "npm-publish poll must not require head_sha == GITHUB_SHA (main may have moved)"
+}
+
+# ── release-please guard ─────────────────────────────────────────────────────
+if ($release -match 'release-please') {
+    Add-Fail "Release Please must not own tag or GitHub Release"
+}
+
+# ── mechanical version files must not include workflow files ─────────────────
 foreach ($rel in Get-SpaceLensMechanicalVersionFiles) {
     if ($rel -match '(?i)(?:^|/)\.github/workflows/') {
         Add-Fail "mechanical version files must not include $rel"
     }
 }
 
+# ── WinGet guard ─────────────────────────────────────────────────────────────
+if ($release -match 'winget') {
+    Add-Fail "release automation must not mention WinGet"
+}
+
+# ── CMake / package.json version sync ────────────────────────────────────────
+$cmake = Get-SpaceLensCMakeVersion -RepoRoot $root
+$pkg   = Get-SpaceLensNpmVersion   -RepoRoot $root
+if ($cmake.Text -ne $pkg.Text) {
+    Add-Fail "CMake $($cmake.Text) != package.json $($pkg.Text)"
+}
+
+# ── Required script files ────────────────────────────────────────────────────
+foreach ($rel in @(
+    "scripts/SpaceLensRelease.ps1",
+    "scripts/release-needed.ps1",
+    "scripts/prepare-release.ps1",
+    "scripts/decide-release.ps1",
+    "scripts/update-release-pin.ps1",
+    "scripts/verify-release-policy.ps1",
+    "scripts/verify-release-automation.ps1"
+)) {
+    $path = Join-Path $root ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+    if (-not (Test-Path -LiteralPath $path)) { Add-Fail "missing $rel" }
+}
+
+# ── Pinned action SHA check (release.yml + npm-publish.yml + ci.yml) ─────────
 foreach ($rel in @(
     ".github/workflows/release.yml",
     ".github/workflows/npm-publish.yml",
-    ".github/workflows/release-pr.yml",
     ".github/workflows/ci.yml"
 )) {
     $text = Get-Workflow $rel
@@ -76,45 +136,7 @@ foreach ($rel in @(
     }
 }
 
-if ($release -match 'winget' -or $pr -match 'winget') {
-    Add-Fail "release automation must not mention WinGet"
-}
-
-$cmake = Get-SpaceLensCMakeVersion -RepoRoot $root
-$pkg = Get-SpaceLensNpmVersion -RepoRoot $root
-if ($cmake.Text -ne $pkg.Text) {
-    Add-Fail "CMake $($cmake.Text) != package.json $($pkg.Text)"
-}
-
-foreach ($rel in @(
-    "scripts/SpaceLensRelease.ps1",
-    "scripts/release-needed.ps1",
-    "scripts/prepare-release.ps1",
-    "scripts/decide-release.ps1",
-    "scripts/update-release-pr.ps1",
-    "scripts/update-release-pin.ps1",
-    "scripts/verify-release-policy.ps1",
-    "scripts/verify-release-automation.ps1"
-)) {
-    $path = Join-Path $root ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
-    if (-not (Test-Path -LiteralPath $path)) { Add-Fail "missing $rel" }
-}
-
-if ($release -match 'release-please' -or $pr -match 'release-please') {
-    Add-Fail "Release Please must not own tag or GitHub Release"
-}
-
-if ($release -notmatch 'gh workflow run ci.yml') {
-    Add-Fail "pin job must dispatch ci.yml"
-}
-if ($release -notmatch 'gh workflow run release-pr.yml') {
-    Add-Fail "pin job must dispatch release-pr.yml so later product commits get a pending PR"
-}
-if ($release -match 'select\(\.head_sha == \$sha\)') {
-    Add-Fail "npm-publish poll must not require head_sha == GITHUB_SHA (main may have moved)"
-}
-
-# Dry-run the current tree (may or may not be releasable after this milestone).
+# ── Dry-run current tree ──────────────────────────────────────────────────────
 & (Join-Path $PSScriptRoot "release-needed.ps1") -DryRun | Out-Host
 & (Join-Path $PSScriptRoot "decide-release.ps1") | Out-Host
 $prepDry = & (Join-Path $PSScriptRoot "prepare-release.ps1") -DryRun | Out-String

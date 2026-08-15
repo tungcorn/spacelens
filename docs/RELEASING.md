@@ -135,38 +135,35 @@ required pull-request check.
 
 ## Normal release path
 
-SpaceLens does **not** cut a stable release for every product commit.
-Product-worthy commits on `main` maintain one pending pull request from
-`release/next`. A human merges that PR when they want to publish.
+SpaceLens patches are **released automatically** on every push to `main` that
+contains a releasable commit. **The push itself is the release approval.**
+There is no separate pull request to merge.
 
 1. Push `feat:` / `fix:` / `perf:` (or a mislabeled commit that touches
    `src/core`, `src/cli`, `src/mcp`, `src/app`, `src/ui`, or
    `src/platform`) to `main`.
-2. `release-pr.yml` classifies `latest-stable-tag..main`, prepares the
-   **next patch** only (V1 does not infer major/minor), and opens or
-   updates exactly one PR titled
-   `chore(release): prepare SpaceLens vX.Y.Z`.
-3. `docs:` / `test:` / `ci:` / `chore:` / `style:` / `build:` commits do
-   not open a release by themselves. `refactor:` does not unless it
-   touches a product path.
-4. Generated notes live between `<!-- BEGIN GENERATED NOTES -->` markers.
-   Human edits outside the markers are preserved when the PR is
-   refreshed. If a notes file has no markers, it is left alone.
-5. Merging the PR is the publish approval. `release.yml` on `main`
-   publishes only when **this commit** bumped CMake to the next patch
-   (or the version tag already points at this SHA). Later pushes while
-   CMake is already the next patch do **not** start a second
-   publication. The bump commit waits for required CI (including
-   `Release / Policy`), rebuilds, tags **that** commit, publishes the
-   GitHub Release, dispatches npm Trusted Publishing (`ref=main`;
-   npm downloads the public zip, so `main` may have moved), then pins
-   `release-pin.env` from the **public** unified zip and dispatches
-   `ci.yml` and `release-pr.yml` even if the pin was already current
-   (a `GITHUB_TOKEN` push does not trigger workflows by itself).
-6. The pin commit keeps CMake at the released version while the tag
-   exists, so it does not open another release. After the tag exists,
-   `release-pr.yml` classifies `vX.Y.Z..main` so product commits that
-   landed during packaging become the next pending patch PR.
+2. `release.yml` — **`prepare` job** — classifies `latest-stable-tag..main`.
+   If a release is needed, it waits for all required CI checks on the pushed
+   SHA, then calls `prepare-release.ps1` to bump version files, CHANGELOG,
+   and release notes, commits
+   `chore(release): prepare SpaceLens vX.Y.Z` directly on `main`, and
+   pushes. If `main` moved while preparing the push fails safely (no
+   force-push).
+3. Because a `GITHUB_TOKEN` push does not automatically trigger another
+   workflow run, the `prepare` job explicitly dispatches `release.yml` via
+   `workflow_dispatch` with `version=X.Y.Z publish=true`.
+4. The dispatched run detects the bump commit (`decide-release.ps1` sees
+   `workflow_dispatch` with `publish=true`) and enters the full publish
+   pipeline: waits for CI of the bump commit, builds, tests, packages,
+   tags **that exact bump commit**, publishes the GitHub Release, dispatches
+   npm Trusted Publishing, then pins `release-pin.env` from the **public**
+   unified zip and dispatches `ci.yml`.
+5. `docs:` / `test:` / `ci:` / `chore:` / `style:` / `build:` commits do
+   not release by themselves. `refactor:` does not unless it touches a
+   product path.
+6. Multiple product commits pushed together produce **one** patch release.
+7. Generated notes live between `<!-- BEGIN GENERATED NOTES -->` markers.
+   If a notes file has no markers, it is left alone.
 
 Inspect locally without publishing:
 
@@ -178,7 +175,7 @@ Inspect locally without publishing:
 .\scripts\verify-release-automation.ps1
 ```
 
-Do not run `prepare-release.ps1` without `-DryRun` on `main`.
+Do not run `prepare-release.ps1` without `-DryRun` directly on `main`.
 
 ## Git tags and GitHub Releases
 
@@ -189,8 +186,7 @@ public zip, the public hash pin, or CMake/`#define` version files.
 `.github/workflows/release.yml` runs on push to `main` and keeps
 **manual `workflow_dispatch`** as recovery. It does not run on tag
 push. Publication concurrency group: `spacelens-release`
-(`cancel-in-progress: false`). The pending-PR updater uses
-`spacelens-release-pr`.
+(`cancel-in-progress: false`).
 
 Dispatch inputs (recovery / dry-run):
 
@@ -199,17 +195,17 @@ Dispatch inputs (recovery / dry-run):
 | `version` | *(required, no default)* | Must equal CMake `project(VERSION …)` and `packaging/npm/package.json` |
 | `publish` | `false` | Dry-run when false; create tag + GitHub Release + npm dispatch when true |
 
-`prepare-release.ps1` does not edit `.github/workflows/**`. Workflow
-`workflow_dispatch` version inputs stay version-agnostic so `release/next`
-can be pushed with the default `GITHUB_TOKEN` (no `workflows` permission).
+`prepare-release.ps1` does not edit `.github/workflows/**`.
 
-On push to `main`, `scripts/decide-release.ps1` publishes only when
-CMake equals the next patch of the latest **stable** `vX.Y.Z` tag
-**and** this commit is the version bump (parent CMake differs) or the
-version tag already points here. A later product or docs commit that
-still has the next-patch CMake does not start another pipeline. A pin
-commit does not match that rule. Prerelease tags such as `v0.1.5-rc.1`
-are ignored when selecting the latest stable tag.
+On push to `main`, the `prepare` job detects releasable commits and
+creates the version-bump commit automatically. The subsequent
+`workflow_dispatch` run calls `decide-release.ps1` with
+`publish=true`. On a plain `push` event, `decide-release.ps1`
+publishes only when CMake equals the next patch **and** this commit is
+the bump (parent CMake differs) or the tag already points here.
+A later product commit that still has the next-patch CMake does not
+start another pipeline. A pin commit does not match that rule.
+Prerelease tags such as `v0.1.5-rc.1` are ignored.
 
 Dry-run (`publish=false` via dispatch) builds, tests, packages, hashes,
 and stages the npm tarball from **this run's** unified zip. It must not
@@ -253,6 +249,10 @@ v0.1.4 is the current latest Release from this workflow. Historical
 v0.1.0, v0.1.1, v0.1.2, and v0.1.3 remain published and must not be
 retagged, redrafted, or have their assets replaced.
 
+`release-pr.yml` is **retired** in V2. The `release/next` branch and
+any pending PR are no longer used. The `prepare` job in `release.yml`
+replaces them entirely.
+
 Partial failure is forward-only. Do not roll back a public tag:
 
 - GitHub success / npm fail: leave the Release; retry only
@@ -262,12 +262,18 @@ Partial failure is forward-only. Do not roll back a public tag:
 - pin fail: the public release stands; retry the pin job.
 - pin success / post-release CI fail: diagnose forward; do not move
   the tag.
+- prepare push fail (main moved): re-push a new product commit or
+  re-run the `prepare` job manually; do not force-push.
 
 If auto-publish fails after the tag exists, recover with
 `workflow_dispatch` on `release.yml` from `main` while `main` still
 is the tagged SHA, or from the tag itself (preflight allows a
 non-`main` ref only when that tag already points at this SHA). If
 only npm is missing, dispatch `npm-publish.yml`. Do not retag.
+
+If the `prepare` job pushed the bump commit but the dispatch to the
+publish pipeline failed, run `release.yml` via `workflow_dispatch`
+with the bump version and `publish=true` manually.
 
 ## npm
 
@@ -316,6 +322,9 @@ stdout. The MCP launcher must emit protocol-only stdout.
 0.1.1–0.1.3 stay published. The root README advertises
 `npm install -g @tungcorn/spacelens`. Do not retag or republish
 0.1.0–0.1.4.
+
+`release-pr.yml` no longer runs on push. `update-release-pr.ps1` is
+retained for reference and manual use but is not called by CI.
 
 npm uninstall must not delete `%LOCALAPPDATA%\SpaceLens\`.
 

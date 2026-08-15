@@ -1,45 +1,30 @@
-name: Release PR
+# release-pr.yml — RETIRED
+#
+# The `release/next` PR mechanism has been replaced by direct version-bump
+# commits on main via the `prepare` job in release.yml.
+# See docs/RELEASING.md for the current automated release flow.
+#
+# This file is kept as a stub so that any external references to the
+# workflow filename do not produce 404 errors. It performs no actions.
+
+name: Release PR (retired)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
-
-concurrency:
-  group: spacelens-release-pr
-  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  update:
-    name: Update pending release PR
+  retired:
+    name: Retired — see release.yml prepare job
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Fetch tags
-        run: git fetch --tags --force origin
-
-      - name: Policy self-check
-        shell: pwsh
+      - name: This workflow is retired
         run: |
-          .\scripts\verify-release-policy.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\scripts\release-needed.ps1 -DryRun
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Create or update release/next
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: .\scripts\update-release-pr.ps1
+          echo "release-pr.yml is retired."
+          echo "Automated patch releases are now prepared by the 'prepare' job in release.yml."
+          echo "See docs/RELEASING.md for the current release flow."

@@ -54,7 +54,215 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.version }}
           PUBLISH_INPUT: ${{ inputs.publish }}
         shell: pwsh
-        run: .\scripts\decide-release.ps1
+        run: .\\scripts\\decide-release.ps1
+
+  # ---------------------------------------------------------------------------
+  # prepare: runs on a plain main push when decide did NOT select publish.
+  # Waits for the pushed SHA's CI, then commits the version bump directly on
+  # main and dispatches a workflow_dispatch run of this same workflow to
+  # publish the bump commit.
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Prepare release on main
+    needs: decide
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.decide.outputs.run_pipeline != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch tags
+        run: git fetch --tags --force origin
+
+      - name: Check if release is needed
+        id: needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          .\\scripts\\release-needed.ps1 -DryRun
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "releasable=$($env:releasable)" | Out-File $env:GITHUB_OUTPUT -Append -ErrorAction SilentlyContinue
+          # Re-run to capture output into GITHUB_OUTPUT
+          .\\scripts\\release-needed.ps1 -DryRun | Out-Null
+          # Read the output directly via the script's GITHUB_OUTPUT writes
+          .\\scripts\\release-needed.ps1 -DryRun
+        # Override: use a clean approach
+      - name: Determine if release needed
+        id: release_check
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          . .\\scripts\\SpaceLensRelease.ps1
+          $tags = Get-SpaceLensGitTags
+          $latest = Get-SpaceLensLatestStableVersion -Tags $tags
+          if (-not $latest) { Write-Host "needed=false"; "needed=false" | Out-File $env:GITHUB_OUTPUT -Append; exit 0 }
+          $commits = Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head "HEAD"
+          $decision = Get-SpaceLensReleaseDecision -Commits $commits -LatestVersion $latest
+          Write-Host (Format-SpaceLensDryRun -Decision $decision -Head "HEAD")
+          $needed = $decision.Needed.ToString().ToLower()
+          $nextVer = if ($decision.NextVersion) { $decision.NextVersion.Text } else { "" }
+          $nextTag = if ($decision.NextVersion) { $decision.NextVersion.Tag } else { "" }
+          Write-Host "needed=$needed"
+          Write-Host "next_version=$nextVer"
+          "needed=$needed" | Out-File $env:GITHUB_OUTPUT -Append
+          "next_version=$nextVer" | Out-File $env:GITHUB_OUTPUT -Append
+          "next_tag=$nextTag" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Skip — no releasable commits
+        if: steps.release_check.outputs.needed != 'true'
+        run: echo "No releasable commits since latest stable tag. Nothing to prepare."
+
+      - name: Check if bump already on main (idempotency)
+        id: bump_check
+        if: steps.release_check.outputs.needed == 'true'
+        env:
+          NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          . .\\scripts\\SpaceLensRelease.ps1
+          git fetch origin main
+          $cmakeText = & git show "origin/main:CMakeLists.txt" | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "cannot read origin/main CMakeLists.txt" }
+          $current = $null
+          try { $current = Get-SpaceLensCMakeVersionFromText $cmakeText } catch { }
+          $alreadyBumped = ($current -and $current.Text -eq $env:NEXT_VERSION)
+          Write-Host "main_cmake=$($current.Text)"
+          Write-Host "already_bumped=$($alreadyBumped.ToString().ToLower())"
+          "already_bumped=$($alreadyBumped.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
+          # Check if tag already exists
+          $tagPeel = Get-SpaceLensTagPeelSha -Tag "v$($env:NEXT_VERSION)"
+          $tagExists = [bool]$tagPeel
+          Write-Host "tag_exists=$($tagExists.ToString().ToLower())"
+          "tag_exists=$($tagExists.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Skip — bump already on main or tag exists
+        if: >
+          steps.release_check.outputs.needed == 'true' &&
+          (steps.bump_check.outputs.already_bumped == 'true' ||
+           steps.bump_check.outputs.tag_exists == 'true')
+        env:
+          NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
+        run: |
+          echo "Version bump for v${NEXT_VERSION} is already on main or tag already exists."
+          echo "Skipping prepare; the publish pipeline should already be running or complete."
+
+      - name: Wait for CI of pushed SHA
+        if: >
+          steps.release_check.outputs.needed == 'true' &&
+          steps.bump_check.outputs.already_bumped != 'true' &&
+          steps.bump_check.outputs.tag_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ needs.decide.outputs.version }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Wait for the original pushed SHA's CI checks — not publish gates.
+          # We pass -Publish:$false so it only waits for CI, not tag/release checks.
+          .\\scripts\\verify-release-preflight.ps1 `
+            -Version $env:REQUESTED_VERSION `
+            -Publish:$false `
+            -Wait `
+            -WaitMinutes 120 `
+            -Sha $env:GITHUB_SHA
+
+      - name: Prepare version bump commit on main
+        id: bump
+        if: >
+          steps.release_check.outputs.needed == 'true' &&
+          steps.bump_check.outputs.already_bumped != 'true' &&
+          steps.bump_check.outputs.tag_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
+          NEXT_TAG: ${{ steps.release_check.outputs.next_tag }}
+          ORIGINAL_SHA: ${{ github.sha }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          . .\\scripts\\SpaceLensRelease.ps1
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Ensure we are on a clean local main that matches origin/main at the original SHA.
+          git fetch origin main
+          $originHead = (& git rev-parse "origin/main").Trim()
+          if ($originHead -ne $env:ORIGINAL_SHA) {
+            Write-Host "main has moved since this push ($($env:ORIGINAL_SHA) → $originHead). Aborting safely."
+            exit 1
+          }
+
+          git checkout -B main origin/main
+          git reset --hard origin/main
+
+          # Run prepare-release.ps1 to bump version files, CHANGELOG, and release notes.
+          .\\scripts\\prepare-release.ps1 -Version $env:NEXT_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "prepare-release.ps1 failed" }
+
+          # Stage mechanical version files + CHANGELOG + release notes.
+          $toAdd = @(Get-SpaceLensMechanicalVersionFiles) + @("CHANGELOG.md", "docs/release-notes/$($env:NEXT_TAG).md")
+          foreach ($rel in $toAdd) {
+            $path = Join-Path (Get-SpaceLensRepoRoot) ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)
+            if (Test-Path -LiteralPath $path) {
+              git add -- $rel
+              if ($LASTEXITCODE -ne 0) { throw "git add $rel failed" }
+            }
+          }
+
+          $porcelain = & git status --porcelain
+          if (-not "$porcelain".Trim()) {
+            throw "prepare-release produced no staged changes for $($env:NEXT_VERSION)"
+          }
+
+          $subject = "chore(release): prepare SpaceLens $($env:NEXT_TAG)"
+          git commit -m $subject
+          if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
+
+          $bumpSha = (& git rev-parse HEAD).Trim()
+          Write-Host "bump_sha=$bumpSha"
+          Write-Host "bump_subject=$subject"
+          "bump_sha=$bumpSha" | Out-File $env:GITHUB_OUTPUT -Append
+          "bump_subject=$subject" | Out-File $env:GITHUB_OUTPUT -Append
+
+          # Push — fail safely on non-fast-forward (another push arrived).
+          git push origin main
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: git push failed (main moved during prepare). No force-push. Aborting."
+            exit 1
+          }
+          Write-Host "Pushed bump commit $bumpSha to main."
+
+      - name: Dispatch publish pipeline for bump commit
+        if: >
+          steps.release_check.outputs.needed == 'true' &&
+          steps.bump_check.outputs.already_bumped != 'true' &&
+          steps.bump_check.outputs.tag_exists != 'true' &&
+          steps.bump.outputs.bump_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
+        run: |
+          set -euo pipefail
+          echo "Dispatching release.yml workflow_dispatch for v${NEXT_VERSION} publish=true"
+          gh workflow run release.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f "version=${NEXT_VERSION}" \
+            -F "publish=true"
+          echo "Dispatched. The publish pipeline will wait for CI of the bump commit."
 
   preflight:
     name: Preflight
@@ -84,7 +292,7 @@ jobs:
         shell: pwsh
         run: |
           $publish = ($env:PUBLISH -eq "true")
-          .\scripts\verify-release-preflight.ps1 -Version $env:REQUESTED_VERSION -Publish:$publish -Wait:$publish
+          .\\scripts\\verify-release-preflight.ps1 -Version $env:REQUESTED_VERSION -Publish:$publish -Wait:$publish
           "version=$($env:REQUESTED_VERSION)" | Out-File $env:GITHUB_OUTPUT -Append
           "tag=v$($env:REQUESTED_VERSION)" | Out-File $env:GITHUB_OUTPUT -Append
 
@@ -127,46 +335,46 @@ jobs:
       - name: Install Qt ${{ env.QT_VERSION }}
         shell: pwsh
         run: |
-          $prefix = (& .\scripts\install-qt.ps1 -Version $env:QT_VERSION -AqtVersion $env:AQTINSTALL_VERSION |
+          $prefix = (& .\\scripts\\install-qt.ps1 -Version $env:QT_VERSION -AqtVersion $env:AQTINSTALL_VERSION |
             Select-Object -Last 1).ToString().Trim()
-          if (-not (Test-Path (Join-Path $prefix "lib\cmake\Qt6\Qt6Config.cmake"))) {
+          if (-not (Test-Path (Join-Path $prefix "lib\\cmake\\Qt6\\Qt6Config.cmake"))) {
             throw "install-qt.ps1 did not return a Qt prefix (got '$prefix')"
           }
           "CMAKE_PREFIX_PATH=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "PATH=$prefix\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PATH=$prefix\\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Configure Release
         shell: pwsh
         run: |
-          . .\scripts\use-msvc.ps1
+          . .\\scripts\\use-msvc.ps1
           if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
           cmake --preset windows-release
 
       - name: Build Release
         shell: pwsh
         run: |
-          . .\scripts\use-msvc.ps1
+          . .\\scripts\\use-msvc.ps1
           if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
           cmake --build --preset windows-release
 
       - name: Full tests
         shell: pwsh
         run: |
-          . .\scripts\use-msvc.ps1
+          . .\\scripts\\use-msvc.ps1
           if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
           ctest --preset windows-release
-          .\build-release\tests\spacelens_tests.exe
+          .\\build-release\\tests\\spacelens_tests.exe
 
       - name: CLI safety gate
         shell: pwsh
-        run: .\scripts\verify-cli-safety.ps1 -CliPath .\build-release\cli\spacelens.exe
+        run: .\\scripts\\verify-cli-safety.ps1 -CliPath .\\build-release\\cli\\spacelens.exe
 
       - name: Verify built version
         env:
           EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
         shell: pwsh
         run: |
-          $cache = Get-Content .\build-release\CMakeCache.txt
+          $cache = Get-Content .\\build-release\\CMakeCache.txt
           $version = $null
           foreach ($line in $cache) {
             if ($line -match '^CMAKE_PROJECT_VERSION:STATIC=(.+)$') { $version = $Matches[1]; break }
@@ -175,23 +383,23 @@ jobs:
           if ($version -ne $env:EXPECTED_VERSION) {
             throw "built CMake version $version != requested $($env:EXPECTED_VERSION)"
           }
-          $cli = & .\build-release\cli\spacelens.exe version
+          $cli = & .\\build-release\\cli\\spacelens.exe version
           if ($cli -notmatch [regex]::Escape($version)) {
             throw "CLI version '$cli' does not contain CMake version $version"
           }
-          $caps = & .\build-release\cli\spacelens.exe capabilities --json | ConvertFrom-Json
+          $caps = & .\\build-release\\cli\\spacelens.exe capabilities --json | ConvertFrom-Json
           if ($caps.filesystem_mutation -ne $false) { throw "filesystem_mutation is not false" }
           if ($caps.read_only -ne $true) { throw "read_only is not true" }
-          .\scripts\verify-mcp-safety.ps1 -McpPath .\build-release\mcp\spacelens-mcp.exe -ExpectedVersion $version
+          .\\scripts\\verify-mcp-safety.ps1 -McpPath .\\build-release\\mcp\\spacelens-mcp.exe -ExpectedVersion $version
           if ($LASTEXITCODE -ne 0) { throw "MCP safety/version gate failed" }
           Write-Host "built version=$version"
 
       - name: Stage archives
         shell: pwsh
         run: |
-          . .\scripts\use-msvc.ps1
+          . .\\scripts\\use-msvc.ps1
           if (-not (Import-SpaceLensMsvc)) { throw "MSVC vcvars not found" }
-          .\scripts\package-release.ps1 -BuildDir .\build-release -OutDir .\dist
+          .\\scripts\\package-release.ps1 -BuildDir .\\build-release -OutDir .\\dist
 
       - name: Record archive hashes
         id: hash
@@ -199,13 +407,13 @@ jobs:
           TAG: ${{ needs.preflight.outputs.tag }}
         shell: pwsh
         run: |
-          $main = Join-Path .\dist "spacelens-$($env:TAG)-windows-x64.zip"
-          $cli = Join-Path .\dist "spacelens-cli-$($env:TAG)-windows-x64.zip"
+          $main = Join-Path .\\dist "spacelens-$($env:TAG)-windows-x64.zip"
+          $cli = Join-Path .\\dist "spacelens-cli-$($env:TAG)-windows-x64.zip"
           if (-not (Test-Path $main)) { throw "missing $main" }
           if (-not (Test-Path $cli)) { throw "missing $cli" }
           $mainHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $main).Hash.ToLowerInvariant()
           $cliHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $cli).Hash.ToLowerInvariant()
-          $sums = Get-Content .\dist\SHA256SUMS.txt
+          $sums = Get-Content .\\dist\\SHA256SUMS.txt
           if ($sums -notcontains "$mainHash  $(Split-Path $main -Leaf)") {
             throw "SHA256SUMS.txt missing verified unified hash"
           }
@@ -224,9 +432,9 @@ jobs:
           UNIFIED_SHA256: ${{ steps.hash.outputs.unified_sha256 }}
         shell: pwsh
         run: |
-          $zip = Join-Path .\dist "spacelens-$($env:TAG)-windows-x64.zip"
-          .\scripts\package-npm.ps1 -Version $env:VERSION -ZipPath $zip -ExpectedSha256 $env:UNIFIED_SHA256
-          .\scripts\verify-npm-package.ps1
+          $zip = Join-Path .\\dist "spacelens-$($env:TAG)-windows-x64.zip"
+          .\\scripts\\package-npm.ps1 -Version $env:VERSION -ZipPath $zip -ExpectedSha256 $env:UNIFIED_SHA256
+          .\\scripts\\verify-npm-package.ps1
 
       - name: Distribution gates
         id: gates
@@ -238,10 +446,10 @@ jobs:
           }
           $hasLicense = -not [string]::IsNullOrWhiteSpace($licenseText)
 
-          & .\scripts\verify-qt-redist-review.ps1
+          & .\\scripts\\verify-qt-redist-review.ps1
           if ($LASTEXITCODE -ne 0) { throw "qt-redist-review.env is malformed" }
 
-          & .\scripts\verify-qt-redist-review.ps1 -RequirePass
+          & .\\scripts\\verify-qt-redist-review.ps1 -RequirePass
           $qtPass = ($LASTEXITCODE -eq 0)
 
           $cliEligible = $hasLicense
@@ -352,7 +560,7 @@ jobs:
             exit 1
           fi
 
-          if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          if gh release view "${TAG}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
             echo "GitHub Release ${TAG} already exists; verifying assets (will not replace)"
             assets="$(gh release view "${TAG}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')"
             for need in "spacelens-${TAG}-windows-x64.zip" "spacelens-cli-${TAG}-windows-x64.zip" "SHA256SUMS.txt"; do
@@ -361,7 +569,7 @@ jobs:
                 exit 1
               fi
             done
-            draft="$(gh release view "${TAG}" --repo "${{ github.repository }}" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')"
+            draft="$(gh release view "${TAG}" --repo "${{ github.repository }}" --json isDraft,isPrerelease --jq '"\\(.isDraft) \\(.isPrerelease)"')"
             if [ "$draft" != "false false" ]; then
               echo "existing Release ${TAG} is draft/prerelease: ${draft}" >&2
               exit 1
@@ -500,7 +708,7 @@ jobs:
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
-          .\scripts\update-release-pin.ps1 -Version $env:VERSION -Repo $env:GITHUB_REPOSITORY -WriteFiles
+          .\\scripts\\update-release-pin.ps1 -Version $env:VERSION -Repo $env:GITHUB_REPOSITORY -WriteFiles
           if ($LASTEXITCODE -ne 0) { throw "update-release-pin.ps1 failed" }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -515,5 +723,3 @@ jobs:
           }
           gh workflow run ci.yml --ref main
           if ($LASTEXITCODE -ne 0) { throw "failed to dispatch ci.yml after pin" }
-          gh workflow run release-pr.yml --ref main
-          if ($LASTEXITCODE -ne 0) { throw "failed to dispatch release-pr.yml after pin" }
