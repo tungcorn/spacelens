@@ -24,5 +24,20 @@ $result = Wait-SpaceLensChildWorkflow `
     -PollTimeoutSeconds $PollTimeoutSeconds `
     -PollIntervalSeconds $PollIntervalSeconds `
     -SkipWatch:$SkipWatch
-Write-Host "wait_workflow_run action=$($result.Action) reason=$($result.Reason)"
+
+$action = if ($result -is [array]) {
+    ($result | Where-Object { $_ -and $_.PSObject.Properties.Name -contains 'Action' } | Select-Object -Last 1).Action
+} else {
+    $result.Action
+}
+$reason = if ($result -is [array]) {
+    ($result | Where-Object { $_ -and $_.PSObject.Properties.Name -contains 'Reason' } | Select-Object -Last 1).Reason
+} else {
+    $result.Reason
+}
+
+Write-Host "wait_workflow_run action=$action reason=$reason"
+if ($action -ne 'continue') {
+    exit 1
+}
 exit 0

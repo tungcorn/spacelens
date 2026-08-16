@@ -458,7 +458,7 @@ function Wait-SpaceLensChildWorkflow {
             $watchExit = [int](& $WatchCommand $id $Repo)
         } else {
             if (-not $Repo) { throw "Repo is required to watch a workflow run" }
-            & gh run watch $id --repo $Repo --exit-status
+            & gh run watch $id --repo $Repo --exit-status | Out-Host
             $watchExit = $LASTEXITCODE
         }
         if ($watchExit -eq 0) {
