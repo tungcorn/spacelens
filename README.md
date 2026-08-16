@@ -1,6 +1,12 @@
+<div align="center">
+
+<img src="assets/banner.png" alt="SpaceLens" width="100%" />
+
 # SpaceLens
 
 **Fast native C++ storage intelligence for Windows, built for humans, scripts, and AI agents.**
+
+</div>
 
 SpaceLens scans Windows storage and converts filesystem snapshots into deterministic size, activity, classification, location-safety policy, and read-only reclaim insights. It allows humans and AI agents to analyze disk usage and plan cleanup opportunities safely without granting write or deletion permissions to an agent.
 

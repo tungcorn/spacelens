@@ -33,6 +33,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QItemSelectionModel>
 #include <QKeySequence>
 #include <QLabel>
@@ -123,6 +124,7 @@ MainWindow::MainWindow(QWidget* parent)
     , m_session(std::make_unique<ScanSession>(this))
 {
     setWindowTitle(QStringLiteral("SpaceLens"));
+    setWindowIcon(QIcon(QStringLiteral(":/assets/icon.png")));
     resize(1280, 800);
 
     const auto reviewStatus = m_reviewController.openDefault();

@@ -4,6 +4,7 @@
 #include "ui/UiTheme.hpp"
 
 #include <QDir>
+#include <QIcon>
 #include <QListWidget>
 #include <QPushButton>
 #include <QTimer>
@@ -58,6 +59,7 @@ Application::Application(int& argc, char** argv)
     QApplication::setApplicationName(QStringLiteral("SpaceLens"));
     QApplication::setOrganizationName(QStringLiteral("SpaceLens"));
     QApplication::setApplicationVersion(QStringLiteral(SPACELENS_VERSION_STRING));
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/assets/icon.png")));
     applyApplicationChrome(m_qtApp);
     const QString visualTheme = qEnvironmentVariable("SPACELENS_VISUAL_THEME");
     if (!visualTheme.isEmpty()) {

@@ -309,7 +309,12 @@ if(SPACELENS_BUILD_GUI)
         src/ui/IndexedRootDelegate.cpp
         src/ui/PropertyInspector.hpp
         src/ui/PropertyInspector.cpp
+        src/app/resources.qrc
     )
+
+    if(WIN32)
+        list(APPEND SPACELENS_GUI_SOURCES src/app/SpaceLens.rc)
+    endif()
 
     add_executable(SpaceLens
         src/main.cpp
