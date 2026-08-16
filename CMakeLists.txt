@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(SpaceLens
-    VERSION 0.1.6
+    VERSION 0.1.7
     DESCRIPTION "Native Windows disk-space analyzer (core + CLI + MCP + GUI)"
     LANGUAGES CXX
 )

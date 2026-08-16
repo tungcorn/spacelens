@@ -5,6 +5,16 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-08-16
+
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.7
+
+<!-- BEGIN GENERATED CHANGELOG 0.1.7 -->
+### Added
+
+- assets: add project logo, hero banner, and app icon resources
+<!-- END GENERATED CHANGELOG 0.1.7 -->
+
 ## [0.1.6] — 2026-08-16
 
 https://github.com/tungcorn/spacelens/releases/tag/v0.1.6

@@ -11,7 +11,7 @@
 #include <QWidget>
 
 #ifndef SPACELENS_VERSION_STRING
-#define SPACELENS_VERSION_STRING "0.1.6"
+#define SPACELENS_VERSION_STRING "0.1.7"
 #endif
 
 namespace spacelens {
