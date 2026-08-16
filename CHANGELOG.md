@@ -5,6 +5,21 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-08-16
+
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.6
+
+<!-- BEGIN GENERATED CHANGELOG 0.1.6 -->
+### Added
+
+- reclaim: add physical reclaim intelligence
+
+### Fixed
+
+- ci: handle missing release tag safely
+- reclaim: drop stale index candidates after live revalidation
+<!-- END GENERATED CHANGELOG 0.1.6 -->
+
 - Prepare treats a missing next tag (`git ls-remote` empty) as
   `tag_exists=false` and continues release preparation instead of
   crashing on an empty-array index.
