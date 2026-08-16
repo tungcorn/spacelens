@@ -1,7 +1,9 @@
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -44,6 +46,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Fetch tags
         run: git fetch --tags --force origin
@@ -54,22 +57,23 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REQUESTED_VERSION: ${{ inputs.version }}
           PUBLISH_INPUT: ${{ inputs.publish }}
+          WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WORKFLOW_RUN_EVENT: ${{ github.event.workflow_run.event }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         shell: pwsh
-        run: .\\scripts\\decide-release.ps1
+        run: .\scripts\decide-release.ps1
 
   # ---------------------------------------------------------------------------
-  # prepare: runs on a plain main push when decide did NOT select publish.
-  # Waits for the pushed SHA's CI, then commits the version bump directly on
-  # main. A GITHUB_TOKEN push does not trigger workflows, so this job must
-  # dispatch ci.yml on the exact bump SHA, verify that run, then dispatch
-  # this workflow with publish=true. If main moved, fail safely.
+  # prepare: runs after CI succeeds on a main push when decide did NOT select publish.
+  # Commits the version bump directly on main. A GITHUB_TOKEN push does not trigger
+  # workflows, so this job must dispatch ci.yml on the exact bump SHA, verify that run,
+  # then dispatch this workflow with publish=true. If main moved, fail safely.
   # ---------------------------------------------------------------------------
   prepare:
     name: Prepare release on main
     needs: decide
     if: >
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
       needs.decide.outputs.run_pipeline != 'true' &&
       needs.decide.outputs.prepare_needed == 'true'
     runs-on: ubuntu-latest
@@ -83,6 +87,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Fetch tags
         run: git fetch --tags --force origin
@@ -192,7 +197,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          SHA="${{ github.sha }}"
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
           REPO="${{ github.repository }}"
           REQUIRED=(
             "Windows / Full Debug"
@@ -251,7 +256,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NEXT_VERSION: ${{ steps.release_check.outputs.next_version }}
           NEXT_TAG: ${{ steps.release_check.outputs.next_tag }}
-          ORIGINAL_SHA: ${{ github.sha }}
+          ORIGINAL_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"

@@ -270,10 +270,22 @@ function Get-SpaceLensPrepareNeed {
     param(
         [bool]$RunPipeline = $false,
         [string]$EventName = "",
-        [bool]$ReleaseNeeded = $false
+        [bool]$ReleaseNeeded = $false,
+        [string]$WorkflowRunConclusion = "success",
+        [string]$WorkflowRunBranch = "main",
+        [string]$WorkflowRunEvent = "push",
+        [string]$HeadSha = "head"
     )
     if ($EventName -eq "workflow_dispatch") { return $false }
     if ($RunPipeline) { return $false }
+    if ($EventName -eq "workflow_run") {
+        if ($WorkflowRunConclusion -ne "success" -or
+            $WorkflowRunBranch -ne "main" -or
+            $WorkflowRunEvent -ne "push" -or
+            [string]::IsNullOrWhiteSpace($HeadSha)) {
+            return $false
+        }
+    }
     return [bool]$ReleaseNeeded
 }
 
@@ -303,7 +315,10 @@ function Get-SpaceLensAutomationIntent {
         [string]$TagPeelSha = "",
         [string]$PublishInput = "",
         [object[]]$RangeCommits = @(),
-        [object[]]$ExistingCiRuns = @()
+        [object[]]$ExistingCiRuns = @(),
+        [string]$WorkflowRunConclusion = "success",
+        [string]$WorkflowRunBranch = "main",
+        [string]$WorkflowRunEvent = "push"
     )
     $ciClass = Get-SpaceLensCiChangeClass -Paths $Paths
     $commits = @($RangeCommits)
@@ -333,7 +348,11 @@ function Get-SpaceLensAutomationIntent {
     $prepareNeeded = Get-SpaceLensPrepareNeed `
         -RunPipeline $runPipeline `
         -EventName $EventName `
-        -ReleaseNeeded ([bool]$decision.Needed)
+        -ReleaseNeeded ([bool]$decision.Needed) `
+        -WorkflowRunConclusion $WorkflowRunConclusion `
+        -WorkflowRunBranch $WorkflowRunBranch `
+        -WorkflowRunEvent $WorkflowRunEvent `
+        -HeadSha $HeadSha
     $ensureCi = "skip"
     if ($runPipeline -and $publish) {
         $ensureCi = Get-SpaceLensEnsureCiDecision -Runs $ExistingCiRuns

@@ -27,7 +27,8 @@ $ci      = Get-Workflow ".github/workflows/ci.yml"
 
 # ── release.yml structural invariants ───────────────────────────────────────
 if ($release -notmatch 'workflow_dispatch:') { Add-Fail "release.yml must keep workflow_dispatch recovery" }
-if ($release -notmatch 'push:') { Add-Fail "release.yml must run on push to main" }
+if ($release -notmatch 'workflow_run:') { Add-Fail "release.yml must run on workflow_run completion of CI" }
+if ($release -notmatch 'workflows:\s*\["CI"\]') { Add-Fail "release.yml workflow_run must target CI workflow" }
 if ($release -notmatch 'group:\s*spacelens-release') { Add-Fail "release.yml concurrency must be spacelens-release" }
 if ($release -notmatch 'cancel-in-progress:\s*false') { Add-Fail "release publication must not cancel in-progress runs" }
 if ($release -notmatch '(?s)workflow_dispatch:.*?version:.*?required:\s*true') {

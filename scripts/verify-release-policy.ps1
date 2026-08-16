@@ -125,7 +125,43 @@ try {
     Add-Fail "multiline CMake project(VERSION) must parse: $($_.Exception.Message)"
 }
 
-# Event matrix A–H (offline). Real defects stay red; expected no-ops do not prepare/publish.
+# Event matrix A–I (offline). Real defects stay red; expected no-ops do not prepare/publish.
+$wfFeatSuccess = Get-SpaceLensAutomationIntent -EventName "workflow_run" -WorkflowRunConclusion "success" `
+    -WorkflowRunBranch "main" -WorkflowRunEvent "push" -Subject "feat(index): catalog roots" `
+    -Paths @("src/core/index/IndexCatalog.cpp") -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5"
+if (-not $wfFeatSuccess.PrepareNeeded -or $wfFeatSuccess.RunPipeline -or $wfFeatSuccess.NextVersion.Text -ne "0.1.6") {
+    Add-Fail "Matrix A: workflow_run with CI success on feature push must prepare next patch 0.1.6"
+}
+
+$wfFeatFail = Get-SpaceLensAutomationIntent -EventName "workflow_run" -WorkflowRunConclusion "failure" `
+    -WorkflowRunBranch "main" -WorkflowRunEvent "push" -Subject "feat(index): catalog roots" `
+    -Paths @("src/core/index/IndexCatalog.cpp") -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5"
+if ($wfFeatFail.PrepareNeeded -or $wfFeatFail.RunPipeline) {
+    Add-Fail "Matrix B: workflow_run with CI failure must NOT prepare or run pipeline"
+}
+
+$wfDocs = Get-SpaceLensAutomationIntent -EventName "workflow_run" -WorkflowRunConclusion "success" `
+    -WorkflowRunBranch "main" -WorkflowRunEvent "push" -Subject "docs: tighten README" `
+    -Paths @("README.md") -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5"
+if ($wfDocs.RunPipeline -or $wfDocs.PrepareNeeded -or $wfDocs.RunExpensiveCi -or -not $wfDocs.DocsOnly) {
+    Add-Fail "Matrix C: docs-only workflow_run must be cheap CI, no prepare, no publish"
+}
+
+$wfChore = Get-SpaceLensAutomationIntent -EventName "workflow_run" -WorkflowRunConclusion "success" `
+    -WorkflowRunBranch "main" -WorkflowRunEvent "push" -Subject "ci: harden automatic release workflow" `
+    -Paths @(".github/workflows/release.yml", "scripts/SpaceLensRelease.ps1") `
+    -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5"
+if ($wfChore.RunPipeline -or $wfChore.PrepareNeeded) {
+    Add-Fail "Matrix D: ci/chore-only workflow_run must not prepare or publish"
+}
+
+$wfBumpCi = Get-SpaceLensAutomationIntent -EventName "workflow_run" -WorkflowRunConclusion "success" `
+    -WorkflowRunBranch "main" -WorkflowRunEvent "workflow_dispatch" -Subject "chore(release): prepare SpaceLens v0.1.6" `
+    -Paths @("CMakeLists.txt") -CMakeVersion "0.1.6" -LatestStableVersion "0.1.5" -ParentCMakeVersion "0.1.5" -HeadSha "bumpsha"
+if ($wfBumpCi.PrepareNeeded) {
+    Add-Fail "Matrix E: workflow_run triggered by workflow_dispatch CI must NOT start release prepare"
+}
+
 $docsPush = Get-SpaceLensAutomationIntent -EventName "push" -Subject "docs: tighten README" `
     -Paths @("README.md") -CMakeVersion "0.1.5" -LatestStableVersion "0.1.5"
 if ($docsPush.RunPipeline -or $docsPush.PrepareNeeded -or $docsPush.RunExpensiveCi -or -not $docsPush.DocsOnly) {

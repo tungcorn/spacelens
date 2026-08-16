@@ -7,7 +7,10 @@ param(
     [string]$RequestedVersion = "",
     [string]$PublishInput = "",
     [string]$HeadSha = "",
-    [string]$RepoRoot = ""
+    [string]$RepoRoot = "",
+    [string]$WorkflowRunConclusion = "",
+    [string]$WorkflowRunBranch = "",
+    [string]$WorkflowRunEvent = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,7 +20,11 @@ if (-not $RepoRoot) { $RepoRoot = Get-SpaceLensRepoRoot }
 if (-not $EventName) { $EventName = [string]$env:GITHUB_EVENT_NAME }
 if (-not $RequestedVersion) { $RequestedVersion = [string]$env:REQUESTED_VERSION }
 if (-not $PublishInput) { $PublishInput = [string]$env:PUBLISH_INPUT }
+if (-not $HeadSha) { $HeadSha = [string]$env:HEAD_SHA }
 if (-not $HeadSha) { $HeadSha = [string]$env:GITHUB_SHA }
+if (-not $WorkflowRunConclusion) { $WorkflowRunConclusion = [string]$env:WORKFLOW_RUN_CONCLUSION }
+if (-not $WorkflowRunBranch) { $WorkflowRunBranch = [string]$env:WORKFLOW_RUN_BRANCH }
+if (-not $WorkflowRunEvent) { $WorkflowRunEvent = [string]$env:WORKFLOW_RUN_EVENT }
 
 $cmake = Get-SpaceLensCMakeVersion -RepoRoot $RepoRoot
 $npm = Get-SpaceLensNpmVersion -RepoRoot $RepoRoot
@@ -89,7 +96,23 @@ if ($EventName -eq "workflow_dispatch") {
 $prepareNeeded = Get-SpaceLensPrepareNeed `
     -RunPipeline $runPipeline `
     -EventName $EventName `
-    -ReleaseNeeded ([bool]$releaseDecision.Needed)
+    -ReleaseNeeded ([bool]$releaseDecision.Needed) `
+    -WorkflowRunConclusion $WorkflowRunConclusion `
+    -WorkflowRunBranch $WorkflowRunBranch `
+    -WorkflowRunEvent $WorkflowRunEvent `
+    -HeadSha $HeadSha
+
+if ($EventName -eq "workflow_run") {
+    if ([string]::IsNullOrWhiteSpace($HeadSha)) {
+        $reason = "source CI head SHA was empty"
+    } elseif ($WorkflowRunConclusion -ne "success") {
+        $reason = "source CI conclusion was '$WorkflowRunConclusion' (not success)"
+    } elseif ($WorkflowRunBranch -ne "main") {
+        $reason = "source CI branch was '$WorkflowRunBranch' (not main)"
+    } elseif ($WorkflowRunEvent -ne "push") {
+        $reason = "source CI event was '$WorkflowRunEvent' (not push)"
+    }
+}
 
 Write-Host "decide_event=$EventName"
 Write-Host "decide_version=$($version.Text)"
