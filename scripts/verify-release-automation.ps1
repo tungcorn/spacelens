@@ -152,6 +152,26 @@ if ($release -match 'gh workflow run release-pr\.yml') {
 if ($release -notmatch 'npm view not yet visible') {
     Add-Fail "wait-npm must retry npm view after publish (registry propagation)"
 }
+if ($release -notmatch 'wait-workflow-run\.ps1') {
+    Add-Fail "wait-npm must wait via wait-workflow-run.ps1 so a watcher API blip is not a child failure"
+}
+$waitScript = Get-Content (Join-Path $root "scripts\wait-workflow-run.ps1") -Raw
+if ($waitScript -notmatch 'Wait-SpaceLensChildWorkflow') {
+    Add-Fail "wait-workflow-run.ps1 must call Wait-SpaceLensChildWorkflow"
+}
+if ($waitScript -notmatch 'exact ID') {
+    Add-Fail "wait-workflow-run.ps1 must wait on the exact child run ID"
+}
+$lib = Get-Content (Join-Path $root "scripts\SpaceLensRelease.ps1") -Raw
+if ($lib -notmatch 'verifying authoritative workflow conclusion via API') {
+    Add-Fail "child wait must log when falling back from gh run watch to the run API"
+}
+if ($lib -notmatch 'Get-SpaceLensWorkflowWatchVerdict') {
+    Add-Fail "child wait must classify watch/API observations via Get-SpaceLensWorkflowWatchVerdict"
+}
+if ($release -match '(?s)if ! gh run watch.*npm-publish\.yml failed') {
+    Add-Fail "wait-npm must not treat gh run watch failure as an authoritative npm-publish.yml failure"
+}
 if ($ci -notmatch 'github\.event\.pull_request\.number \|\| github\.sha') {
     Add-Fail "ci.yml concurrency must be per-SHA on push so a later no-op cannot cancel bump CI"
 }
@@ -200,6 +220,7 @@ foreach ($rel in @(
     "scripts/decide-release.ps1",
     "scripts/update-release-pin.ps1",
     "scripts/ensure-ci-run.ps1",
+    "scripts/wait-workflow-run.ps1",
     "scripts/verify-release-pin.ps1",
     "scripts/verify-release-policy.ps1",
     "scripts/verify-release-automation.ps1"

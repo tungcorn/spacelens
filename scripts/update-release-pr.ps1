@@ -30,7 +30,7 @@ if ($cmakeMainRaw -notmatch 'project\(\s*SpaceLens\s+VERSION\s+([0-9]+\.[0-9]+\.
     throw "origin/main CMake project VERSION not found"
 }
 $cmakeMain = ConvertTo-SpaceLensVersion $Matches[1]
-$commits = Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head "origin/main" -RepoRoot $RepoRoot
+$commits = @(Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head "origin/main" -RepoRoot $RepoRoot)
 $decision = Get-SpaceLensReleaseDecision -Commits $commits -LatestVersion $latest
 $next = Get-SpaceLensNextPatchVersion $latest
 

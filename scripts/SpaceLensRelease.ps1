@@ -108,7 +108,14 @@ function Get-SpaceLensRemoteTagSha {
     if ($ref -notmatch '^refs/tags/') {
         $ref = "refs/tags/$ref"
     }
+    if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
     $output = & git ls-remote $Remote $ref 2>$null
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        throw "git ls-remote $Remote $ref failed with exit $code"
+    }
     return (Get-SpaceLensLsRemoteSha -Output $output)
 }
 
@@ -303,6 +310,207 @@ function Get-SpaceLensEnsureCiDecision {
     return "dispatch"
 }
 
+function Get-SpaceLensGitHubApiObservation {
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        $Output = "",
+        [int]$ExitCode = 0
+    )
+    $text = if ($null -eq $Output) { "" } else { "$Output" }
+    $http = 0
+    if ($text -match 'HTTP\s+(\d{3})') {
+        $http = [int]$Matches[1]
+    } elseif ($ExitCode -eq 0) {
+        $http = 200
+    }
+    $status = ""
+    $conclusion = ""
+    if ($ExitCode -eq 0 -and $text.Trim()) {
+        try {
+            $json = $text | ConvertFrom-Json
+            if ($json -and $json.PSObject.Properties.Name -contains 'status') {
+                $status = [string]$json.status
+            }
+            if ($json -and $json.PSObject.Properties.Name -contains 'conclusion') {
+                $conclusion = [string]$json.conclusion
+            }
+        } catch {
+            $status = ""
+            $conclusion = ""
+        }
+    }
+    return [pscustomobject]@{
+        HttpStatus = $http
+        Status     = $status
+        Conclusion = $conclusion
+        ExitCode   = $ExitCode
+    }
+}
+
+function Get-SpaceLensWorkflowWatchVerdict {
+    param(
+        [int]$WatchExitCode = 0,
+        [string]$Status = "",
+        [string]$Conclusion = "",
+        [int]$HttpStatus = 0,
+        [switch]$TimedOut
+    )
+    if ($WatchExitCode -eq 0) {
+        return [pscustomobject]@{
+            Action = 'continue'
+            Reason = 'gh run watch succeeded'
+        }
+    }
+    if ($TimedOut) {
+        return [pscustomobject]@{
+            Action = 'fail'
+            Reason = 'child workflow never reached a trustworthy completed state before timeout'
+        }
+    }
+    if ($HttpStatus -eq 429 -or $HttpStatus -ge 500 -or $HttpStatus -eq 0) {
+        return [pscustomobject]@{
+            Action = 'retry'
+            Reason = "transient API/observation failure HTTP $HttpStatus"
+        }
+    }
+    if ($HttpStatus -ge 400 -and $HttpStatus -lt 500) {
+        return [pscustomobject]@{
+            Action = 'fail'
+            Reason = "GitHub API client error HTTP $HttpStatus"
+        }
+    }
+    $state = "$Status".Trim().ToLowerInvariant()
+    if ($state -eq 'completed') {
+        $done = "$Conclusion".Trim().ToLowerInvariant()
+        if ($done -eq 'success') {
+            return [pscustomobject]@{
+                Action = 'continue'
+                Reason = 'child workflow conclusion=success'
+            }
+        }
+        if (-not $done) {
+            return [pscustomobject]@{
+                Action = 'fail'
+                Reason = 'child workflow completed without a conclusion'
+            }
+        }
+        return [pscustomobject]@{
+            Action = 'fail'
+            Reason = "child workflow conclusion=$done"
+        }
+    }
+    if ($state -in @('queued', 'in_progress', 'waiting', 'pending', 'requested', 'waiting_for_review')) {
+        return [pscustomobject]@{
+            Action = 'retry'
+            Reason = "child workflow still $state"
+        }
+    }
+    if ($state) {
+        return [pscustomobject]@{
+            Action = 'retry'
+            Reason = "child workflow status '$state' is not yet completed"
+        }
+    }
+    return [pscustomobject]@{
+        Action = 'retry'
+        Reason = 'no trustworthy child workflow conclusion yet'
+    }
+}
+
+function Wait-SpaceLensChildWorkflow {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunId,
+        [string]$Repo = "",
+        [int]$PollTimeoutSeconds = 1800,
+        [int]$PollIntervalSeconds = 15,
+        [switch]$SkipWatch,
+        [scriptblock]$WatchCommand,
+        [scriptblock]$QueryCommand,
+        [scriptblock]$SleepCommand,
+        [scriptblock]$UtcNowCommand
+    )
+    $id = "$RunId".Trim()
+    if ($id -notmatch '^\d+$') {
+        throw "RunId '$RunId' is not a numeric workflow run id"
+    }
+    if ($PollTimeoutSeconds -lt 0) { throw "PollTimeoutSeconds must be >= 0" }
+    if ($PollIntervalSeconds -lt 0) { throw "PollIntervalSeconds must be >= 0" }
+
+    $now = {
+        if ($UtcNowCommand) { & $UtcNowCommand } else { [datetime]::UtcNow }
+    }
+    $sleep = {
+        param([int]$Seconds)
+        if ($SleepCommand) { & $SleepCommand $Seconds }
+        elseif ($Seconds -gt 0) { Start-Sleep -Seconds $Seconds }
+    }
+
+    if (-not $SkipWatch) {
+        if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+        }
+        $watchExit = 0
+        if ($WatchCommand) {
+            $watchExit = [int](& $WatchCommand $id $Repo)
+        } else {
+            if (-not $Repo) { throw "Repo is required to watch a workflow run" }
+            & gh run watch $id --repo $Repo --exit-status
+            $watchExit = $LASTEXITCODE
+        }
+        if ($watchExit -eq 0) {
+            return [pscustomobject]@{
+                Action = 'continue'
+                Reason = 'gh run watch succeeded'
+            }
+        }
+        Write-Host "gh run watch returned non-zero; verifying authoritative workflow conclusion via API..."
+    }
+
+    $deadline = (& $now).AddSeconds($PollTimeoutSeconds)
+    while ($true) {
+        $obs = $null
+        if ($QueryCommand) {
+            $obs = & $QueryCommand $id $Repo
+        } else {
+            if (-not $Repo) { throw "Repo is required to query a workflow run" }
+            if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+                $PSNativeCommandUseErrorActionPreference = $false
+            }
+            $output = & gh api "repos/$Repo/actions/runs/$id" 2>&1
+            $apiExit = $LASTEXITCODE
+            $obs = Get-SpaceLensGitHubApiObservation -Output ($output | Out-String) -ExitCode $apiExit
+        }
+        if (-not $obs) {
+            $obs = [pscustomobject]@{ HttpStatus = 0; Status = ""; Conclusion = "" }
+        }
+        $http = 0
+        $status = ""
+        $conclusion = ""
+        if ($obs.PSObject.Properties.Name -contains 'HttpStatus') { $http = [int]$obs.HttpStatus }
+        if ($obs.PSObject.Properties.Name -contains 'Status') { $status = [string]$obs.Status }
+        if ($obs.PSObject.Properties.Name -contains 'Conclusion') { $conclusion = [string]$obs.Conclusion }
+
+        $verdict = Get-SpaceLensWorkflowWatchVerdict `
+            -WatchExitCode 1 `
+            -Status $status `
+            -Conclusion $conclusion `
+            -HttpStatus $http
+        Write-Host "child workflow $id status='$status' conclusion='$conclusion' http=$http action=$($verdict.Action)"
+        if ($verdict.Action -eq 'continue') {
+            return $verdict
+        }
+        if ($verdict.Action -eq 'fail') {
+            throw $verdict.Reason
+        }
+        if ((& $now) -ge $deadline) {
+            $timeout = Get-SpaceLensWorkflowWatchVerdict -WatchExitCode 1 -TimedOut
+            throw $timeout.Reason
+        }
+        & $sleep $PollIntervalSeconds
+    }
+}
+
 function Get-SpaceLensAutomationIntent {
     param(
         [Parameter(Mandatory = $true)][string]$EventName,
@@ -481,9 +689,13 @@ function Get-SpaceLensCommitsSinceTag {
         [string]$Head = "HEAD",
         [string]$RepoRoot = (Get-SpaceLensRepoRoot)
     )
+    if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
     $range = "$Tag..$Head"
     $raw = & git -C $RepoRoot log $range --format="__COMMIT__%n%H%n%s" --name-only
-    if ($LASTEXITCODE -ne 0) {
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
         throw "git log $range failed"
     }
     $commits = New-Object System.Collections.Generic.List[object]
@@ -491,6 +703,7 @@ function Get-SpaceLensCommitsSinceTag {
     $subject = $null
     $paths = New-Object System.Collections.Generic.List[string]
     foreach ($line in @($raw)) {
+        if ($null -eq $line) { continue }
         if ($line -eq "__COMMIT__") {
             if ($hash) {
                 $commits.Add([pscustomobject]@{
@@ -523,6 +736,8 @@ function Get-SpaceLensCommitsSinceTag {
             Paths   = $paths.ToArray()
         })
     }
+    # Callers must assign with @(...). A bare empty ToArray() unwraps to no
+    # output; @() turns that into a real empty collection, not $null.
     return $commits.ToArray()
 }
 

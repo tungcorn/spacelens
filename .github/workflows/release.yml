@@ -107,7 +107,7 @@ jobs:
             "next_tag=" | Out-File $env:GITHUB_OUTPUT -Append
             exit 0
           }
-          $commits = Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head "HEAD"
+          $commits = @(Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head "HEAD")
           $decision = Get-SpaceLensReleaseDecision -Commits $commits -LatestVersion $latest
           Write-Host (Format-SpaceLensDryRun -Decision $decision -Head "HEAD")
           $needed = $decision.Needed.ToString().ToLower()
@@ -722,6 +722,9 @@ jobs:
       contents: read
       actions: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -785,8 +788,8 @@ jobs:
           fi
           head_sha="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq .head_sha)"
           echo "watching npm-publish run ${run_id} head_sha=${head_sha} (may differ from GITHUB_SHA if main moved)"
-          if ! gh run watch "$run_id" --repo "${{ github.repository }}" --exit-status; then
-            echo "npm-publish.yml failed. GitHub Release ${VERSION} is immutable. Do not retag." >&2
+          if ! pwsh -File ./scripts/wait-workflow-run.ps1 -RunId "$run_id" -Repo "${GITHUB_REPOSITORY}"; then
+            echo "npm-publish.yml did not complete successfully. GitHub Release ${VERSION} is immutable. Do not retag." >&2
             exit 1
           fi
           got=""

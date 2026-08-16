@@ -332,6 +332,200 @@ try {
     Remove-Item -LiteralPath $tagScratch -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# Failed ls-remote is a hard error, not "tag does not exist".
+$lsRemoteFailScratch = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-lsremote-fail-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $lsRemoteFailScratch | Out-Null
+try {
+    & git -C $lsRemoteFailScratch init --quiet
+    if ($LASTEXITCODE -ne 0) { throw "git init failed" }
+    & git -C $lsRemoteFailScratch config user.email "release-test@example.com"
+    & git -C $lsRemoteFailScratch config user.name "SpaceLens Release Test"
+    Push-Location $lsRemoteFailScratch
+    try {
+        Get-SpaceLensRemoteTagSha -Tag "v0.1.6" -Remote "not-a-remote" | Out-Null
+        Add-Fail "failed ls-remote must throw rather than look like a missing tag"
+    } catch {
+        if ("$($_.Exception.Message)" -notmatch 'ls-remote') {
+            Add-Fail "failed ls-remote must mention ls-remote, got: $($_.Exception.Message)"
+        }
+    } finally {
+        Pop-Location
+    }
+} catch {
+    Add-Fail "failed-ls-remote fixture setup failed: $($_.Exception.Message)"
+} finally {
+    Remove-Item -LiteralPath $lsRemoteFailScratch -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Empty latest-tag..HEAD is a normal no-op, not a binding error.
+try {
+    $emptyDecision = Get-SpaceLensReleaseDecision -LatestVersion "0.1.6" -Commits @()
+    if ($emptyDecision.Needed -or $emptyDecision.ReleasableCount -ne 0 -or $emptyDecision.NextVersion) {
+        Add-Fail "empty commit range must be Needed=false with no next version"
+    }
+} catch {
+    Add-Fail "empty commit collection must not throw: $($_.Exception.Message)"
+}
+
+$emptyWf = Get-SpaceLensAutomationIntent -EventName "workflow_run" `
+    -RangeCommits @() -Subject "" `
+    -CMakeVersion "0.1.6" -LatestStableVersion "0.1.6" `
+    -HeadSha "abc123abc123abc123abc123abc123abc123abc1" `
+    -WorkflowRunConclusion "success" -WorkflowRunBranch "main" -WorkflowRunEvent "push"
+if ($emptyWf.RunPipeline -or $emptyWf.PrepareNeeded -or $emptyWf.ReleaseNeeded) {
+    Add-Fail "workflow_run with latest tag == HEAD must be a clean no-op"
+}
+
+# Isolated git history: empty range, one releasable commit, docs-only, and real git failure.
+$rangeScratch = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-empty-range-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $rangeScratch | Out-Null
+try {
+    & git -C $rangeScratch init --quiet
+    if ($LASTEXITCODE -ne 0) { throw "git init failed" }
+    & git -C $rangeScratch config user.email "release-test@example.com"
+    & git -C $rangeScratch config user.name "SpaceLens Release Test"
+    New-Item -ItemType Directory -Path (Join-Path $rangeScratch "packaging\npm") | Out-Null
+    Set-Content -LiteralPath (Join-Path $rangeScratch "CMakeLists.txt") -Value "project(SpaceLens VERSION 0.1.6 LANGUAGES CXX)`n" -Encoding ascii
+    Set-Content -LiteralPath (Join-Path $rangeScratch "packaging\npm\package.json") -Value '{ "name": "@tungcorn/spacelens", "version": "0.1.6" }' -Encoding ascii
+    & git -C $rangeScratch add -- CMakeLists.txt packaging/npm/package.json
+    & git -C $rangeScratch -c commit.gpgsign=false commit -m "chore(release): prepare SpaceLens v0.1.6" --quiet
+    if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
+    & git -C $rangeScratch tag -a "v0.1.6" -m "SpaceLens v0.1.6"
+    if ($LASTEXITCODE -ne 0) { throw "git tag failed" }
+
+    $zero = @(Get-SpaceLensCommitsSinceTag -Tag "v0.1.6" -Head "HEAD" -RepoRoot $rangeScratch)
+    if ($null -eq $zero) { Add-Fail "empty latest-tag..HEAD range must not be null" }
+    if ($zero.Count -ne 0) { Add-Fail "empty latest-tag..HEAD range must have zero commits, got $($zero.Count)" }
+    $zeroDecision = Get-SpaceLensReleaseDecision -Commits $zero -LatestVersion "0.1.6"
+    if ($zeroDecision.Needed) { Add-Fail "zero commits since latest tag must not require a release" }
+
+    $decideScript = Join-Path $PSScriptRoot "decide-release.ps1"
+    $headSha = (& git -C $rangeScratch rev-parse HEAD).Trim()
+    $decideOut = & $decideScript -RepoRoot $rangeScratch -EventName "workflow_run" `
+        -HeadSha $headSha -WorkflowRunConclusion "success" `
+        -WorkflowRunBranch "main" -WorkflowRunEvent "push" *>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        Add-Fail "Decide must succeed when latest tag == HEAD, exit $LASTEXITCODE"
+    }
+    if ($decideOut -notmatch 'decide_run_pipeline=false' -or $decideOut -notmatch 'decide_prepare_needed=false' -or $decideOut -notmatch 'decide_release_needed=false') {
+        Add-Fail "Decide must report a clean no-op when latest tag == HEAD"
+    }
+
+    Set-Content -LiteralPath (Join-Path $rangeScratch "README.md") -Value "docs only`n" -Encoding ascii
+    & git -C $rangeScratch add -- README.md
+    & git -C $rangeScratch -c commit.gpgsign=false commit -m "docs: note" --quiet
+    $docsRange = @(Get-SpaceLensCommitsSinceTag -Tag "v0.1.6" -Head "HEAD" -RepoRoot $rangeScratch)
+    $docsDecision = Get-SpaceLensReleaseDecision -Commits $docsRange -LatestVersion "0.1.6"
+    if ($docsDecision.Needed) { Add-Fail "docs-only range after latest tag must not require a release" }
+
+    New-Item -ItemType Directory -Path (Join-Path $rangeScratch "src\core") | Out-Null
+    Set-Content -LiteralPath (Join-Path $rangeScratch "src\core\Index.cpp") -Value "int x;`n" -Encoding ascii
+    & git -C $rangeScratch add -- src/core/Index.cpp
+    & git -C $rangeScratch -c commit.gpgsign=false commit -m "feat(index): add file" --quiet
+    $featRange = @(Get-SpaceLensCommitsSinceTag -Tag "v0.1.6" -Head "HEAD" -RepoRoot $rangeScratch)
+    if ($featRange.Count -lt 1) { Add-Fail "one releasable commit after latest tag must be visible" }
+    $featDecision = Get-SpaceLensReleaseDecision -Commits $featRange -LatestVersion "0.1.6"
+    if (-not $featDecision.Needed -or $featDecision.NextVersion.Text -ne "0.1.7") {
+        Add-Fail "one feat after latest tag must still pending the next patch"
+    }
+
+    try {
+        Get-SpaceLensCommitsSinceTag -Tag "v9.9.9" -Head "HEAD" -RepoRoot $rangeScratch | Out-Null
+        Add-Fail "unresolvable git history must fail rather than look empty"
+    } catch {
+        if ("$($_.Exception.Message)" -notmatch 'git log') {
+            Add-Fail "unresolvable git history must fail as git log error, got: $($_.Exception.Message)"
+        }
+    }
+} catch {
+    Add-Fail "isolated empty-range fixture failed: $($_.Exception.Message)"
+} finally {
+    Remove-Item -LiteralPath $rangeScratch -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# npm child wait: watch/API observation is not the child conclusion.
+$watchOk = Get-SpaceLensWorkflowWatchVerdict -WatchExitCode 0
+if ($watchOk.Action -ne 'continue') { Add-Fail "successful gh run watch must continue" }
+
+$childOk = Get-SpaceLensWorkflowWatchVerdict -WatchExitCode 1 -HttpStatus 200 -Status "completed" -Conclusion "success"
+if ($childOk.Action -ne 'continue') { Add-Fail "authoritative child SUCCESS must continue after watch failure" }
+
+foreach ($bad in @('failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'skipped')) {
+    $childBad = Get-SpaceLensWorkflowWatchVerdict -WatchExitCode 1 -HttpStatus 200 -Status "completed" -Conclusion $bad
+    if ($childBad.Action -ne 'fail') {
+        Add-Fail "authoritative child $bad must fail"
+    }
+}
+
+$transient = Get-SpaceLensWorkflowWatchVerdict -WatchExitCode 1 -HttpStatus 502
+if ($transient.Action -ne 'retry') { Add-Fail "HTTP 502 observation must retry, not fail the child" }
+
+$notFound = Get-SpaceLensWorkflowWatchVerdict -WatchExitCode 1 -HttpStatus 404
+if ($notFound.Action -ne 'fail') { Add-Fail "HTTP 404 observation must fail safely" }
+
+$timeoutVerdict = Get-SpaceLensWorkflowWatchVerdict -WatchExitCode 1 -TimedOut
+if ($timeoutVerdict.Action -ne 'fail' -or $timeoutVerdict.Reason -notmatch 'timeout') {
+    Add-Fail "watch polling timeout must fail safely"
+}
+
+$parsed502 = Get-SpaceLensGitHubApiObservation -Output "gh: HTTP 502: Server Error (https://api.github.com/repos/o/r/actions/runs/1)" -ExitCode 1
+if ($parsed502.HttpStatus -ne 502 -or $parsed502.Conclusion) {
+    Add-Fail "HTTP 502 watcher error must parse as transient observation, not a child conclusion"
+}
+
+$clock = [datetime]::SpecifyKind([datetime]"2026-08-16T00:00:00Z", [DateTimeKind]::Utc)
+$utc = { $script:clock }
+$slept = New-Object System.Collections.Generic.List[int]
+$sleep = { param([int]$Seconds) $script:slept.Add($Seconds); $script:clock = $script:clock.AddSeconds([Math]::Max(1, $Seconds)) }
+
+$script:clock = [datetime]::SpecifyKind([datetime]"2026-08-16T00:00:00Z", [DateTimeKind]::Utc)
+$okWait = Wait-SpaceLensChildWorkflow -RunId "31931952832" -Repo "tungcorn/spacelens" `
+    -WatchCommand { param($id, $repo) 1 } `
+    -QueryCommand { param($id, $repo)
+        if ($id -ne "31931952832") { throw "must poll the exact run id, got $id" }
+        [pscustomobject]@{ HttpStatus = 200; Status = "completed"; Conclusion = "success" }
+    } `
+    -SleepCommand $sleep -UtcNowCommand $utc
+if ($okWait.Action -ne 'continue') {
+    Add-Fail "child SUCCESS after watch/API transient must continue"
+}
+
+try {
+    $script:clock = [datetime]::SpecifyKind([datetime]"2026-08-16T00:00:00Z", [DateTimeKind]::Utc)
+    Wait-SpaceLensChildWorkflow -RunId "42" -Repo "tungcorn/spacelens" `
+        -WatchCommand { param($id, $repo) 1 } `
+        -QueryCommand { [pscustomobject]@{ HttpStatus = 200; Status = "completed"; Conclusion = "failure" } } `
+        -SleepCommand $sleep -UtcNowCommand $utc | Out-Null
+    Add-Fail "child FAILURE must still fail the parent wait"
+} catch {
+    if ("$($_.Exception.Message)" -notmatch 'conclusion=failure') {
+        Add-Fail "child FAILURE must report the conclusion, got: $($_.Exception.Message)"
+    }
+}
+
+try {
+    $script:clock = [datetime]::SpecifyKind([datetime]"2026-08-16T00:00:00Z", [DateTimeKind]::Utc)
+    Wait-SpaceLensChildWorkflow -RunId "42" -Repo "tungcorn/spacelens" `
+        -PollTimeoutSeconds 0 -PollIntervalSeconds 0 -SkipWatch `
+        -QueryCommand { [pscustomobject]@{ HttpStatus = 502; Status = ""; Conclusion = "" } } `
+        -SleepCommand $sleep -UtcNowCommand $utc | Out-Null
+    Add-Fail "polling timeout must fail safely"
+} catch {
+    if ("$($_.Exception.Message)" -notmatch 'timeout') {
+        Add-Fail "polling timeout must mention timeout, got: $($_.Exception.Message)"
+    }
+}
+
+try {
+    Wait-SpaceLensChildWorkflow -RunId "latest" -Repo "tungcorn/spacelens" -SkipWatch `
+        -QueryCommand { throw "must not query an arbitrary run" } | Out-Null
+    Add-Fail "non-numeric run id must be rejected"
+} catch {
+    if ("$($_.Exception.Message)" -notmatch 'numeric') {
+        Add-Fail "non-numeric run id must be rejected as numeric, got: $($_.Exception.Message)"
+    }
+}
+
 # H: pin already current → no extra commit.
 $h = Get-SpaceLensPublishPlan -PreparedVersion "0.1.5" -LatestStableVersion "0.1.4" `
     -TagPeelSha "abc" -HeadSha "abc" -GitHubReleaseExists $true -NpmVersionExists $true `
@@ -376,7 +570,7 @@ $repoLatest = Get-SpaceLensLatestStableVersion -Tags (Get-SpaceLensGitTags -Repo
 if (-not $repoLatest) {
     Add-Fail "repository has no stable vX.Y.Z tag"
 } else {
-    $live = Get-SpaceLensCommitsSinceTag -Tag $repoLatest.Tag -Head "HEAD" -RepoRoot $root
+    $live = @(Get-SpaceLensCommitsSinceTag -Tag $repoLatest.Tag -Head "HEAD" -RepoRoot $root)
     $liveDecision = Get-SpaceLensReleaseDecision -Commits $live -LatestVersion $repoLatest
     if ($liveDecision.Needed) {
         $expected = Get-SpaceLensNextPatchVersion $repoLatest

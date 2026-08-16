@@ -24,7 +24,7 @@ if ($SinceTag) {
 }
 if (-not $latest) { throw "no stable vX.Y.Z tag found" }
 
-$commits = Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head $Head -RepoRoot $RepoRoot
+$commits = @(Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head $Head -RepoRoot $RepoRoot)
 $decision = Get-SpaceLensReleaseDecision -Commits $commits -LatestVersion $latest
 $report = Format-SpaceLensDryRun -Decision $decision -Head $Head
 Write-Host $report

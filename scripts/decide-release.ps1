@@ -45,7 +45,7 @@ $runPipeline = $false
 $reason = ""
 $prepareNeeded = $false
 
-$commits = Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head $HeadSha -RepoRoot $RepoRoot
+$commits = @(Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head $HeadSha -RepoRoot $RepoRoot)
 $releaseDecision = Get-SpaceLensReleaseDecision -Commits $commits -LatestVersion $latest
 
 if ($EventName -eq "workflow_dispatch") {
