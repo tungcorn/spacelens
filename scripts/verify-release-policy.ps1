@@ -473,6 +473,16 @@ if ($parsed502.HttpStatus -ne 502 -or $parsed502.Conclusion) {
     Add-Fail "HTTP 502 watcher error must parse as transient observation, not a child conclusion"
 }
 
+$poisonJson = '{"status":"completed","conclusion":"success","head_commit":{"message":"fix: handle HTTP 404 from ls-remote"}}'
+$poison = Get-SpaceLensGitHubApiObservation -Output $poisonJson -ExitCode 0
+if ($poison.HttpStatus -ne 200 -or $poison.Status -ne "completed" -or $poison.Conclusion -ne "success") {
+    Add-Fail "successful API JSON must not treat commit-message HTTP 404 as an API status"
+}
+$poisonVerdict = Get-SpaceLensWorkflowWatchVerdict -WatchExitCode 1 -HttpStatus $poison.HttpStatus -Status $poison.Status -Conclusion $poison.Conclusion
+if ($poisonVerdict.Action -ne 'continue') {
+    Add-Fail "successful child JSON containing HTTP 404 text must continue"
+}
+
 $clock = [datetime]::SpecifyKind([datetime]"2026-08-16T00:00:00Z", [DateTimeKind]::Utc)
 $utc = { $script:clock }
 $slept = New-Object System.Collections.Generic.List[int]

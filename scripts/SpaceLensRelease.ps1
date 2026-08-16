@@ -319,26 +319,29 @@ function Get-SpaceLensGitHubApiObservation {
     )
     $text = if ($null -eq $Output) { "" } else { "$Output" }
     $http = 0
-    if ($text -match 'HTTP\s+(\d{3})') {
-        $http = [int]$Matches[1]
-    } elseif ($ExitCode -eq 0) {
-        $http = 200
-    }
     $status = ""
     $conclusion = ""
-    if ($ExitCode -eq 0 -and $text.Trim()) {
-        try {
-            $json = $text | ConvertFrom-Json
-            if ($json -and $json.PSObject.Properties.Name -contains 'status') {
-                $status = [string]$json.status
+    if ($ExitCode -eq 0) {
+        # Successful gh api: only JSON status/conclusion count. Commit
+        # messages may mention "HTTP 404" and must not be treated as the
+        # transport status.
+        $http = 200
+        if ($text.Trim()) {
+            try {
+                $json = $text | ConvertFrom-Json
+                if ($json -and $json.PSObject.Properties.Name -contains 'status') {
+                    $status = [string]$json.status
+                }
+                if ($json -and $json.PSObject.Properties.Name -contains 'conclusion') {
+                    $conclusion = [string]$json.conclusion
+                }
+            } catch {
+                $status = ""
+                $conclusion = ""
             }
-            if ($json -and $json.PSObject.Properties.Name -contains 'conclusion') {
-                $conclusion = [string]$json.conclusion
-            }
-        } catch {
-            $status = ""
-            $conclusion = ""
         }
+    } elseif ($text -match '(?im)(?:^|\b)HTTP\s+(\d{3})\b') {
+        $http = [int]$Matches[1]
     }
     return [pscustomobject]@{
         HttpStatus = $http
