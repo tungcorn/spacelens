@@ -624,8 +624,10 @@ try {
         if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
         Copy-Item -LiteralPath (Join-Path $root ($rel -replace '/', [IO.Path]::DirectorySeparatorChar)) -Destination $dest
     }
+    $from = Get-SpaceLensCMakeVersion -RepoRoot $omitRoot
+    $to = Get-SpaceLensNextPatchVersion $from
     try {
-        Update-SpaceLensMechanicalVersions -RepoRoot $omitRoot -FromVersion "0.1.5" -ToVersion "0.1.6" | Out-Null
+        Update-SpaceLensMechanicalVersions -RepoRoot $omitRoot -FromVersion $from.Text -ToVersion $to.Text | Out-Null
         Add-Fail "prepare must fail if docs/QT_SOURCE_OFFER.md is missing"
     } catch {
         if ("$($_.Exception.Message)" -notmatch 'QT_SOURCE_OFFER') {
