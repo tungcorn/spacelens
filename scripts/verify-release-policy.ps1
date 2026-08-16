@@ -227,6 +227,75 @@ $moved = Get-SpaceLensPublishPlan -PreparedVersion "0.1.5" -LatestStableVersion 
     -TagPeelSha "old" -HeadSha "new"
 if (-not $moved.Refuse) { Add-Fail "must refuse to move an existing tag" }
 
+# Missing next tag is the normal new-release path (empty ls-remote must not throw).
+foreach ($emptyRemote in @($null, "", @(), "   ", @("", "  "))) {
+    try {
+        $emptySha = Get-SpaceLensLsRemoteSha -Output $emptyRemote
+        if ($emptySha) {
+            Add-Fail "empty ls-remote must yield empty sha, got '$emptySha'"
+        }
+    } catch {
+        Add-Fail "empty ls-remote must not throw: $($_.Exception.Message)"
+    }
+}
+$presentSha = Get-SpaceLensLsRemoteSha -Output "abc123def456`trefs/tags/v0.1.6"
+if ($presentSha -ne "abc123def456") {
+    Add-Fail "present ls-remote must parse the object SHA, got '$presentSha'"
+}
+try {
+    $missingLookup = Get-SpaceLensPrepareIdempotency -MainCMakeVersion "0.1.5" -NextVersion "0.1.6" -TagSha ""
+    if ($missingLookup.TagExists) { Add-Fail "missing v0.1.6 must be tag_exists=false" }
+    if ($missingLookup.AlreadyBumped) { Add-Fail "CMake 0.1.5 vs next 0.1.6 must not be already_bumped" }
+    if (-not $missingLookup.ContinuePrepare) { Add-Fail "missing v0.1.6 must continue release preparation" }
+} catch {
+    Add-Fail "missing v0.1.6 prepare check must not throw: $($_.Exception.Message)"
+}
+$presentLookup = Get-SpaceLensPrepareIdempotency -MainCMakeVersion "0.1.5" -NextVersion "0.1.6" -TagSha $presentSha
+if (-not $presentLookup.TagExists) { Add-Fail "present v0.1.6 must be tag_exists=true" }
+if ($presentLookup.ContinuePrepare) { Add-Fail "existing next tag must skip prepare" }
+$expectedBump = Get-SpaceLensPrepareIdempotency -MainCMakeVersion "0.1.6" -NextVersion "0.1.6" `
+    -TagSha "" -MainSha "bumpsha" -MainSubject "chore(release): prepare SpaceLens v0.1.6"
+if (-not $expectedBump.AlreadyBumped -or $expectedBump.TagExists -or $expectedBump.BumpSha -ne "bumpsha") {
+    Add-Fail "already-bumped missing tag must recover the bump SHA"
+}
+
+# Isolated git repo: refs/tags/v0.1.6 does not exist → no exception, tag_exists=false.
+$tagScratch = Join-Path ([System.IO.Path]::GetTempPath()) ("spacelens-taglookup-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $tagScratch | Out-Null
+try {
+    & git -C $tagScratch init --quiet
+    if ($LASTEXITCODE -ne 0) { throw "git init failed" }
+    & git -C $tagScratch config user.email "release-test@example.com"
+    & git -C $tagScratch config user.name "SpaceLens Release Test"
+    & git -C $tagScratch -c commit.gpgsign=false commit --allow-empty -m "init" --quiet
+    if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
+    $remoteMissing = Get-SpaceLensRemoteTagSha -Tag "v0.1.6" -Remote $tagScratch
+    if ($remoteMissing) {
+        Add-Fail "isolated repo without v0.1.6 must return empty remote tag sha, got '$remoteMissing'"
+    }
+    $remoteMissingCheck = Get-SpaceLensPrepareIdempotency -MainCMakeVersion "0.1.5" -NextVersion "0.1.6" -TagSha $remoteMissing
+    if ($remoteMissingCheck.TagExists -or -not $remoteMissingCheck.ContinuePrepare) {
+        Add-Fail "isolated missing v0.1.6 must continue release preparation"
+    }
+    & git -C $tagScratch tag -a "v0.1.6" -m "SpaceLens v0.1.6"
+    if ($LASTEXITCODE -ne 0) { throw "git tag failed" }
+    $remotePresent = Get-SpaceLensRemoteTagSha -Tag "v0.1.6" -Remote $tagScratch
+    if ([string]::IsNullOrWhiteSpace($remotePresent)) {
+        Add-Fail "isolated repo with v0.1.6 must return a remote tag sha"
+    }
+    $remotePresentCheck = Get-SpaceLensPrepareIdempotency -MainCMakeVersion "0.1.5" -NextVersion "0.1.6" -TagSha $remotePresent
+    if (-not $remotePresentCheck.TagExists) { Add-Fail "isolated present v0.1.6 must be tag_exists=true" }
+    if ($remotePresentCheck.ContinuePrepare) { Add-Fail "isolated present v0.1.6 must skip prepare" }
+    $headSha = (& git -C $tagScratch rev-parse "HEAD").Trim()
+    $unexpected = Get-SpaceLensPublishPlan -PreparedVersion "0.1.6" -LatestStableVersion "0.1.5" `
+        -TagPeelSha "someone-else" -HeadSha $headSha
+    if (-not $unexpected.Refuse) { Add-Fail "tag pointing elsewhere must still refuse" }
+} catch {
+    Add-Fail "isolated missing-tag lookup failed: $($_.Exception.Message)"
+} finally {
+    Remove-Item -LiteralPath $tagScratch -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 # H: pin already current → no extra commit.
 $h = Get-SpaceLensPublishPlan -PreparedVersion "0.1.5" -LatestStableVersion "0.1.4" `
     -TagPeelSha "abc" -HeadSha "abc" -GitHubReleaseExists $true -NpmVersionExists $true `

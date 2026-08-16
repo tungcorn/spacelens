@@ -133,33 +133,39 @@ jobs:
           . .\scripts\SpaceLensRelease.ps1
           git fetch origin main 2>$null | Out-Null
 
-          $alreadyBumped = $false
+          $mainCmakeText = ""
           $cmakeText = & git show "origin/main:CMakeLists.txt" 2>$null | Out-String
           if ("$cmakeText".Trim()) {
             $mainCmake = Get-SpaceLensCMakeVersionFromText $cmakeText
-            Write-Host "main_cmake=$($mainCmake.Text)  next=$env:NEXT_VERSION"
-            if ($mainCmake.Text -eq $env:NEXT_VERSION) {
-              $alreadyBumped = $true
-            }
+            $mainCmakeText = $mainCmake.Text
+            Write-Host "main_cmake=$mainCmakeText  next=$env:NEXT_VERSION"
           }
 
-          $tagSha = ((& git ls-remote origin "refs/tags/$env:NEXT_TAG") -split '\s+')[0]
-          $tagExists = -not [string]::IsNullOrWhiteSpace($tagSha)
+          $tagSha = Get-SpaceLensRemoteTagSha $env:NEXT_TAG
+          $idemp = Get-SpaceLensPrepareIdempotency `
+            -MainCMakeVersion $mainCmakeText `
+            -NextVersion $env:NEXT_VERSION `
+            -TagSha $tagSha
 
-          $bumpSha = ""
-          if ($alreadyBumped -and -not $tagExists) {
+          if ($idemp.AlreadyBumped -and -not $idemp.TagExists) {
             $mainSha = (& git rev-parse origin/main).Trim()
             $subject = (& git log -1 --format=%s origin/main).Trim()
-            if (Test-SpaceLensReleasePrepSubject $subject -ExpectedVersion $env:NEXT_VERSION) {
-              $bumpSha = $mainSha
-              Write-Host "origin/main is still the bump commit $bumpSha"
+            $idemp = Get-SpaceLensPrepareIdempotency `
+              -MainCMakeVersion $mainCmakeText `
+              -NextVersion $env:NEXT_VERSION `
+              -TagSha $tagSha `
+              -MainSha $mainSha `
+              -MainSubject $subject
+            if ($idemp.BumpSha) {
+              Write-Host "origin/main is still the bump commit $($idemp.BumpSha)"
             } else {
               Write-Host "origin/main moved past the bump (subject='$subject'); will not dispatch publish for another SHA"
             }
           }
 
-          $alreadyStr = $alreadyBumped.ToString().ToLowerInvariant()
-          $tagStr = $tagExists.ToString().ToLowerInvariant()
+          $alreadyStr = $idemp.AlreadyBumped.ToString().ToLowerInvariant()
+          $tagStr = $idemp.TagExists.ToString().ToLowerInvariant()
+          $bumpSha = $idemp.BumpSha
           Write-Host "already_bumped=$alreadyStr  tag_exists=$tagStr  bump_sha=$bumpSha"
           "already_bumped=$alreadyStr" | Out-File $env:GITHUB_OUTPUT -Append
           "tag_exists=$tagStr" | Out-File $env:GITHUB_OUTPUT -Append

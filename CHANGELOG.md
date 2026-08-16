@@ -5,6 +5,9 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+- Prepare treats a missing next tag (`git ls-remote` empty) as
+  `tag_exists=false` and continues release preparation instead of
+  crashing on an empty-array index.
 - Physical reclaim intelligence: `spacelens reclaim-plan` reports exact
   host-byte reclaim evidence (allocated bytes, hard-link coverage,
   provider ownership) without executing cleanup. Actionable vs

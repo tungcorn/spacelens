@@ -82,6 +82,15 @@ if ($release -notmatch 'prepare_needed') {
 if ($release -notmatch 'Get-SpaceLensCMakeVersionFromText') {
     Add-Fail "prepare already_bumped check must parse multiline CMake project(VERSION)"
 }
+if ($release -match '\$tagSha = \(\(& git ls-remote') {
+    Add-Fail "prepare must not index git ls-remote output; a missing next tag is the normal path"
+}
+if ($release -notmatch 'Get-SpaceLensRemoteTagSha') {
+    Add-Fail "prepare must look up the next tag via Get-SpaceLensRemoteTagSha (empty ls-remote is tag_exists=false)"
+}
+if ($release -notmatch 'Get-SpaceLensPrepareIdempotency') {
+    Add-Fail "prepare must use Get-SpaceLensPrepareIdempotency so a missing next tag continues preparation"
+}
 if ($release -notmatch 'name:\s*Ensure CI on this SHA') {
     Add-Fail "release.yml must ensure CI on the publish SHA so recovery does not need a PR"
 }

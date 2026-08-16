@@ -77,6 +77,65 @@ function Get-SpaceLensTagPeelSha {
     return $sha.Trim()
 }
 
+function Get-SpaceLensLsRemoteSha {
+    # Parse `git ls-remote` output. Missing refs produce no lines; never index
+    # an empty split (StrictMode throws "Index was outside the bounds of the array").
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [AllowEmptyCollection()]
+        $Output = $null
+    )
+    foreach ($line in @($Output)) {
+        if ($null -eq $line) { continue }
+        $text = "$line".Trim()
+        if (-not $text) { continue }
+        $parts = @($text -split '\s+' | Where-Object { $_ })
+        if ($parts.Count -gt 0) {
+            return [string]$parts[0]
+        }
+    }
+    return ""
+}
+
+function Get-SpaceLensRemoteTagSha {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [string]$Remote = "origin"
+    )
+    $ref = "$Tag".Trim()
+    if (-not $ref) { return "" }
+    if ($ref -notmatch '^refs/tags/') {
+        $ref = "refs/tags/$ref"
+    }
+    $output = & git ls-remote $Remote $ref 2>$null
+    return (Get-SpaceLensLsRemoteSha -Output $output)
+}
+
+function Get-SpaceLensPrepareIdempotency {
+    param(
+        [string]$MainCMakeVersion = "",
+        [Parameter(Mandatory = $true)][string]$NextVersion,
+        [string]$TagSha = "",
+        [string]$MainSha = "",
+        [string]$MainSubject = ""
+    )
+    $alreadyBumped = ($MainCMakeVersion -eq $NextVersion)
+    $tagExists = -not [string]::IsNullOrWhiteSpace($TagSha)
+    $bumpSha = ""
+    if ($alreadyBumped -and -not $tagExists) {
+        if (Test-SpaceLensReleasePrepSubject $MainSubject -ExpectedVersion $NextVersion) {
+            $bumpSha = "$MainSha".Trim()
+        }
+    }
+    return [pscustomobject]@{
+        AlreadyBumped   = [bool]$alreadyBumped
+        TagExists       = [bool]$tagExists
+        BumpSha         = $bumpSha
+        ContinuePrepare = [bool]((-not $alreadyBumped) -and (-not $tagExists))
+    }
+}
+
 function Test-SpaceLensAutoPublishCommit {
     param(
         [Parameter(Mandatory = $true)]$CMakeVersion,
