@@ -36,7 +36,7 @@ jobs:
         id: detect
         shell: pwsh
         run: |
-          .\scripts\detect-ci-changes.ps1 -EventName "${{ github.event_name }}" -BaseSha "${{ github.base_ref }}" -BeforeSha "${{ github.event.before }}" -HeadSha "${{ github.sha }}" -EventPath "${{ github.event_path }}" -OutputFile "$env:GITHUB_OUTPUT"
+          ./scripts/detect-ci-changes.ps1 -EventName "${{ github.event_name }}" -BaseSha "${{ github.base_ref }}" -BeforeSha "${{ github.event.before }}" -HeadSha "${{ github.sha }}" -EventPath "${{ github.event_path }}" -OutputFile "$env:GITHUB_OUTPUT"
 
   full-debug:
     name: Windows / Full Debug
@@ -312,7 +312,7 @@ jobs:
 
       - name: Verify release pin format
         shell: pwsh
-        run: .\scripts\verify-release-pin.ps1
+        run: ./scripts/verify-release-pin.ps1
 
   release-policy:
     name: Release / Policy
@@ -332,17 +332,17 @@ jobs:
       - name: Release policy and automation
         shell: pwsh
         run: |
-          .\scripts\test-detect-ci-changes.ps1
+          ./scripts/test-detect-ci-changes.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\scripts\verify-release-pin.ps1
+          ./scripts/verify-release-pin.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\scripts\verify-release-policy.ps1
+          ./scripts/verify-release-policy.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\scripts\verify-release-automation.ps1
+          ./scripts/verify-release-automation.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\scripts\release-needed.ps1 -DryRun
+          ./scripts/release-needed.ps1 -DryRun
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\scripts\prepare-release.ps1 -DryRun
+          ./scripts/prepare-release.ps1 -DryRun
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   npm-package:

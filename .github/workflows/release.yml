@@ -62,7 +62,7 @@ jobs:
           WORKFLOW_RUN_EVENT: ${{ github.event.workflow_run.event }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         shell: pwsh
-        run: .\scripts\decide-release.ps1
+        run: ./scripts/decide-release.ps1
 
   # ---------------------------------------------------------------------------
   # prepare: runs after CI succeeds on a main push when decide did NOT select publish.
@@ -97,7 +97,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          . .\\scripts\\SpaceLensRelease.ps1
+          . ./scripts/SpaceLensRelease.ps1
           $tags = Get-SpaceLensGitTags
           $latest = Get-SpaceLensLatestStableVersion -Tags $tags
           if (-not $latest) {
@@ -260,7 +260,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          . .\\scripts\\SpaceLensRelease.ps1
+          . ./scripts/SpaceLensRelease.ps1
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -276,7 +276,7 @@ jobs:
           git reset --hard origin/main
 
           # Bump version files, CHANGELOG, and release notes.
-          .\\scripts\\prepare-release.ps1 -Version $env:NEXT_VERSION
+          ./scripts/prepare-release.ps1 -Version $env:NEXT_VERSION
           if ($LASTEXITCODE -ne 0) { throw "prepare-release.ps1 failed" }
 
           # Stage all mechanical version files + CHANGELOG + release notes.
@@ -340,7 +340,7 @@ jobs:
             throw "main moved before CI dispatch: origin/main=$originHead bump=$bump. Failing safely."
           }
 
-          .\scripts\ensure-ci-run.ps1 -Sha $bump -Repo $repo -Ref main -DispatchIfMissing -DiscoverSeconds 15
+          ./scripts/ensure-ci-run.ps1 -Sha $bump -Repo $repo -Ref main -DispatchIfMissing -DiscoverSeconds 15
           if ($LASTEXITCODE -ne 0) { throw "ensure-ci-run.ps1 failed" }
 
           git fetch origin main
@@ -376,7 +376,7 @@ jobs:
           if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
           }
-          .\scripts\ensure-ci-run.ps1 -Sha $env:GITHUB_SHA -Repo $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF_NAME -DispatchIfMissing
+          ./scripts/ensure-ci-run.ps1 -Sha $env:GITHUB_SHA -Repo $env:GITHUB_REPOSITORY -Ref $env:GITHUB_REF_NAME -DispatchIfMissing
           if ($LASTEXITCODE -ne 0) { throw "ensure-ci-run.ps1 failed" }
 
   preflight:
@@ -407,7 +407,7 @@ jobs:
         shell: pwsh
         run: |
           $publish = ($env:PUBLISH -eq "true")
-          .\\scripts\\verify-release-preflight.ps1 -Version $env:REQUESTED_VERSION -Publish:$publish -Wait:$publish
+          ./scripts/verify-release-preflight.ps1 -Version $env:REQUESTED_VERSION -Publish:$publish -Wait:$publish
           "version=$($env:REQUESTED_VERSION)" | Out-File $env:GITHUB_OUTPUT -Append
           "tag=v$($env:REQUESTED_VERSION)" | Out-File $env:GITHUB_OUTPUT -Append
 
@@ -834,7 +834,7 @@ jobs:
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
-          .\\scripts\\update-release-pin.ps1 -Version $env:VERSION -Repo $env:GITHUB_REPOSITORY -WriteFiles
+          ./scripts/update-release-pin.ps1 -Version $env:VERSION -Repo $env:GITHUB_REPOSITORY -WriteFiles
           if ($LASTEXITCODE -ne 0) { throw "update-release-pin.ps1 failed" }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
