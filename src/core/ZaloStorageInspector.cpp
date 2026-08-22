@@ -1677,6 +1677,25 @@ InternalDiscovery discoverInternal(const ZaloDiscoveryOptions& options,
                              joinNative(joinNative(roaming, L"ZaloData"), L"media"),
                              true, false);
         }
+
+        // Check standard relocated Zalo media locations on available fixed/removable drives
+        // only when default roots are unconfigured (not overridden by tests or custom options)
+        if (options.roamingAppDataRoot.empty() && options.localAppDataRoot.empty()) {
+            const DWORD drivesMask = ::GetLogicalDrives();
+            for (wchar_t driveLetter = L'C'; driveLetter <= L'Z'; ++driveLetter) {
+                const int driveIndex = driveLetter - L'A';
+                if ((drivesMask & (1 << driveIndex)) == 0) {
+                    continue;
+                }
+                const std::wstring driveRoot = std::wstring(1, driveLetter) + L":\\";
+                const UINT driveType = ::GetDriveTypeW(driveRoot.c_str());
+                if (driveType != DRIVE_FIXED && driveType != DRIVE_REMOVABLE) {
+                    continue;
+                }
+                addRootCandidate(candidates, joinNative(driveRoot, L"Zalo Data\\media"), true, false);
+                addRootCandidate(candidates, joinNative(driveRoot, L"ZaloData\\media"), true, false);
+            }
+        }
     }
 
     if (!result.cancelled) {

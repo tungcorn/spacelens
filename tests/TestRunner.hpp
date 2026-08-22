@@ -50,16 +50,16 @@ inline int runAll()
         }
         try {
             fn();
-            std::cout << "[ PASS ] " << name << '\n';
+            std::cout << "[ PASS ] " << name << std::endl;
         } catch (const Failure& ex) {
-            std::cout << "[ FAIL ] " << name << " — " << ex.what() << '\n';
+            std::cout << "[ FAIL ] " << name << " — " << ex.what() << std::endl;
             ++failed;
         } catch (const std::exception& ex) {
             std::cout << "[ FAIL ] " << name << " — unexpected: " << ex.what()
-                      << '\n';
+                      << std::endl;
             ++failed;
         } catch (...) {
-            std::cout << "[ FAIL ] " << name << " — unknown exception\n";
+            std::cout << "[ FAIL ] " << name << " — unknown exception" << std::endl;
             ++failed;
         }
     }

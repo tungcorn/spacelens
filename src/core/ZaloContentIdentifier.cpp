@@ -187,6 +187,12 @@ public:
                 view.readAt(offset, buffer, length, cancellation);
             if (result.status == PayloadReadStatus::Ok &&
                 result.bytesRead == length) {
+                if (xorMask != 0U && buffer != nullptr) {
+                    auto* ptr = static_cast<std::uint8_t*>(buffer);
+                    for (std::size_t i = 0; i < length; ++i) {
+                        ptr[i] ^= xorMask;
+                    }
+                }
                 return true;
             }
 
@@ -225,6 +231,7 @@ public:
     bool budgetExceeded = false;
     std::size_t readCalls = 0;
     ByteSize readBytes = 0;
+    std::uint8_t xorMask = 0;
 };
 
 [[nodiscard]] bool checkedAdd(ByteSize left, ByteSize right,
@@ -373,6 +380,8 @@ struct Candidate final {
     ZaloContentConfidence confidence = ZaloContentConfidence::Strong;
     ByteSize offset = 0;
     ByteSize length = 0;
+    bool masked = false;
+    std::uint8_t maskByte = 0;
     std::optional<ZaloImageDimensions> dimensions;
     std::optional<ZaloVideoMetadata> videoMetadata;
     std::vector<ZaloContentEvidenceCode> evidence;
@@ -2380,7 +2389,44 @@ struct OoxmlResult final {
 {
     const auto zipEnd = findZipEnd(context, base);
     if (!zipEnd.has_value()) {
-        return std::nullopt;
+        // Fallback for streaming / incomplete ZIP archives without central directory:
+        // Validate starting local file header signature and filename structure.
+        if (base > context.view.size() || context.view.size() - base < 30U) {
+            return std::nullopt;
+        }
+        std::array<std::uint8_t, 30> localHeader{};
+        if (!context.readRange(base, localHeader) ||
+            readLe32(localHeader.data()) != kZipLocalHeaderSignature) {
+            return std::nullopt;
+        }
+        const std::uint16_t nameLength = readLe16(localHeader.data() + 26U);
+        if (nameLength == 0U || nameLength > kZipNameBytes ||
+            nameLength > context.view.size() - base - 30U) {
+            return std::nullopt;
+        }
+        std::vector<std::uint8_t> nameBytes(nameLength);
+        ByteSize absoluteName = 0;
+        if (!checkedAdd(base, 30U, absoluteName) ||
+            !context.readRange(absoluteName, nameBytes)) {
+            return std::nullopt;
+        }
+        bool nameValid = true;
+        for (const std::uint8_t byte : nameBytes) {
+            if (byte < 0x20U || byte == 0x7fU || byte == 0x00U) {
+                nameValid = false;
+                break;
+            }
+        }
+        if (!nameValid) {
+            return std::nullopt;
+        }
+        return makeCandidate(
+            ZaloContentType::Zip,
+            ZaloContentConfidence::Strong,
+            base,
+            context.view.size() - base,
+            {ZaloContentEvidenceCode::ZipSignature,
+             ZaloContentEvidenceCode::ZipLocalHeaders});
     }
     ZipReader reader;
     std::vector<RawZipEntry> entries;
@@ -4169,6 +4215,8 @@ constexpr std::string_view kStrictDrawingNamespace =
     result.method = candidate.method;
     result.confidence = candidate.confidence;
     result.wrapper = candidate.offset != 0U;
+    result.masked = candidate.masked;
+    result.maskByte = candidate.maskByte;
     result.payloadOffset = candidate.offset;
     result.payloadLength = candidate.length;
     result.imageDimensions = candidate.dimensions;
@@ -4212,6 +4260,9 @@ constexpr std::string_view kStrictDrawingNamespace =
     case ZaloContentType::Unknown:
         result.description = "Unresolved app-managed binary";
         break;
+    }
+    if (candidate.masked) {
+        result.description += " (transit payload)";
     }
     return result;
 }
@@ -4304,6 +4355,41 @@ constexpr std::string_view kStrictDrawingNamespace =
         return unknownResult(ZaloContentStatus::Ambiguous);
     }
     if (candidates.empty()) {
+        // If no direct or embedded candidate matched, probe candidate reversible transforms
+        // (e.g. Zalo transit cache XOR masks)
+        constexpr std::array<std::uint8_t, 1> kZaloCandidateMasks = {0x93};
+        for (const std::uint8_t mask : kZaloCandidateMasks) {
+            if (!context.checkCancellation()) {
+                return resultForContext(context);
+            }
+            if (scanBytes.size() >= 2U) {
+                std::vector<std::uint8_t> unmaskedPrefix(scanBytes.begin(), scanBytes.end());
+                for (auto& b : unmaskedPrefix) {
+                    b ^= mask;
+                }
+                if (isJpegSignature(unmaskedPrefix, 0U) ||
+                    isPngSignature(unmaskedPrefix, 0U) ||
+                    isWebpSignature(unmaskedPrefix, 0U) ||
+                    isGifSignature(unmaskedPrefix, 0U) ||
+                    isMp4Signature(unmaskedPrefix, 0U) ||
+                    isPdfSignature(unmaskedPrefix, 0U) ||
+                    isZipSignature(unmaskedPrefix, 0U)) {
+                    ScanContext maskedContext(payload, cancellation);
+                    maskedContext.xorMask = mask;
+                    auto parsed = parseAtSignatures(maskedContext, 0U, unmaskedPrefix, 0U);
+                    if (!parsed.empty()) {
+                        parsed = uniqueCandidates(std::move(parsed));
+                        if (parsed.size() == 1U) {
+                            Candidate c = std::move(parsed.front());
+                            c.masked = true;
+                            c.maskByte = mask;
+                            addEvidence(c.evidence, ZaloContentEvidenceCode::MaskedPayload);
+                            return resultFromCandidate(c);
+                        }
+                    }
+                }
+            }
+        }
         return unknownResult();
     }
     if (candidates.size() != 1U) {
@@ -4516,6 +4602,8 @@ const char* toString(ZaloContentEvidenceCode code) noexcept
         return "ooxml-main-part";
     case ZaloContentEvidenceCode::EmbeddedPayload:
         return "embedded-payload";
+    case ZaloContentEvidenceCode::MaskedPayload:
+        return "masked-payload";
     }
     return "none";
 }
@@ -4832,6 +4920,9 @@ ZaloSemanticMetadata extractZaloSemanticMetadata(
         }
 
         ScanContext context(*payloadSlice, std::move(cancellation));
+        if (identification.masked && identification.maskByte != 0U) {
+            context.xorMask = identification.maskByte;
+        }
         if (!context.checkCancellation()) {
             return semanticContextResult(
                 context, ZaloSemanticMetadataStatus::Cancelled);

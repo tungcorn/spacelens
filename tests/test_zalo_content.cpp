@@ -1421,3 +1421,77 @@ SPACELENS_TEST(ZaloContent_human_identity_deterministic_synthesis)
     SPACELENS_REQUIRE(unkId.previewKind == ZaloPreviewKind::None);
     SPACELENS_REQUIRE(!unkId.previewAvailable);
 }
+
+SPACELENS_TEST(ZaloContent_masked_zip_probe_succeeds)
+{
+    TempFixture fixture;
+    auto zipBytes = makeStoredZip({{"document.txt", bytesOf("Hello world")}});
+    for (auto& b : zipBytes) {
+        b ^= 0x93;
+    }
+    const ZaloContentResult result =
+        identifyBytes(fixture, "noise-zip.bin", zipBytes);
+    SPACELENS_REQUIRE(result.status == ZaloContentStatus::Identified);
+    SPACELENS_REQUIRE(result.type == ZaloContentType::Zip);
+    SPACELENS_REQUIRE(result.masked);
+    SPACELENS_REQUIRE_EQ(result.maskByte, 0x93);
+    const auto hasMaskEvidence =
+        std::find(result.evidence.begin(), result.evidence.end(),
+                  ZaloContentEvidenceCode::MaskedPayload) != result.evidence.end();
+    SPACELENS_REQUIRE(hasMaskEvidence);
+}
+
+SPACELENS_TEST(ZaloContent_masked_pdf_probe_succeeds)
+{
+    TempFixture fixture;
+    auto pdfBytes = makeSemanticPdf();
+    for (auto& b : pdfBytes) {
+        b ^= 0x93;
+    }
+    const fs::path path = fixture.root() / "noise-pdf.bin";
+    writeBytes(path, pdfBytes);
+    const FileIdentity identity = identityFor(path);
+    auto opened = ReadOnlyPayload::open(path.wstring(), identity,
+                                        canonicalPathFor(path));
+    SPACELENS_REQUIRE(opened.ok());
+    const ZaloContentResult result =
+        identifyZaloContent(opened.payload->view());
+    SPACELENS_REQUIRE(result.status == ZaloContentStatus::Identified);
+    SPACELENS_REQUIRE(result.type == ZaloContentType::Pdf);
+    SPACELENS_REQUIRE(result.masked);
+    SPACELENS_REQUIRE_EQ(result.maskByte, 0x93);
+
+    const auto sem =
+        extractZaloSemanticMetadata(opened.payload->view(), result);
+    SPACELENS_REQUIRE(sem.status == ZaloSemanticMetadataStatus::Available);
+    SPACELENS_REQUIRE(sem.title.has_value());
+    SPACELENS_REQUIRE_EQ(*sem.title, "Quarterly Report");
+}
+
+SPACELENS_TEST(ZaloContent_masked_mp4_probe_succeeds)
+{
+    TempFixture fixture;
+    auto mp4Bytes = makeMp4(30, 1920, 1080);
+    for (auto& b : mp4Bytes) {
+        b ^= 0x93;
+    }
+    const ZaloContentResult result =
+        identifyBytes(fixture, "noise-mp4.bin", mp4Bytes);
+    SPACELENS_REQUIRE(result.status == ZaloContentStatus::Identified);
+    SPACELENS_REQUIRE(result.type == ZaloContentType::Mp4);
+    SPACELENS_REQUIRE(result.masked);
+    SPACELENS_REQUIRE_EQ(result.maskByte, 0x93);
+    SPACELENS_REQUIRE(result.videoMetadata.has_value());
+    SPACELENS_REQUIRE_EQ(result.videoMetadata->width, 1920U);
+    SPACELENS_REQUIRE_EQ(result.videoMetadata->height, 1080U);
+}
+
+SPACELENS_TEST(ZaloContent_masked_noise_fails_closed)
+{
+    TempFixture fixture;
+    std::vector<std::uint8_t> noise(512, 0xab);
+    const ZaloContentResult result =
+        identifyBytes(fixture, "noise-random.bin", noise);
+    SPACELENS_REQUIRE(result.status == ZaloContentStatus::Unknown);
+    SPACELENS_REQUIRE(!result.identified());
+}

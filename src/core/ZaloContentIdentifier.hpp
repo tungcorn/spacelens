@@ -113,7 +113,8 @@ enum class ZaloContentEvidenceCode {
     OoxmlContentTypes,
     OoxmlRelationships,
     OoxmlMainPart,
-    EmbeddedPayload
+    EmbeddedPayload,
+    MaskedPayload
 };
 
 using ZaloEvidenceCode = ZaloContentEvidenceCode;
@@ -210,6 +211,8 @@ struct ZaloContentResult {
     ZaloIdentificationMethod method = ZaloIdentificationMethod::None;
     ZaloContentConfidence confidence = ZaloContentConfidence::Unknown;
     bool wrapper = false;
+    bool masked = false;
+    std::uint8_t maskByte = 0;
     ByteSize payloadOffset = 0;
     ByteSize payloadLength = 0;
     std::optional<ZaloImageDimensions> imageDimensions;
