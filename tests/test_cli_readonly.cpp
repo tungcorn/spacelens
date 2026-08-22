@@ -42,7 +42,8 @@ SPACELENS_TEST(CliReadonly_registered_commands_only_safe)
         Command::Index,         Command::IndexStatus,   Command::IndexList,
         Command::IndexRefresh,  Command::Query,         Command::Duplicates,
         Command::Overview,      Command::Opportunities, Command::Breakdown,
-        Command::ReclaimPlan,
+        Command::ReclaimPlan,    Command::AppStorageZalo,
+        Command::AppStorageZaloItems,
     };
     SPACELENS_REQUIRE_EQ(kRegisteredCommands.size(), allowed.size());
     for (const Command c : kRegisteredCommands) {

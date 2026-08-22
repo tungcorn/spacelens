@@ -3,7 +3,8 @@
 This is an inventory, not legal advice.
 
 SpaceLens-owned code is MIT. See the root `LICENSE`. MIT does not apply to
-Qt, to Qt's bundled third-party code, or to SQLite.
+Qt, Qt's bundled third-party code, SQLite, miniz, or pugixml; each component
+retains its own terms described below.
 
 ## SpaceLens
 
@@ -30,12 +31,52 @@ The maintainer selected MIT. An assistant did not choose this license.
 
 Compiled into `spacelens_core` and therefore into both the CLI and the GUI.
 
+## miniz
+
+| Field | Value |
+|-------|--------|
+| Type | vendored source dependency; statically linked |
+| Path | `third_party/miniz/` |
+| Version | 3.1.2 |
+| Commit | `77d0dce8627735138c51770d1799a1ef48f2117d` |
+| Official source ZIP SHA-256 | `f0446d863f9c19926ad9483c523fdc42e42b8d4a6a431d27e09d49c79a140d9a` |
+| Upstream | https://github.com/richgel999/miniz |
+| License | MIT; `third_party/miniz/LICENSE` |
+| Build options | `MINIZ_NO_STDIO=1`, `MINIZ_NO_TIME=1`, `MINIZ_NO_ARCHIVE_WRITING_APIS=1` |
+
+SpaceLens uses miniz only through bounded in-memory/random-access callbacks for
+ZIP structure, decompression, and CRC validation. The build exposes no miniz
+filesystem extraction or archive-writing API and ships no miniz executable or
+runtime DLL.
+
+## pugixml
+
+| Field | Value |
+|-------|--------|
+| Type | vendored source dependency; statically linked |
+| Path | `third_party/pugixml/` |
+| Version | 1.16 |
+| Commit | `c8033ce9d039e7f9d134877c363397b3cfe20816` |
+| Official source ZIP SHA-256 | `42e324b50d53aff0cf259a7f26cd04d00f90a1d436b356dd52b0f4d4dcf3b769` |
+| Upstream | https://github.com/zeux/pugixml |
+| License | MIT; `third_party/pugixml/LICENSE.md` |
+| Build options | `PUGIXML_NO_XPATH=1` |
+
+SpaceLens uses pugixml only for size-, depth-, and node-bounded in-memory OOXML
+package validation. It ships no pugixml executable or runtime DLL.
+
+Both parser libraries inherit the selected MSVC `/MD` or `/MDd` runtime from
+the enclosing build. They are linked into `spacelens_core`, so their code is
+present in the CLI, MCP adapter, and GUI without adding runtime files.
+
 ## Shipped in the CLI archive
 
 | Component | Location | Notes |
 |-----------|----------|--------|
 | SpaceLens | `LICENSE` | MIT |
 | SQLite amalgamation 3.53.4 | compiled in | blessing in `sqlite3.h`; see `third_party/sqlite/README.md` |
+| miniz 3.1.2 | compiled in | MIT; bounded read-only ZIP validation |
+| pugixml 1.16 | compiled in | MIT; bounded in-memory OOXML XML validation |
 | MSVC runtime | not shipped | Official Microsoft Visual C++ Redistributable (x64) is a prerequisite |
 
 The CLI archive must not contain Qt DLLs, `platforms\`, or the GUI executable.
@@ -65,6 +106,8 @@ The CLI archive must not contain Qt DLLs, `platforms\`, or the GUI executable.
 | `Qt6Network.dll`, `Qt6Svg.dll` | windeployqt (plugin dependents) | Allowed; not every plugin name is hardcoded |
 | `opengl32sw.dll` | Qt kit `bin\` | Mesa software rasterizer. Size matches the kit, not a compiler CRT |
 | SQLite 3.53.4 | linked via `spacelens_core` | Same blessing as the CLI |
+| miniz 3.1.2 | linked via `spacelens_core` | MIT; static, no stdio/archive-writing APIs |
+| pugixml 1.16 | linked via `spacelens_core` | MIT; static, XPath disabled |
 | MSVC runtime | not shipped | Same Visual C++ Redistributable prerequisite |
 
 Windows SDK `d3dcompiler_47.dll` (`4741488` bytes), `dxcompiler.dll`, and

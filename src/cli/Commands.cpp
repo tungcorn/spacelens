@@ -12,6 +12,7 @@
 #include "core/SizeFormatter.hpp"
 #include "core/StorageAnalysis.hpp"
 #include "core/StorageIntelligence.hpp"
+#include "core/ZaloStorageInspector.hpp"
 #include "core/index/IndexBreakdown.hpp"
 #include "core/index/IndexCatalog.hpp"
 #include "core/index/IndexBuilder.hpp"
@@ -460,6 +461,493 @@ std::vector<PathSizeItem> findFiles(const DirectoryTree& tree,
         all.resize(args.limit);
     }
     return all;
+}
+
+bool zaloStatusOk(ZaloStorageStatus status) noexcept
+{
+    return status == ZaloStorageStatus::Complete ||
+           status == ZaloStorageStatus::Partial ||
+           status == ZaloStorageStatus::ConfigUnavailable;
+}
+
+bool zaloContentUnknown(const ZaloEntry& entry) noexcept
+{
+    return !entry.contentIdentification.has_value() ||
+           !entry.contentIdentification->identified();
+}
+
+bool zaloTypeMatches(const ZaloEntry& entry, std::string_view wanted)
+{
+    if (wanted == "video" || wanted == "videos") {
+        if (entry.contentIdentification.has_value() &&
+            (entry.contentIdentification->type == ZaloContentType::Mp4 ||
+             entry.contentIdentification->type == ZaloContentType::Mov)) {
+            return true;
+        }
+        return entry.categoryAlias == "video";
+    }
+    if (wanted == "image" || wanted == "images") {
+        if (entry.contentIdentification.has_value()) {
+            switch (entry.contentIdentification->type) {
+            case ZaloContentType::Jpeg:
+            case ZaloContentType::Png:
+            case ZaloContentType::Webp:
+            case ZaloContentType::Gif:
+                return true;
+            default:
+                break;
+            }
+        }
+        return entry.categoryAlias == "picture" ||
+               entry.categoryAlias == "fileThumb" ||
+               entry.categoryAlias == "richThumb";
+    }
+    if (wanted == "document" || wanted == "documents") {
+        if (entry.contentIdentification.has_value()) {
+            switch (entry.contentIdentification->type) {
+            case ZaloContentType::Pdf:
+            case ZaloContentType::Docx:
+            case ZaloContentType::Xlsx:
+            case ZaloContentType::Pptx:
+                return true;
+            default:
+                break;
+            }
+        }
+        return entry.categoryAlias == "file";
+    }
+    if (wanted == "archive" || wanted == "archives") {
+        return entry.contentIdentification.has_value() &&
+               entry.contentIdentification->type == ZaloContentType::Zip;
+    }
+    if (entry.contentIdentification.has_value() &&
+        std::string_view(toString(entry.contentIdentification->type)) == wanted) {
+        return true;
+    }
+    return entry.categoryAlias == wanted;
+}
+
+using ZaloItemRef = std::pair<const ZaloAccountReport*, const ZaloEntry*>;
+
+std::vector<ZaloItemRef> selectZaloItems(const ZaloStorageReport& report,
+                                         const ParsedArgs& args)
+{
+    std::vector<ZaloItemRef> items;
+    for (const ZaloAccountReport& account : report.accounts) {
+        for (const ZaloEntry& entry : account.entries) {
+            if (args.minSize.has_value() && entry.logicalBytes < *args.minSize) {
+                continue;
+            }
+            if (args.unknown && !zaloContentUnknown(entry)) {
+                continue;
+            }
+            if (!args.storageType.empty() &&
+                !zaloTypeMatches(entry, args.storageType)) {
+                continue;
+            }
+            items.emplace_back(&account, &entry);
+        }
+    }
+    std::sort(items.begin(), items.end(),
+              [](const ZaloItemRef& left, const ZaloItemRef& right) {
+                  if (left.second->logicalBytes != right.second->logicalBytes) {
+                      return left.second->logicalBytes > right.second->logicalBytes;
+                  }
+                  if (left.first->rootAlias != right.first->rootAlias) {
+                      return left.first->rootAlias < right.first->rootAlias;
+                  }
+                  if (left.first->accountAlias != right.first->accountAlias) {
+                      return left.first->accountAlias < right.first->accountAlias;
+                  }
+                  return left.second->entryId < right.second->entryId;
+              });
+    if (items.size() > args.limit) {
+        items.resize(args.limit);
+    }
+    return items;
+}
+
+void writeNullableBytes(std::ostream& os,
+                        const std::optional<ByteSize>& value)
+{
+    if (value.has_value()) {
+        os << jsonUInt(*value);
+    } else {
+        os << "null";
+    }
+}
+
+void writeZaloAccountingJson(std::ostream& os,
+                             const ZaloAccountingSummary& accounting)
+{
+    os << "{"
+       << "\"path_visible_logical_bytes\":"
+       << jsonUInt(accounting.pathVisibleLogicalBytes)
+       << ",\"unique_logical_bytes\":"
+       << jsonUInt(accounting.uniqueLogicalBytes)
+       << ",\"partial_known_unique_logical_bytes\":"
+       << jsonUInt(accounting.partialKnownUniqueLogicalBytes)
+       << ",\"unique_allocated_bytes\":";
+    writeNullableBytes(os, accounting.uniqueAllocatedBytes);
+    os << ",\"partial_known_unique_allocated_bytes\":";
+    writeNullableBytes(os, accounting.partialKnownUniqueAllocatedBytes);
+    os << ",\"all_observed_path_release_bytes\":";
+    writeNullableBytes(os, accounting.allObservedPathReleaseBytes);
+    os << ",\"partial_known_release_bytes\":"
+       << jsonUInt(accounting.partialKnownReleaseBytes)
+       << ",\"hard_link_alias_bytes\":"
+       << jsonUInt(accounting.hardLinkAliasBytes)
+       << ",\"path_visible_logical_known\":"
+       << jsonBool(accounting.pathVisibleLogicalKnown)
+       << ",\"unique_logical_known\":"
+       << jsonBool(accounting.uniqueLogicalKnown)
+       << ",\"allocation_known\":"
+       << jsonBool(accounting.allocationKnown)
+       << ",\"hard_link_alias_known\":"
+       << jsonBool(accounting.hardLinkAliasKnown)
+       << ",\"hard_link_coverage\":"
+       << jsonString(toString(accounting.hardLinkCoverage))
+       << ",\"path_count\":" << jsonUInt(accounting.pathCount)
+       << ",\"unique_identity_count\":"
+       << jsonUInt(accounting.uniqueIdentityCount)
+       << ",\"hard_link_alias_path_count\":"
+       << jsonUInt(accounting.hardLinkAliasPathCount)
+       << ",\"unknown_identity_count\":"
+       << jsonUInt(accounting.unknownIdentityCount)
+       << ",\"unknown_allocation_count\":"
+       << jsonUInt(accounting.unknownAllocationCount)
+       << ",\"inconsistent_evidence_count\":"
+       << jsonUInt(accounting.inconsistentEvidenceCount)
+       << ",\"changed_evidence_count\":"
+       << jsonUInt(accounting.changedEvidenceCount)
+       << ",\"unknown_logical_count\":"
+       << jsonUInt(accounting.unknownLogicalCount)
+       << "}";
+}
+
+void writeZaloSemanticJson(std::ostream& os,
+                           const std::optional<ZaloSemanticMetadata>& metadata)
+{
+    if (!metadata.has_value()) {
+        os << "null";
+        return;
+    }
+    os << "{\"status\":" << jsonString(toString(metadata->status))
+       << ",\"pdf_page_count\":";
+    if (metadata->pdfPageCount.has_value()) {
+        os << jsonUInt(*metadata->pdfPageCount);
+    } else {
+        os << "null";
+    }
+    os << ",\"title\":";
+    if (metadata->title.has_value()) {
+        os << jsonString(*metadata->title);
+    } else {
+        os << "null";
+    }
+    os << ",\"author\":";
+    if (metadata->author.has_value()) {
+        os << jsonString(*metadata->author);
+    } else {
+        os << "null";
+    }
+    os << ",\"creator\":";
+    if (metadata->creator.has_value()) {
+        os << jsonString(*metadata->creator);
+    } else {
+        os << "null";
+    }
+    os << ",\"visible_text\":[";
+    for (std::size_t i = 0; i < metadata->visibleText.size(); ++i) {
+        if (i != 0U) {
+            os << ',';
+        }
+        const auto& item = metadata->visibleText[i];
+        os << "{\"heading\":" << jsonBool(item.heading)
+           << ",\"text\":" << jsonString(item.text) << "}";
+    }
+    os << "]}";
+}
+
+void writeZaloContentJson(std::ostream& os,
+                          const std::optional<ZaloContentResult>& content)
+{
+    if (!content.has_value()) {
+        os << "null";
+        return;
+    }
+    os << "{\"status\":" << jsonString(toString(content->status))
+       << ",\"type\":" << jsonString(toString(content->type))
+       << ",\"method\":" << jsonString(toString(content->method))
+       << ",\"confidence\":" << jsonString(toString(content->confidence))
+       << ",\"wrapper\":" << jsonBool(content->wrapper)
+       << ",\"payload_offset\":" << jsonUInt(content->payloadOffset)
+       << ",\"payload_length\":" << jsonUInt(content->payloadLength)
+       << ",\"jpeg_dimensions\":";
+    if (content->jpegDimensions.has_value()) {
+        os << "{\"width\":"
+           << jsonUInt(content->jpegDimensions->width)
+           << ",\"height\":"
+           << jsonUInt(content->jpegDimensions->height) << "}";
+    } else {
+        os << "null";
+    }
+    os << ",\"evidence\":[";
+    for (std::size_t i = 0; i < content->evidence.size(); ++i) {
+        if (i != 0U) {
+            os << ',';
+        }
+        os << jsonString(toString(content->evidence[i]));
+    }
+    os << "],\"semantic_metadata\":";
+    writeZaloSemanticJson(os, content->semanticMetadata);
+    os << "}";
+}
+
+void writeZaloHumanIdentityJson(std::ostream& os,
+                                const std::optional<ZaloHumanIdentity>& identity)
+{
+    if (!identity.has_value()) {
+        os << "null";
+        return;
+    }
+    os << "{\"display_name\":" << jsonString(identity->displayName)
+       << ",\"display_title\":";
+    if (identity->displayTitle.has_value()) {
+        os << jsonString(*identity->displayTitle);
+    } else {
+        os << "null";
+    }
+    os << ",\"content_summary\":" << jsonString(identity->contentSummary)
+       << ",\"text_preview\":";
+    if (identity->textPreview.has_value()) {
+        os << jsonString(*identity->textPreview);
+    } else {
+        os << "null";
+    }
+    os << ",\"preview_kind\":" << jsonString(toString(identity->previewKind))
+       << ",\"preview_available\":" << jsonBool(identity->previewAvailable)
+       << ",\"preview_reference\":"
+       << (identity->previewReference.empty()
+               ? "null"
+               : jsonString(identity->previewReference));
+    os << ",\"identity_source\":" << jsonString(toString(identity->identitySource))
+       << ",\"image_width\":";
+    if (identity->imageWidth.has_value()) {
+        os << jsonUInt(*identity->imageWidth);
+    } else {
+        os << "null";
+    }
+    os << ",\"image_height\":";
+    if (identity->imageHeight.has_value()) {
+        os << jsonUInt(*identity->imageHeight);
+    } else {
+        os << "null";
+    }
+    os << ",\"video_duration_ms\":";
+    if (identity->videoDurationMs.has_value()) {
+        os << jsonUInt(*identity->videoDurationMs);
+    } else {
+        os << "null";
+    }
+    os << ",\"video_width\":";
+    if (identity->videoWidth.has_value()) {
+        os << jsonUInt(*identity->videoWidth);
+    } else {
+        os << "null";
+    }
+    os << ",\"video_height\":";
+    if (identity->videoHeight.has_value()) {
+        os << jsonUInt(*identity->videoHeight);
+    } else {
+        os << "null";
+    }
+    os << ",\"video_codec\":";
+    if (identity->videoCodec.has_value()) {
+        os << jsonString(*identity->videoCodec);
+    } else {
+        os << "null";
+    }
+    os << ",\"document_page_count\":";
+    if (identity->documentPageCount.has_value()) {
+        os << jsonUInt(*identity->documentPageCount);
+    } else {
+        os << "null";
+    }
+    os << "}";
+}
+
+void writeZaloEntryJson(std::ostream& os, const ZaloEntry& entry)
+{
+    os << "{\"entry_id\":" << jsonString(entry.entryId)
+       << ",\"category_alias\":" << jsonString(entry.categoryAlias)
+       << ",\"kind\":" << jsonString(toString(entry.kind))
+       << ",\"logical_bytes\":" << jsonUInt(entry.logicalBytes)
+       << ",\"allocated_bytes\":";
+    writeNullableBytes(os, entry.allocatedBytes);
+    os << ",\"allocation_known\":" << jsonBool(entry.allocationKnown)
+       << ",\"reparse_point\":" << jsonBool(entry.reparsePoint)
+       << ",\"content_skipped\":" << jsonBool(entry.contentSkipped)
+       << ",\"identity_known\":" << jsonBool(entry.identityKnown)
+       << ",\"hard_link_alias\":" << jsonBool(entry.hardLinkAlias)
+       << ",\"filesystem_link_count\":"
+       << jsonUInt(entry.filesystemLinkCount)
+       << ",\"observed_path_count\":"
+       << jsonUInt(entry.observedPathCount)
+       << ",\"single_path_release_bytes\":";
+    writeNullableBytes(os, entry.singlePathReleaseBytes);
+    os << ",\"all_observed_path_release_bytes\":";
+    writeNullableBytes(os, entry.allObservedPathReleaseBytes);
+    os << ",\"last_write_ticks\":" << jsonUInt(entry.lastWriteTicks)
+       << ",\"consistency\":"
+       << jsonString(toString(entry.consistency))
+       << ",\"content_identification\":";
+    writeZaloContentJson(os, entry.contentIdentification);
+    os << ",\"human_identity\":";
+    writeZaloHumanIdentityJson(os, entry.humanIdentity);
+    os << "}";
+}
+
+void writeZaloItemJson(std::ostream& os, const ZaloItemRef& item)
+{
+    os << "{\"root_alias\":" << jsonString(item.first->rootAlias)
+       << ",\"account_alias\":" << jsonString(item.first->accountAlias)
+       << ",\"entry\":";
+    writeZaloEntryJson(os, *item.second);
+    os << "}";
+}
+
+void writeZaloJson(std::ostream& os, const ParsedArgs& args,
+                   const ZaloStorageReport& report,
+                   const std::vector<ZaloItemRef>& selected)
+{
+    const bool ok = zaloStatusOk(report.status);
+    os << "{\"schema_version\":1,\"ok\":" << jsonBool(ok)
+       << ",\"command\":"
+       << jsonString(args.command == Command::AppStorageZaloItems
+                         ? "app-storage zalo items"
+                         : "app-storage zalo")
+       << ",\"provider\":\"zalo\",\"state\":"
+       << jsonString(toString(report.status))
+       << ",\"source\":\"live_scan\",\"read_only\":true"
+       << ",\"filesystem_mutation\":false,\"detail\":"
+       << jsonString(report.detail) << ",\"discovery\":{\"status\":"
+       << jsonString(toString(report.discovery.status))
+       << ",\"rejected_root_count\":"
+       << jsonUInt(report.discovery.rejectedRootCount) << ",\"roots\":[";
+    for (std::size_t i = 0; i < report.discovery.roots.size(); ++i) {
+        if (i != 0U) {
+            os << ',';
+        }
+        const auto& root = report.discovery.roots[i];
+        os << "{\"root_alias\":" << jsonString(root.rootAlias)
+           << ",\"account_aliases\":[";
+        for (std::size_t j = 0; j < root.accountAliases.size(); ++j) {
+            if (j != 0U) {
+                os << ',';
+            }
+            os << jsonString(root.accountAliases[j]);
+        }
+        os << "]}";
+    }
+    os << "]},\"summary\":";
+    writeZaloAccountingJson(os, report.accounting);
+    os << ",\"accounts\":[";
+    for (std::size_t i = 0; i < report.accounts.size(); ++i) {
+        if (i != 0U) {
+            os << ',';
+        }
+        const auto& account = report.accounts[i];
+        os << "{\"root_alias\":" << jsonString(account.rootAlias)
+           << ",\"account_alias\":" << jsonString(account.accountAlias)
+           << ",\"complete\":" << jsonBool(account.complete)
+           << ",\"directories_visited\":"
+           << jsonUInt(account.directoriesVisited)
+           << ",\"reparse_points_skipped\":"
+           << jsonUInt(account.reparsePointsSkipped)
+           << ",\"access_denied\":" << jsonUInt(account.accessDenied)
+           << ",\"other_errors\":" << jsonUInt(account.otherErrors)
+           << ",\"unsafe_entries_skipped\":"
+           << jsonUInt(account.unsafeEntriesSkipped)
+           << ",\"accounting\":";
+        writeZaloAccountingJson(os, account.accounting);
+        os << ",\"entry_count\":" << jsonUInt(account.entries.size())
+           << "}";
+    }
+    os << "],\"items\":[";
+    for (std::size_t i = 0; i < selected.size(); ++i) {
+        if (i != 0U) {
+            os << ',';
+        }
+        writeZaloItemJson(os, selected[i]);
+    }
+    os << "],\"comparison\":" << report.exactCopy.toJson()
+       << ",\"capabilities\":{\"read_only\":true"
+       << ",\"filesystem_mutation\":false,\"previews\":false"
+       << ",\"exact_copy_comparison\":"
+       << jsonBool(report.exactCopy.enabled) << "}}\n";
+}
+
+void printZaloHuman(const ZaloStorageReport& report,
+                    const std::vector<ZaloItemRef>& selected)
+{
+    std::cout << "Provider:              zalo\n"
+              << "State:                 " << toString(report.status) << "\n"
+              << "Read-only:             true\n"
+              << "Filesystem mutation:   false\n"
+              << "Roots:                 " << report.roots.size() << "\n"
+              << "Accounts:              " << report.accounts.size() << "\n"
+              << "Path-visible logical:  "
+              << SizeFormatter::format(report.accounting.pathVisibleLogicalBytes)
+              << "\n"
+              << "Unique logical:        "
+              << SizeFormatter::format(report.accounting.uniqueLogicalBytes)
+              << "\n"
+              << "Unique allocated:      ";
+    if (report.accounting.uniqueAllocatedBytes.has_value()) {
+        std::cout << SizeFormatter::format(*report.accounting.uniqueAllocatedBytes);
+    } else {
+        std::cout << "unknown";
+    }
+    std::cout << "\nHard-link aliases:     "
+              << SizeFormatter::format(report.accounting.hardLinkAliasBytes)
+              << "\nHard-link coverage:    "
+              << toString(report.accounting.hardLinkCoverage) << "\n"
+              << "Review items:           " << selected.size() << "\n";
+    if (report.exactCopy.enabled) {
+        std::cout << "Exact-copy comparison:  "
+                  << toString(report.exactCopy.status) << "\n"
+                  << "Comparison matches:     "
+                  << report.exactCopy.matches.size() << "\n";
+    }
+    for (const auto& item : selected) {
+        const ZaloEntry& entry = *item.second;
+        std::cout << "  " << entry.entryId << "  " << item.first->rootAlias
+                  << "/" << item.first->accountAlias << "  "
+                  << entry.categoryAlias << "  "
+                  << SizeFormatter::format(entry.logicalBytes) << "  ";
+        if (entry.humanIdentity.has_value()) {
+            std::cout << entry.humanIdentity->displayName;
+            if (!entry.humanIdentity->contentSummary.empty()) {
+                std::cout << " [" << entry.humanIdentity->contentSummary << "]";
+            }
+        } else if (entry.contentIdentification.has_value()) {
+            std::cout << toString(entry.contentIdentification->type) << "  "
+                      << toString(entry.contentIdentification->status) << "  "
+                      << toString(entry.contentIdentification->confidence);
+            if (entry.contentIdentification->semanticMetadata.has_value()) {
+                const auto& semantic = *entry.contentIdentification->semanticMetadata;
+                if (semantic.title.has_value()) {
+                    std::cout << "  title=" << *semantic.title;
+                } else if (!semantic.visibleText.empty()) {
+                    std::cout << "  text=" << semantic.visibleText.front().text;
+                }
+            }
+        } else {
+            std::cout << "unidentified";
+        }
+        std::cout << "\n";
+    }
 }
 
 }  // namespace
@@ -1404,6 +1892,41 @@ ExitCode runReclaimPlan(const ParsedArgs& args, std::stop_token stop)
         return ExitCode::Cancelled;
     }
     return report.ok ? ExitCode::Success : ExitCode::ScanFailed;
+}
+
+ExitCode runZaloStorage(const ParsedArgs& args, std::stop_token stop)
+{
+    ZaloDiscoveryOptions options;
+    options.explicitRoots = args.rootPaths;
+    options.includeDefaultRoots = args.rootPaths.empty();
+    options.comparisonPaths = args.comparePaths;
+    const ZaloStorageReport report = inspectZaloStorage(options, stop);
+    const std::vector<ZaloItemRef> selected = selectZaloItems(report, args);
+
+    if (args.json) {
+        writeZaloJson(std::cout, args, report, selected);
+    } else {
+        printZaloHuman(report, selected);
+    }
+
+    switch (report.status) {
+    case ZaloStorageStatus::Complete:
+    case ZaloStorageStatus::Partial:
+    case ZaloStorageStatus::ConfigUnavailable:
+        return ExitCode::Success;
+    case ZaloStorageStatus::Cancelled:
+        std::cerr << "zalo inspection cancelled\n";
+        return ExitCode::Cancelled;
+    case ZaloStorageStatus::NoRoots:
+    case ZaloStorageStatus::InvalidRoot:
+    case ZaloStorageStatus::AccessDenied:
+        std::cerr << "zalo root is inaccessible or unavailable\n";
+        return ExitCode::InaccessibleRoot;
+    case ZaloStorageStatus::Error:
+        std::cerr << "zalo inspection failed\n";
+        return ExitCode::ScanFailed;
+    }
+    return ExitCode::InternalError;
 }
 
 ExitCode runCapabilities(const ParsedArgs& args)

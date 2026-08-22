@@ -93,6 +93,34 @@ function Copy-ProjectLicense([string]$Destination) {
     Copy-Item $license (Join-Path $Destination "LICENSE")
 }
 
+function Copy-ThirdPartyLicenses([string]$Destination) {
+    $licenses = Join-Path $Destination "licenses"
+    $minizDir = Join-Path $licenses "miniz"
+    $pugixmlDir = Join-Path $licenses "pugixml"
+    New-Item -ItemType Directory -Force -Path $minizDir, $pugixmlDir | Out-Null
+
+    $copies = @(
+        @{
+            Source = Join-Path $root "third_party\miniz\LICENSE"
+            Destination = Join-Path $minizDir "LICENSE"
+        }
+        @{
+            Source = Join-Path $root "third_party\pugixml\LICENSE.md"
+            Destination = Join-Path $pugixmlDir "LICENSE.md"
+        }
+    )
+    foreach ($copy in $copies) {
+        if (-not (Test-Path $copy.Source)) {
+            Write-Error "third-party license is required: $($copy.Source)"
+        }
+        $text = Get-Content $copy.Source -Raw -ErrorAction SilentlyContinue
+        if (-not $text -or $text.Trim().Length -eq 0) {
+            Write-Error "third-party license is empty: $($copy.Source)"
+        }
+        Copy-Item $copy.Source $copy.Destination -Force
+    }
+}
+
 $version = Get-ProjectVersion (Join-Path $BuildDir "CMakeCache.txt")
 $cliName = "spacelens-cli-v$version-windows-x64"
 $mainName = "spacelens-v$version-windows-x64"
@@ -115,6 +143,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Copy-Item (Join-Path $root "packaging\cli\README.txt") (Join-Path $cliStage "README.txt")
 Copy-Item (Join-Path $root "packaging\cli\THIRD_PARTY_NOTICES.txt") (Join-Path $cliStage "THIRD_PARTY_NOTICES.txt")
 Copy-ProjectLicense $cliStage
+Copy-ThirdPartyLicenses $cliStage
 
 $cliExe = Join-Path $cliStage "spacelens.exe"
 $cliMcp = Join-Path $cliStage "spacelens-mcp.exe"
@@ -140,6 +169,7 @@ Copy-Item (Join-Path $root "packaging\gui\licenses\*") $mainLicenses -Force
 Copy-Item (Join-Path $root "packaging\qt-source\SOURCE_IDENTITY.txt") (Join-Path $mainLicenses "QT_SOURCE_IDENTITY.txt")
 Copy-Item (Join-Path $root "docs\QT_SOURCE_OFFER.md") (Join-Path $mainLicenses "QT_SOURCE_OFFER.md")
 Copy-ProjectLicense $mainStage
+Copy-ThirdPartyLicenses $mainStage
 
 $guiExe = Join-Path $mainStage "spacelens-gui.exe"
 $mainCliExe = Join-Path $mainStage "spacelens.exe"

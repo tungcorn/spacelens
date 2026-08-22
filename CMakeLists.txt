@@ -56,12 +56,65 @@ if(MSVC)
 endif()
 
 # ---------------------------------------------------------------------------
+# Offline static parser dependencies — no stdio or filesystem APIs
+# ---------------------------------------------------------------------------
+add_library(spacelens_miniz STATIC
+    third_party/miniz/miniz.c
+    third_party/miniz/miniz.h
+    third_party/miniz/miniz_common.h
+    third_party/miniz/miniz_export.h
+    third_party/miniz/miniz_tdef.c
+    third_party/miniz/miniz_tdef.h
+    third_party/miniz/miniz_tinfl.c
+    third_party/miniz/miniz_tinfl.h
+    third_party/miniz/miniz_zip.c
+    third_party/miniz/miniz_zip.h
+)
+set_target_properties(spacelens_miniz PROPERTIES LINKER_LANGUAGE C)
+target_include_directories(spacelens_miniz
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz
+)
+target_compile_definitions(spacelens_miniz
+    PUBLIC
+        MINIZ_NO_STDIO=1
+        MINIZ_NO_TIME=1
+        MINIZ_NO_ARCHIVE_WRITING_APIS=1
+)
+if(MSVC)
+    target_compile_options(spacelens_miniz PRIVATE /W0)
+else()
+    target_compile_options(spacelens_miniz PRIVATE -w)
+endif()
+
+add_library(spacelens_pugixml STATIC
+    third_party/pugixml/src/pugiconfig.hpp
+    third_party/pugixml/src/pugixml.cpp
+    third_party/pugixml/src/pugixml.hpp
+)
+target_include_directories(spacelens_pugixml
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pugixml/src
+)
+target_compile_definitions(spacelens_pugixml
+    PUBLIC
+        PUGIXML_NO_XPATH=1
+)
+if(MSVC)
+    target_compile_options(spacelens_pugixml PRIVATE /W0)
+else()
+    target_compile_options(spacelens_pugixml PRIVATE -w)
+endif()
+
+# ---------------------------------------------------------------------------
 # Core library — no Qt
 # ---------------------------------------------------------------------------
 add_library(spacelens_core STATIC
     src/core/Types.hpp
     src/core/Json.hpp
     src/core/Json.cpp
+    src/core/JsonValue.hpp
+    src/core/JsonValue.cpp
     src/core/SizeFormatter.hpp
     src/core/SizeFormatter.cpp
     src/core/SizeParse.hpp
@@ -111,6 +164,10 @@ add_library(spacelens_core STATIC
     src/core/StorageIntelligence.cpp
     src/core/StorageAnalysis.hpp
     src/core/StorageAnalysis.cpp
+    src/core/ZaloStorageInspector.hpp
+    src/core/ZaloStorageInspector.cpp
+    src/core/ZaloContentIdentifier.hpp
+    src/core/ZaloContentIdentifier.cpp
     src/core/index/Sqlite.hpp
     src/core/index/Sqlite.cpp
     src/core/index/IndexPaths.hpp
@@ -144,6 +201,8 @@ add_library(spacelens_core STATIC
     src/platform/windows/LocationVolume.cpp
     src/platform/windows/FileIdentity.hpp
     src/platform/windows/FileIdentity.cpp
+    src/platform/windows/ReadOnlyPayload.hpp
+    src/platform/windows/ReadOnlyPayload.cpp
     src/platform/windows/SafeProcess.hpp
     src/platform/windows/SafeProcess.cpp
     src/platform/windows/CleanupMetadataReader.hpp
@@ -168,7 +227,13 @@ target_compile_definitions(spacelens_core
         SPACELENS_VERSION_STRING="${PROJECT_VERSION}"
 )
 
-target_link_libraries(spacelens_core PUBLIC spacelens_sqlite)
+target_link_libraries(spacelens_core
+    PUBLIC
+        spacelens_sqlite
+    PRIVATE
+        spacelens_miniz
+        spacelens_pugixml
+)
 
 if(WIN32)
     target_link_libraries(spacelens_core PUBLIC shell32 ole32 bcrypt)
@@ -238,7 +303,6 @@ if(SPACELENS_BUILD_MCP)
     add_executable(spacelens-mcp
         src/mcp/main.cpp
         src/mcp/JsonValue.hpp
-        src/mcp/JsonValue.cpp
         src/mcp/Protocol.hpp
         src/mcp/Protocol.cpp
         src/mcp/StorageTools.hpp
@@ -281,10 +345,16 @@ if(SPACELENS_BUILD_GUI)
         src/app/DuplicateDetectionSession.cpp
         src/app/MaintenanceSession.hpp
         src/app/MaintenanceSession.cpp
+        src/app/ZaloStorageSession.hpp
+        src/app/ZaloStorageSession.cpp
+        src/app/ZaloPreviewProvider.hpp
+        src/app/ZaloPreviewProvider.cpp
         src/ui/MainWindow.hpp
         src/ui/MainWindow.cpp
         src/ui/IndexBrowserPage.hpp
         src/ui/IndexBrowserPage.cpp
+        src/ui/ZaloStorageReviewPage.hpp
+        src/ui/ZaloStorageReviewPage.cpp
         src/ui/TreemapWidget.hpp
         src/ui/TreemapWidget.cpp
         src/ui/CleanupReviewDialog.hpp

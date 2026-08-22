@@ -30,6 +30,7 @@ class QToolButton;
 namespace spacelens {
 
 class IndexBrowserPage;
+class ZaloStorageReviewPage;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -63,6 +64,8 @@ private slots:
     void onOrdinaryLocations();
     void onLiveWorkspace();
     void onIndexedWorkspace();
+    void onZaloWorkspace();
+    void onZaloStatusMessage(const QString& message);
 
 private:
     enum class RowKind { Directory, File };
@@ -114,7 +117,9 @@ private:
     QStackedWidget* m_pages = nullptr;
     QPushButton* m_navLive = nullptr;
     QPushButton* m_navIndexed = nullptr;
+    QPushButton* m_navZalo = nullptr;
     IndexBrowserPage* m_indexPage = nullptr;
+    ZaloStorageReviewPage* m_zaloPage = nullptr;
 
     QLineEdit* m_pathEdit = nullptr;
     QPushButton* m_selectButton = nullptr;

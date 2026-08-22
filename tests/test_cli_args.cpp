@@ -176,6 +176,51 @@ SPACELENS_TEST(CliArgs_max_index_age_seconds)
     SPACELENS_REQUIRE(!fresh.error.empty());
 }
 
+SPACELENS_TEST(CliArgs_app_storage_zalo_grammar)
+{
+    auto overview = parse({L"spacelens", L"app-storage", L"zalo", L"--json"});
+    SPACELENS_REQUIRE(overview.error.empty());
+    SPACELENS_REQUIRE(overview.command == Command::AppStorageZalo);
+    SPACELENS_REQUIRE(overview.rootPaths.empty());
+    SPACELENS_REQUIRE(overview.json);
+
+    auto items = parse({L"spacelens", L"app-storage", L"zalo", L"items",
+                        L"--root", L"C:\\ZaloDownloads", L"--largest", L"7",
+                        L"--type", L"Document", L"--min-size", L"10MB",
+                        L"--json"});
+    SPACELENS_REQUIRE(items.error.empty());
+    SPACELENS_REQUIRE(items.command == Command::AppStorageZaloItems);
+    SPACELENS_REQUIRE_EQ(items.rootPaths.size(), 1U);
+    SPACELENS_REQUIRE(items.rootPaths.front() == L"C:\\ZaloDownloads");
+    SPACELENS_REQUIRE_EQ(items.limit, 7ULL);
+    SPACELENS_REQUIRE_EQ(items.storageType, "document");
+    SPACELENS_REQUIRE(items.minSize.has_value());
+    SPACELENS_REQUIRE_EQ(*items.minSize, 10ULL * 1024ULL * 1024ULL);
+
+    auto comparison = parse({L"spacelens", L"app-storage", L"zalo", L"items",
+                              L"--root", L"C:\\ZaloDownloads", L"--compare",
+                              L"C:\\Downloads", L"--compare", L"D:\\Documents"});
+    SPACELENS_REQUIRE(comparison.error.empty());
+    SPACELENS_REQUIRE_EQ(comparison.comparePaths.size(), 2U);
+    SPACELENS_REQUIRE(comparison.comparePaths[0] == L"C:\\Downloads");
+    SPACELENS_REQUIRE(comparison.comparePaths[1] == L"D:\\Documents");
+
+    auto comparisonBadCommand = parse({L"spacelens", L"app-storage", L"zalo",
+                                       L"--compare", L"C:\\Downloads"});
+    SPACELENS_REQUIRE(!comparisonBadCommand.error.empty());
+
+    auto unknown = parse({L"spacelens", L"app-storage", L"zalo", L"items",
+                          L"--unknown"});
+    SPACELENS_REQUIRE(unknown.error.empty());
+    SPACELENS_REQUIRE(unknown.unknown);
+
+    auto badPath = parse({L"spacelens", L"app-storage", L"zalo",
+                          L"C:\\ZaloDownloads"});
+    SPACELENS_REQUIRE(!badPath.error.empty());
+    auto badOption = parse({L"spacelens", L"app-storage", L"zalo", L"--delete"});
+    SPACELENS_REQUIRE(!badOption.error.empty());
+}
+
 SPACELENS_TEST(CliArgs_reclaim_plan)
 {
     auto a = parse({L"spacelens", L"reclaim-plan", L"D:\\data", L"--json"});

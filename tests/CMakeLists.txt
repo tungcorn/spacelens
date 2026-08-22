@@ -19,6 +19,9 @@ set(SPACELENS_TEST_SOURCES
     test_hash_cache.cpp
     test_reclaim.cpp
     test_physical_storage.cpp
+    test_read_only_payload.cpp
+    test_zalo_content.cpp
+    test_zalo_storage.cpp
     test_reclaim_providers.cpp
     test_reclaim_intelligence.cpp
     test_index.cpp
@@ -37,7 +40,6 @@ set(SPACELENS_TEST_SOURCES
     test_mcp_json.cpp
     test_mcp_protocol.cpp
     TestRunner.hpp
-    ${CMAKE_SOURCE_DIR}/src/mcp/JsonValue.cpp
     ${CMAKE_SOURCE_DIR}/src/mcp/Protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/mcp/StorageTools.cpp
     FakeFileEnumerator.hpp
@@ -59,6 +61,7 @@ add_executable(spacelens_tests ${SPACELENS_TEST_SOURCES})
 target_link_libraries(spacelens_tests
     PRIVATE
         spacelens_core
+        spacelens_miniz
 )
 
 target_include_directories(spacelens_tests

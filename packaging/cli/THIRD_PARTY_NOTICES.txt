@@ -34,6 +34,31 @@ a legal notice, sqlite3.h records this blessing:
 That blessing is SQLite's notice. It is not a SpaceLens project
 license and has no relationship to Qt.
 
+miniz 3.1.2
+-----------
+Statically linked from the vendored miniz 3.1.2 source. SpaceLens uses
+miniz for bounded, read-only ZIP structure, decompression, and CRC
+validation through in-memory/random-access callbacks. The build uses
+MINIZ_NO_STDIO=1, MINIZ_NO_TIME=1, and
+MINIZ_NO_ARCHIVE_WRITING_APIS=1. No miniz executable or runtime DLL is
+shipped.
+
+Upstream: https://github.com/richgel999/miniz
+Copyright 2013-2014 RAD Game Tools and Valve Software
+Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
+The verbatim MIT license text is in licenses\miniz\LICENSE.
+
+pugixml 1.16
+------------
+Statically linked from the vendored pugixml 1.16 source. SpaceLens uses
+pugixml for size-, depth-, and node-bounded in-memory OOXML validation.
+The build uses PUGIXML_NO_XPATH=1. No pugixml executable or runtime DLL
+is shipped.
+
+Upstream: https://github.com/zeux/pugixml
+Copyright (c) 2006-2026 Arseny Kapoulkine
+The verbatim MIT license text is in licenses\pugixml\LICENSE.md.
+
 Microsoft Visual C++ runtime
 ----------------------------
 Not shipped. Install the official Microsoft Visual C++

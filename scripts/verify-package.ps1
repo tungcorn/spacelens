@@ -40,6 +40,21 @@ function Test-RequiredFile([string]$Root, [string]$Rel) {
     return Get-Item $path
 }
 
+function Test-LicenseFile([string]$Root, [string]$Rel, [string[]]$Markers) {
+    $file = Test-RequiredFile $Root $Rel
+    if (-not $file) { return }
+    $text = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        Add-Fail "$Rel is empty"
+        return
+    }
+    foreach ($marker in $Markers) {
+        if ($text -notmatch [regex]::Escape($marker)) {
+            Add-Fail "$Rel missing expected text: $marker"
+        }
+    }
+}
+
 function Test-ForbiddenName([string]$Root, [string[]]$Names) {
     if (-not (Test-Path $Root)) { return }
     Get-ChildItem $Root -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {
@@ -87,6 +102,16 @@ if ($CliStage) {
         Test-RequiredFile $cliRoot "spacelens-mcp.exe" | Out-Null
         Test-RequiredFile $cliRoot "README.txt" | Out-Null
         Test-RequiredFile $cliRoot "THIRD_PARTY_NOTICES.txt" | Out-Null
+        Test-LicenseFile $cliRoot "licenses\miniz\LICENSE" @(
+            "All Rights Reserved"
+            "Permission is hereby granted"
+            "Rich Geldreich and Tenacious Software LLC"
+        )
+        Test-LicenseFile $cliRoot "licenses\pugixml\LICENSE.md" @(
+            "MIT License"
+            "Arseny Kapoulkine"
+            "Permission is hereby granted"
+        )
         $cliLicense = Test-RequiredFile $cliRoot "LICENSE"
         if ($cliLicense -and [string]::IsNullOrWhiteSpace((Get-Content $cliLicense.FullName -Raw -ErrorAction SilentlyContinue))) {
             Add-Fail "CLI LICENSE is empty"
@@ -134,6 +159,16 @@ if ($MainStage) {
         Test-RequiredFile $guiRoot "spacelens-mcp.exe" | Out-Null
         Test-RequiredFile $guiRoot "README.txt" | Out-Null
         Test-RequiredFile $guiRoot "THIRD_PARTY_NOTICES.txt" | Out-Null
+        Test-LicenseFile $guiRoot "licenses\miniz\LICENSE" @(
+            "All Rights Reserved"
+            "Permission is hereby granted"
+            "Rich Geldreich and Tenacious Software LLC"
+        )
+        Test-LicenseFile $guiRoot "licenses\pugixml\LICENSE.md" @(
+            "MIT License"
+            "Arseny Kapoulkine"
+            "Permission is hereby granted"
+        )
         Test-RequiredFile $guiRoot "platforms\qwindows.dll" | Out-Null
         Test-RequiredFile $guiRoot "Qt6Core.dll" | Out-Null
         Test-RequiredFile $guiRoot "Qt6Gui.dll" | Out-Null

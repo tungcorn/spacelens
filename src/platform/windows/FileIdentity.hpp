@@ -2,6 +2,7 @@
 
 #include "core/Types.hpp"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -10,27 +11,53 @@
 namespace spacelens {
 
 /// NTFS file reference number (64-bit, from BY_HANDLE_FILE_INFORMATION).
-/// Physical allocation comes from FILE_STANDARD_INFO on the same handle.
-/// allocatedBytes is unset when the filesystem/API cannot determine it;
-/// callers must never substitute logical sizeBytes.
+/// For regular files, allocatedBytes is the bounded FileStreamInfo sum across
+/// the unnamed and named data streams. It is unset when complete enumeration
+/// cannot be proved; callers must never substitute logical sizeBytes. Directory
+/// allocation remains the same-handle FILE_STANDARD_INFO value.
 struct FileIdentity {
+    /// The 64-bit reference is a fallback only. Prefer fileId128 when known.
     std::uint64_t fileId = 0;
     std::uint64_t volumeSerial = 0;
+    std::array<std::uint8_t, 16> fileId128{};
+    bool fileId128Known = false;
+    bool fileIndex64Known = false;
+    bool identityKnown = false;
     bool isDirectory = false;
     ByteSize sizeBytes = 0;
+    bool logicalSizeKnown = false;
     std::optional<ByteSize> allocatedBytes;
     bool allocationKnown = false;
     std::uint32_t numberOfLinks = 0;
+    bool linkCountKnown = false;
     bool sparse = false;
     bool compressed = false;
+    std::uint64_t creationTimeTicks = 0;
+    std::uint64_t changeTimeTicks = 0;
     std::uint64_t lastWriteTicks = 0;
     std::uint64_t lastAccessTicks = 0;
+    bool basicMetadataKnown = false;
     std::uint32_t attributes = 0;
+    bool observationConsistent = true;
 };
 
-/// Open path read-only (backup semantics for directories) and read identity,
-/// allocation, and link count from one handle. Returns nullopt on access
-/// denied / not found / failure.
+/// Read identity, logical size, allocation, link count, attributes, and
+/// timestamps from one already-open no-follow handle. The handle remains owned
+/// by the caller. Returns nullopt when the handle cannot provide the basic
+/// identity observation.
+[[nodiscard]] std::optional<FileIdentity> queryFileIdentityFromHandle(
+    void* handle);
+
+/// Read only same-handle identity and stable metadata without enumerating named
+/// streams or allocating a stream-information buffer. Regular-file allocation
+/// is intentionally left unknown; callers must use queryFileIdentityFromHandle
+/// when complete physical allocation evidence is required.
+[[nodiscard]] std::optional<FileIdentity>
+queryFileIdentityFromHandleLightweight(void* handle);
+
+/// Open a path read-only (backup semantics for directories) and read all
+/// identity/accounting evidence from that one no-follow handle. Returns nullopt
+/// on access denied / not found / failure.
 [[nodiscard]] std::optional<FileIdentity> queryFileIdentity(
     const std::wstring& path);
 

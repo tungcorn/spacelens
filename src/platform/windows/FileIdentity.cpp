@@ -10,7 +10,10 @@
 #endif
 #include <Windows.h>
 
+#include <cstddef>
 #include <cwctype>
+#include <cstring>
+#include <limits>
 #include <vector>
 
 namespace spacelens {
@@ -138,6 +141,297 @@ std::wstring rebasePathOntoRoot(const std::wstring& path, const std::wstring& ro
     return normalizePathForPolicy(path);
 }
 
+namespace {
+
+bool isZeroFileId(const FILE_ID_128& id) noexcept
+{
+    for (const unsigned char byte : id.Identifier) {
+        if (byte != 0U) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool fileTimesEqual(const FILETIME& left, const FILETIME& right) noexcept
+{
+    return left.dwLowDateTime == right.dwLowDateTime &&
+           left.dwHighDateTime == right.dwHighDateTime;
+}
+
+struct FileStreamAllocation {
+    ByteSize total = 0;
+    ByteSize unnamed = 0;
+    bool unnamedKnown = false;
+};
+
+constexpr std::size_t kInitialFileStreamInfoBufferBytes = 4U * 1024U;
+constexpr std::size_t kMaximumFileStreamInfoBufferBytes = 4U * 1024U * 1024U;
+constexpr std::size_t kMaximumFileStreamInfoRecords = 131072U;
+
+std::optional<FileStreamAllocation> enumerateFileStreamAllocation(HANDLE handle)
+{
+    constexpr std::size_t headerBytes = offsetof(FILE_STREAM_INFO, StreamName);
+    std::array<std::uint8_t, kInitialFileStreamInfoBufferBytes> stackBuffer;
+    std::vector<std::uint8_t> dynamicBuffer;
+    std::uint8_t* buffer = stackBuffer.data();
+    std::size_t bufferSize = stackBuffer.size();
+
+    for (;;) {
+        if (::GetFileInformationByHandleEx(
+                handle, FileStreamInfo, buffer,
+                static_cast<DWORD>(bufferSize)) != FALSE) {
+            break;
+        }
+
+        const DWORD error = ::GetLastError();
+        if (error != ERROR_MORE_DATA && error != ERROR_INSUFFICIENT_BUFFER &&
+            error != ERROR_BUFFER_OVERFLOW) {
+            return std::nullopt;
+        }
+        if (bufferSize >= kMaximumFileStreamInfoBufferBytes) {
+            return std::nullopt;
+        }
+        const std::size_t nextSize =
+            bufferSize > kMaximumFileStreamInfoBufferBytes / 2U
+                ? kMaximumFileStreamInfoBufferBytes
+                : bufferSize * 2U;
+        if (nextSize <= bufferSize ||
+            nextSize > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
+            return std::nullopt;
+        }
+        dynamicBuffer.resize(nextSize);
+        buffer = dynamicBuffer.data();
+        bufferSize = dynamicBuffer.size();
+    }
+
+    FileStreamAllocation result;
+    std::size_t offset = 0;
+    std::size_t recordCount = 0;
+    for (;;) {
+        if (offset > bufferSize || bufferSize - offset < headerBytes ||
+            ++recordCount > kMaximumFileStreamInfoRecords) {
+            return std::nullopt;
+        }
+
+        FILE_STREAM_INFO info{};
+        std::memcpy(&info, buffer + offset, headerBytes);
+        const std::size_t remaining = bufferSize - offset;
+        const std::size_t nameBytes =
+            static_cast<std::size_t>(info.StreamNameLength);
+        if (nameBytes == 0 || nameBytes % sizeof(wchar_t) != 0 ||
+            nameBytes > remaining - headerBytes) {
+            return std::nullopt;
+        }
+
+        std::size_t recordBytes = remaining;
+        if (info.NextEntryOffset != 0) {
+            const std::size_t nextOffset =
+                static_cast<std::size_t>(info.NextEntryOffset);
+            if (nextOffset < headerBytes || nextOffset > remaining ||
+                nextOffset % alignof(FILE_STREAM_INFO) != 0 ||
+                nameBytes > nextOffset - headerBytes) {
+                return std::nullopt;
+            }
+            recordBytes = nextOffset;
+        }
+        if (nameBytes > recordBytes - headerBytes ||
+            info.StreamAllocationSize.QuadPart < 0 ||
+            info.StreamSize.QuadPart < 0) {
+            return std::nullopt;
+        }
+
+        std::wstring streamName(nameBytes / sizeof(wchar_t), L'\0');
+        std::memcpy(streamName.data(), buffer + offset + headerBytes, nameBytes);
+        for (const wchar_t ch : streamName) {
+            if (ch == L'\0') {
+                return std::nullopt;
+            }
+        }
+
+        const ByteSize allocation = static_cast<ByteSize>(
+            info.StreamAllocationSize.QuadPart);
+        if (allocation > std::numeric_limits<ByteSize>::max() - result.total) {
+            return std::nullopt;
+        }
+        result.total += allocation;
+        if (streamName == L"::$DATA") {
+            if (result.unnamedKnown) {
+                return std::nullopt;
+            }
+            result.unnamed = allocation;
+            result.unnamedKnown = true;
+        }
+
+        if (info.NextEntryOffset == 0) {
+            return result.unnamedKnown ? std::optional<FileStreamAllocation>(result)
+                                       : std::nullopt;
+        }
+        offset += static_cast<std::size_t>(info.NextEntryOffset);
+    }
+}
+
+}  // namespace
+
+namespace {
+
+std::optional<FileIdentity> queryFileIdentityFromHandleImpl(
+    void* rawHandle, bool includeAllocation)
+{
+    const HANDLE h = static_cast<HANDLE>(rawHandle);
+    if (h == nullptr || h == INVALID_HANDLE_VALUE) {
+        return std::nullopt;
+    }
+
+    BY_HANDLE_FILE_INFORMATION byHandle{};
+    if (::GetFileInformationByHandle(h, &byHandle) == FALSE) {
+        return std::nullopt;
+    }
+
+    FILE_STANDARD_INFO standard{};
+    const bool haveStandard =
+        ::GetFileInformationByHandleEx(h, FileStandardInfo, &standard,
+                                       sizeof(standard)) != 0;
+    FILE_BASIC_INFO basic{};
+    const bool haveBasic =
+        ::GetFileInformationByHandleEx(h, FileBasicInfo, &basic,
+                                       sizeof(basic)) != 0;
+    FILE_ID_INFO idInfo{};
+    const bool haveFileIdInfo =
+        ::GetFileInformationByHandleEx(h, FileIdInfo, &idInfo,
+                                       sizeof(idInfo)) != 0;
+
+    FileIdentity id;
+    ULARGE_INTEGER fileIndex;
+    fileIndex.HighPart = byHandle.nFileIndexHigh;
+    fileIndex.LowPart = byHandle.nFileIndexLow;
+    id.fileId = fileIndex.QuadPart;
+    id.volumeSerial = byHandle.dwVolumeSerialNumber;
+    id.fileIndex64Known = id.fileId != 0 && id.volumeSerial != 0;
+
+    if (haveFileIdInfo && idInfo.VolumeSerialNumber != 0 &&
+        !isZeroFileId(idInfo.FileId)) {
+        id.volumeSerial = idInfo.VolumeSerialNumber;
+        std::memcpy(id.fileId128.data(), idInfo.FileId.Identifier,
+                    id.fileId128.size());
+        id.fileId128Known = true;
+    }
+    id.identityKnown = id.fileId128Known || id.fileIndex64Known;
+
+    const bool byHandleDirectory =
+        (byHandle.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    id.isDirectory = byHandleDirectory;
+    ULARGE_INTEGER byHandleSize;
+    byHandleSize.HighPart = byHandle.nFileSizeHigh;
+    byHandleSize.LowPart = byHandle.nFileSizeLow;
+    id.sizeBytes = byHandleSize.QuadPart;
+    id.logicalSizeKnown = true;
+    id.numberOfLinks = byHandle.nNumberOfLinks;
+    id.linkCountKnown = true;
+    id.attributes = byHandle.dwFileAttributes;
+    id.sparse = (byHandle.dwFileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0;
+    id.compressed =
+        (byHandle.dwFileAttributes & FILE_ATTRIBUTE_COMPRESSED) != 0;
+    id.lastWriteTicks = fileTimeToU64(byHandle.ftLastWriteTime);
+    id.lastAccessTicks = fileTimeToU64(byHandle.ftLastAccessTime);
+
+    if (haveStandard) {
+        if (standard.EndOfFile.QuadPart >= 0) {
+            const ByteSize standardSize =
+                static_cast<ByteSize>(standard.EndOfFile.QuadPart);
+            if (standardSize != id.sizeBytes) {
+                id.observationConsistent = false;
+            }
+            id.sizeBytes = standardSize;
+            id.logicalSizeKnown = true;
+        } else {
+            id.logicalSizeKnown = false;
+        }
+        if (standard.NumberOfLinks != id.numberOfLinks) {
+            id.observationConsistent = false;
+        }
+        id.numberOfLinks = standard.NumberOfLinks;
+        id.linkCountKnown = true;
+        if ((standard.Directory != FALSE) != byHandleDirectory) {
+            id.observationConsistent = false;
+        }
+        id.isDirectory = standard.Directory != FALSE;
+    }
+
+    if (includeAllocation) {
+        if (id.isDirectory) {
+            if (haveStandard && standard.AllocationSize.QuadPart >= 0) {
+                id.allocatedBytes =
+                    static_cast<ByteSize>(standard.AllocationSize.QuadPart);
+                id.allocationKnown = true;
+            }
+        } else {
+            const auto streamAllocation = enumerateFileStreamAllocation(h);
+            if (streamAllocation.has_value()) {
+                if (haveStandard && standard.AllocationSize.QuadPart >= 0 &&
+                    streamAllocation->unnamed !=
+                        static_cast<ByteSize>(standard.AllocationSize.QuadPart)) {
+                    // FILE_STANDARD_INFO describes the unnamed stream only. A
+                    // mismatch means the two metadata snapshots cannot be used as
+                    // one deterministic observation.
+                    id.observationConsistent = false;
+                } else {
+                    id.allocatedBytes = streamAllocation->total;
+                    id.allocationKnown = true;
+                }
+            }
+        }
+    }
+
+    if (haveBasic) {
+        const std::uint32_t basicAttributes =
+            static_cast<std::uint32_t>(basic.FileAttributes);
+        const FILETIME basicLastWriteTime{
+            static_cast<DWORD>(basic.LastWriteTime.LowPart),
+            static_cast<DWORD>(basic.LastWriteTime.HighPart)};
+        const FILETIME basicLastAccessTime{
+            static_cast<DWORD>(basic.LastAccessTime.LowPart),
+            static_cast<DWORD>(basic.LastAccessTime.HighPart)};
+        if (basicAttributes != id.attributes ||
+            !fileTimesEqual(basicLastWriteTime, byHandle.ftLastWriteTime)) {
+            id.observationConsistent = false;
+        }
+        // Last-access time is lazy filesystem metadata and may advance merely
+        // because this read-only handle was opened. A difference between the
+        // two same-handle queries is therefore not evidence that file content,
+        // identity, or namespace state changed.
+        id.attributes = basicAttributes;
+        id.sparse = (basicAttributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0;
+        id.compressed =
+            (basicAttributes & FILE_ATTRIBUTE_COMPRESSED) != 0;
+        id.creationTimeTicks =
+            static_cast<std::uint64_t>(basic.CreationTime.QuadPart);
+        id.changeTimeTicks =
+            static_cast<std::uint64_t>(basic.ChangeTime.QuadPart);
+        id.lastWriteTicks = static_cast<std::uint64_t>(basic.LastWriteTime.QuadPart);
+        id.basicMetadataKnown = true;
+        if (fileTimesEqual(basicLastAccessTime, byHandle.ftLastAccessTime)) {
+            id.lastAccessTicks =
+                static_cast<std::uint64_t>(basic.LastAccessTime.QuadPart);
+        }
+        id.isDirectory = (basicAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    }
+
+    return id;
+}
+
+}  // namespace
+
+std::optional<FileIdentity> queryFileIdentityFromHandle(void* rawHandle)
+{
+    return queryFileIdentityFromHandleImpl(rawHandle, true);
+}
+
+std::optional<FileIdentity> queryFileIdentityFromHandleLightweight(void* rawHandle)
+{
+    return queryFileIdentityFromHandleImpl(rawHandle, false);
+}
+
 std::optional<FileIdentity> queryFileIdentity(const std::wstring& path)
 {
     if (path.empty()) {
@@ -152,58 +446,9 @@ std::optional<FileIdentity> queryFileIdentity(const std::wstring& path)
     if (h == INVALID_HANDLE_VALUE) {
         return std::nullopt;
     }
-
-    BY_HANDLE_FILE_INFORMATION info{};
-    const BOOL ok = ::GetFileInformationByHandle(h, &info);
-
-    FILE_STANDARD_INFO standard{};
-    const BOOL haveStandard =
-        ::GetFileInformationByHandleEx(h, FileStandardInfo, &standard,
-                                       sizeof(standard)) != 0;
-
-    FILE_ID_INFO idInfo{};
-    const BOOL haveFileIdInfo =
-        ::GetFileInformationByHandleEx(h, FileIdInfo, &idInfo,
-                                       sizeof(idInfo)) != 0;
+    const auto result = queryFileIdentityFromHandle(h);
     ::CloseHandle(h);
-    if (!ok) {
-        return std::nullopt;
-    }
-
-    FileIdentity id;
-    ULARGE_INTEGER idx;
-    idx.HighPart = info.nFileIndexHigh;
-    idx.LowPart = info.nFileIndexLow;
-    id.fileId = idx.QuadPart;
-    id.volumeSerial = info.dwVolumeSerialNumber;
-    if (haveFileIdInfo && idInfo.VolumeSerialNumber != 0) {
-        id.volumeSerial = idInfo.VolumeSerialNumber;
-    }
-    id.isDirectory = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-    ULARGE_INTEGER sz;
-    sz.HighPart = info.nFileSizeHigh;
-    sz.LowPart = info.nFileSizeLow;
-    id.sizeBytes = sz.QuadPart;
-    id.numberOfLinks = info.nNumberOfLinks;
-    id.attributes = info.dwFileAttributes;
-    id.sparse = (info.dwFileAttributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0;
-    id.compressed = (info.dwFileAttributes & FILE_ATTRIBUTE_COMPRESSED) != 0;
-    if (haveStandard) {
-        if (standard.AllocationSize.QuadPart >= 0) {
-            id.allocatedBytes =
-                static_cast<ByteSize>(standard.AllocationSize.QuadPart);
-            id.allocationKnown = true;
-        }
-        if (standard.NumberOfLinks > 0) {
-            id.numberOfLinks = standard.NumberOfLinks;
-        }
-        if (standard.Directory != FALSE) {
-            id.isDirectory = true;
-        }
-    }
-    id.lastWriteTicks = fileTimeToU64(info.ftLastWriteTime);
-    id.lastAccessTicks = fileTimeToU64(info.ftLastAccessTime);
-    return id;
+    return result;
 }
 
 std::wstring pathFromFileId(void* volumeHandle, std::uint64_t fileReferenceNumber)

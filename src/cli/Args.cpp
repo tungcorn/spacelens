@@ -58,11 +58,36 @@ std::wstring normalizeExtension(std::wstring value)
     return value;
 }
 
+std::optional<std::string> normalizeStorageType(const wchar_t* text)
+{
+    if (text == nullptr || text[0] == L'\0') {
+        return std::nullopt;
+    }
+    std::string value;
+    for (const wchar_t ch : std::wstring_view(text)) {
+        if (ch < 0 || ch >= 128) {
+            return std::nullopt;
+        }
+        value.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    return value;
+}
+
+bool isAppStorageCommand(Command c)
+{
+    return c == Command::AppStorageZalo || c == Command::AppStorageZaloItems;
+}
+
+bool isAppStorageItemsCommand(Command c)
+{
+    return c == Command::AppStorageZaloItems;
+}
+
 bool isFilterCommand(Command c)
 {
     return c == Command::Top || c == Command::Find || c == Command::Query ||
            c == Command::Duplicates || c == Command::Opportunities ||
-           c == Command::Overview;
+           c == Command::Overview || isAppStorageItemsCommand(c);
 }
 
 }  // namespace
@@ -87,6 +112,9 @@ std::string helpText()
         "  spacelens reclaim-plan <path> [--source auto|persistent_index|live_scan]\n"
         "                 [--target-free S] [--limit N] [--max-index-age-seconds N] [--json]\n"
         "  spacelens duplicates <path> [--min-size S] [--json]\n"
+        "  spacelens app-storage zalo [--root PATH ...] [--json]\n"
+        "  spacelens app-storage zalo items [--root PATH ...] [--compare PATH ...]\n"
+        "                 [--largest N] [--type TYPE | --unknown] [--min-size S] [--json]\n"
         "  spacelens capabilities [--json]\n"
         "  spacelens help\n"
         "  spacelens version\n"
@@ -98,6 +126,13 @@ std::string helpText()
         "  --classification C  Classification name\n"
         "  --strength S     Reclaim candidate strength (query; e.g. Strong)\n"
         "  --under P        Restrict query/opportunities/breakdown to P and descendants\n"
+        "\n"
+        "Zalo app-storage options:\n"
+        "  --root PATH      Explicit root; repeatable and disables default discovery\n"
+        "  --compare PATH   Explicit read-only comparison scope; repeatable (items only)\n"
+        "  --largest N      Return at most N report-local review items\n"
+        "  --type TYPE      Content type/category (e.g. image, document, video)\n"
+        "  --unknown        Return items without identified content\n"
         "\n"
         "Options:\n"
         "  --json          Machine-readable JSON on stdout\n"
@@ -166,6 +201,16 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         out.command = Command::Breakdown;
     } else if (cmd == L"reclaim-plan") {
         out.command = Command::ReclaimPlan;
+    } else if (cmd == L"app-storage") {
+        if (argc < 3 || std::wstring_view(argv[2]) != L"zalo") {
+            out.error = "'app-storage' currently supports the 'zalo' provider.";
+            return out;
+        }
+        if (argc >= 4 && std::wstring_view(argv[3]) == L"items") {
+            out.command = Command::AppStorageZaloItems;
+        } else {
+            out.command = Command::AppStorageZalo;
+        }
     } else if (cmd == L"index") {
         // index | index status | index list | index refresh
         if (argc >= 3 && std::wstring_view(argv[2]) == L"status") {
@@ -186,7 +231,8 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         (out.command == Command::IndexStatus || out.command == Command::IndexList ||
          out.command == Command::IndexRefresh)
             ? 3
-            : 2;
+            : out.command == Command::AppStorageZaloItems ? 4 :
+                                                             out.command == Command::AppStorageZalo ? 3 : 2;
 
     for (int i = start; i < argc; ++i) {
         const std::wstring_view arg = argv[i];
@@ -210,7 +256,28 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             out.topMode = TopMode::Dirs;
             continue;
         }
+        if (arg == L"--largest") {
+            if (!isAppStorageItemsCommand(out.command)) {
+                out.error = "--largest is only valid with 'app-storage zalo items'.";
+                return out;
+            }
+            if (i + 1 >= argc) {
+                out.error = "--largest requires a value.";
+                return out;
+            }
+            const auto limit = parseLimit(argv[++i]);
+            if (!limit) {
+                out.error = "Invalid --largest value.";
+                return out;
+            }
+            out.limit = *limit;
+            continue;
+        }
         if (arg == L"--limit") {
+            if (isAppStorageCommand(out.command)) {
+                out.error = "Use --largest with 'app-storage zalo items'.";
+                return out;
+            }
             if (i + 1 >= argc) {
                 out.error = "--limit requires a value.";
                 return out;
@@ -223,10 +290,61 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
             out.limit = *limit;
             continue;
         }
+        if (arg == L"--root") {
+            if (!isAppStorageCommand(out.command)) {
+                out.error = "--root is only valid with 'app-storage zalo'.";
+                return out;
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == L'\0') {
+                out.error = "--root requires a path.";
+                return out;
+            }
+            out.rootPaths.emplace_back(argv[++i]);
+            continue;
+        }
+        if (arg == L"--compare") {
+            if (!isAppStorageItemsCommand(out.command)) {
+                out.error = "--compare is only valid with 'app-storage zalo items'.";
+                return out;
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == L'\0' ||
+                argv[i + 1][0] == L'-') {
+                out.error = "--compare requires a path.";
+                return out;
+            }
+            out.comparePaths.emplace_back(argv[++i]);
+            continue;
+        }
+        if (arg == L"--type") {
+            if (!isAppStorageItemsCommand(out.command)) {
+                out.error = "--type is only valid with 'app-storage zalo items'.";
+                return out;
+            }
+            if (i + 1 >= argc || argv[i + 1][0] == L'\0') {
+                out.error = "--type requires a value.";
+                return out;
+            }
+            const auto type = normalizeStorageType(argv[++i]);
+            if (!type) {
+                out.error = "Invalid --type value.";
+                return out;
+            }
+            out.storageType = *type;
+            continue;
+        }
+        if (arg == L"--unknown") {
+            if (!isAppStorageItemsCommand(out.command)) {
+                out.error = "--unknown is only valid with 'app-storage zalo items'.";
+                return out;
+            }
+            out.unknown = true;
+            continue;
+        }
         if (arg == L"--min-size") {
             if (!isFilterCommand(out.command)) {
                 out.error =
-                "--min-size is only valid with top/find/query/duplicates/opportunities.";
+                    "--min-size is only valid with top/find/query/duplicates/"
+                    "opportunities or app-storage zalo items.";
                 return out;
             }
             if (i + 1 >= argc) {
@@ -401,6 +519,11 @@ ParsedArgs parseArgs(int argc, wchar_t** argv)
         }
         if (!arg.empty() && arg.front() == L'-') {
             out.error = "Unknown option.";
+            return out;
+        }
+        if (isAppStorageCommand(out.command)) {
+            out.error =
+                "app-storage zalo does not take a positional path; use --root.";
             return out;
         }
         if (out.command == Command::IndexList) {

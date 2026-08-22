@@ -5,6 +5,7 @@
 #include "ui/FilterPopup.hpp"
 #include "ui/IndexBrowserPage.hpp"
 #include "ui/MetricStrip.hpp"
+#include "ui/ZaloStorageReviewPage.hpp"
 #include "ui/PageHeader.hpp"
 #include "ui/PropertyInspector.hpp"
 #include "ui/UiTheme.hpp"
@@ -186,19 +187,26 @@ void MainWindow::buildUi()
     groupLayout->setSpacing(0);
     m_navLive = new QPushButton(QStringLiteral("Live Scan"), group);
     m_navIndexed = new QPushButton(QStringLiteral("Indexed"), group);
+    m_navZalo = new QPushButton(QStringLiteral("Zalo Review"), group);
     m_navLive->setObjectName(QStringLiteral("slWorkspace"));
     m_navIndexed->setObjectName(QStringLiteral("slWorkspace"));
+    m_navZalo->setObjectName(QStringLiteral("slWorkspace"));
     m_navLive->setProperty("slId", QStringLiteral("live"));
     m_navIndexed->setProperty("slId", QStringLiteral("indexed"));
+    m_navZalo->setProperty("slId", QStringLiteral("zalo"));
     m_navLive->setCheckable(true);
     m_navIndexed->setCheckable(true);
+    m_navZalo->setCheckable(true);
     m_navLive->setChecked(true);
     m_navLive->setAutoExclusive(true);
     m_navIndexed->setAutoExclusive(true);
+    m_navZalo->setAutoExclusive(true);
     m_navLive->setFocusPolicy(Qt::TabFocus);
     m_navIndexed->setFocusPolicy(Qt::TabFocus);
+    m_navZalo->setFocusPolicy(Qt::TabFocus);
     groupLayout->addWidget(m_navLive);
     groupLayout->addWidget(m_navIndexed);
+    groupLayout->addWidget(m_navZalo);
     navLayout->addWidget(group, 0, Qt::AlignVCenter);
     navLayout->addStretch(1);
 
@@ -230,18 +238,28 @@ void MainWindow::buildUi()
     connect(m_indexPage, &IndexBrowserPage::showReviewRequested, this,
             &MainWindow::onShowReview);
 
+    m_zaloPage = new ZaloStorageReviewPage(m_pages);
+    m_pages->addWidget(m_zaloPage);
+    connect(m_zaloPage, &ZaloStorageReviewPage::statusMessage, this,
+            &MainWindow::onZaloStatusMessage);
+
     outer->addWidget(m_pages, 1);
 
     connect(m_navLive, &QPushButton::clicked, this, &MainWindow::onLiveWorkspace);
     connect(m_navIndexed, &QPushButton::clicked, this,
             &MainWindow::onIndexedWorkspace);
+    connect(m_navZalo, &QPushButton::clicked, this,
+            &MainWindow::onZaloWorkspace);
     auto* liveShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+1")), this);
     auto* indexedShortcut =
         new QShortcut(QKeySequence(QStringLiteral("Ctrl+2")), this);
+    auto* zaloShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+3")), this);
     connect(liveShortcut, &QShortcut::activated, this,
             &MainWindow::onLiveWorkspace);
     connect(indexedShortcut, &QShortcut::activated, this,
             &MainWindow::onIndexedWorkspace);
+    connect(zaloShortcut, &QShortcut::activated, this,
+            &MainWindow::onZaloWorkspace);
 
     m_statusLabel = new QLabel(central);
     m_trustLabel = new QLabel(QStringLiteral("Read-only analysis"), central);
@@ -925,6 +943,7 @@ void MainWindow::onLiveWorkspace()
 {
     m_navLive->setChecked(true);
     m_navIndexed->setChecked(false);
+    m_navZalo->setChecked(false);
     m_pages->setCurrentIndex(0);
     m_navLive->setFocus(Qt::ShortcutFocusReason);
 }
@@ -933,8 +952,23 @@ void MainWindow::onIndexedWorkspace()
 {
     m_navIndexed->setChecked(true);
     m_navLive->setChecked(false);
+    m_navZalo->setChecked(false);
     m_pages->setCurrentIndex(1);
     m_navIndexed->setFocus(Qt::ShortcutFocusReason);
+}
+
+void MainWindow::onZaloWorkspace()
+{
+    m_navZalo->setChecked(true);
+    m_navLive->setChecked(false);
+    m_navIndexed->setChecked(false);
+    m_pages->setCurrentIndex(2);
+    m_navZalo->setFocus(Qt::ShortcutFocusReason);
+}
+
+void MainWindow::onZaloStatusMessage(const QString& message)
+{
+    setStatusMessage(message);
 }
 
 void MainWindow::updateLiveMetrics()

@@ -29,11 +29,13 @@ enum class Command {
     Opportunities,
     Breakdown,
     ReclaimPlan,
+    AppStorageZalo,
+    AppStorageZaloItems,
 };
 
 /// Commands intentionally exposed by the read-only CLI. Keep this list explicit
 /// so destructive verbs cannot be registered accidentally.
-inline constexpr std::array<Command, 16> kRegisteredCommands{
+inline constexpr std::array<Command, 18> kRegisteredCommands{
     Command::Scan,
     Command::Top,
     Command::Find,
@@ -48,6 +50,8 @@ inline constexpr std::array<Command, 16> kRegisteredCommands{
     Command::Opportunities,
     Command::Breakdown,
     Command::ReclaimPlan,
+    Command::AppStorageZalo,
+    Command::AppStorageZaloItems,
     Command::Help,
     Command::Version,
 };
@@ -61,10 +65,14 @@ enum class TopMode {
 struct ParsedArgs {
     Command command = Command::Help;
     std::wstring path;
+    std::vector<std::wstring> rootPaths;  // repeatable app-storage roots
+    std::vector<std::wstring> comparePaths;  // repeatable Zalo item scopes
     bool json = false;
     TopMode topMode = TopMode::None;
     std::size_t limit = 20;
     std::optional<ByteSize> minSize;
+    std::string storageType;  // normalized app-storage content type/category
+    bool unknown = false;     // app-storage unknown-content filter
     std::wstring extension;  // normalized without a leading dot
     std::optional<std::uint64_t> olderThanDays;
     std::wstring classification;

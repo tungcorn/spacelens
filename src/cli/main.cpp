@@ -109,6 +109,10 @@ int wmain(int argc, wchar_t** argv)
         case spacelens::cli::Command::ReclaimPlan:
             code = spacelens::cli::runReclaimPlan(args, stopSource.get_token());
             break;
+        case spacelens::cli::Command::AppStorageZalo:
+        case spacelens::cli::Command::AppStorageZaloItems:
+            code = spacelens::cli::runZaloStorage(args, stopSource.get_token());
+            break;
         default:
             code = spacelens::cli::ExitCode::InternalError;
             break;
