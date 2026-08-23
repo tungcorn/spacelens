@@ -1,5 +1,6 @@
 #include "ui/ZaloStorageReviewPage.hpp"
 
+#include "core/SafetyPolicy.hpp"
 #include "core/SizeFormatter.hpp"
 #include "ui/EmptyStateWidget.hpp"
 #include "ui/MetricStrip.hpp"
@@ -89,7 +90,33 @@ bool sendFileToRecycleBin(const std::wstring& path)
     if (path.empty()) {
         return false;
     }
-    std::wstring doubleNullPath = path;
+
+    // 1. Normalize path separators to standard Windows backslashes
+    const std::wstring normalized = normalizePathForPolicy(path);
+    if (normalized.empty()) {
+        return false;
+    }
+
+    // 2. Safety policy gate: Forbid deleting OS, Program Files, drive roots, or system directories
+    const LocationSafety safety = classifyLocation(normalized);
+    if (isMutationDisallowed(safety)) {
+        return false;
+    }
+
+    // 3. Verify path exists and query file attributes
+    const DWORD attrs = ::GetFileAttributesW(normalized.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        return false;
+    }
+
+    // 4. Critical guard: Refuse to delete directory trees via single entry deletion
+    if ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        return false;
+    }
+
+    // 5. Double null-terminated buffer strictly required by SHFileOperationW
+    std::vector<wchar_t> doubleNullPath(normalized.begin(), normalized.end());
+    doubleNullPath.push_back(L'\0');
     doubleNullPath.push_back(L'\0');
 
     SHFILEOPSTRUCTW fileOp{};
@@ -762,6 +789,8 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
         }
         previewItem->setTextAlignment(Qt::AlignCenter);
         previewItem->setToolTip(fullPathStr.isEmpty() ? summary : fullPathStr);
+        previewItem->setData(Qt::UserRole, fullPathStr);
+        previewItem->setData(Qt::UserRole + 1, static_cast<qulonglong>(r.physicalImpact));
         m_entries->setItem(rowIdx, ColPreview, previewItem);
 
         // Name
@@ -1012,38 +1041,59 @@ void ZaloStorageReviewPage::onDeleteSelected()
     for (const auto& idx : selectedIndices) {
         rows.push_back(idx.row());
     }
+    // Strict descending sort and deduplication to prevent out-of-order deletion or multiple erasures
     std::sort(rows.begin(), rows.end(), std::greater<int>());
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
 
+    struct TargetItem {
+        int row = -1;
+        std::wstring path;
+        ByteSize bytes = 0;
+        QString name;
+    };
+
+    std::vector<TargetItem> items;
+    items.reserve(rows.size());
     ByteSize totalBytes = 0;
-    std::vector<std::wstring> paths;
-    paths.reserve(rows.size());
+
     for (const int r : rows) {
         if (r >= 0 && static_cast<std::size_t>(r) < m_displayRows.size()) {
-            totalBytes += m_displayRows[r].physicalImpact;
-            paths.push_back(m_displayRows[r].nativePath);
+            std::wstring path = m_displayRows[r].nativePath;
+            const ByteSize bytes = m_displayRows[r].physicalImpact;
+            QString name;
+            if (auto* item = m_entries->item(r, ColName)) {
+                name = item->text();
+            }
+            if (auto* prevItem = m_entries->item(r, ColPreview)) {
+                const QString storedPath = prevItem->data(Qt::UserRole).toString();
+                if (!storedPath.isEmpty()) {
+                    path = storedPath.toStdWString();
+                }
+            }
+            if (!path.empty()) {
+                totalBytes += bytes;
+                items.push_back({r, std::move(path), bytes, std::move(name)});
+            }
         }
     }
 
-    if (paths.empty()) {
+    if (items.empty()) {
         return;
     }
 
     const QString title = QStringLiteral("Confirm Move to Recycle Bin");
     QString message;
-    if (paths.size() == 1) {
-        const int row = rows.front();
-        const QString name = m_entries->item(row, ColName) != nullptr
-                                 ? m_entries->item(row, ColName)->text()
-                                 : QStringLiteral("Selected item");
+    if (items.size() == 1) {
         message = QStringLiteral(
-                      "Move this file to the Windows Recycle Bin?\n\n%1 (%2)\n\nPath: %3")
-                      .arg(name, formatBytes(totalBytes),
-                           QString::fromStdWString(paths.front()));
+                      "Move this file to the Windows Recycle Bin?\n\n%1 (%2)\n\nPath: %3\n\n"
+                      "Note: You can restore this file from the Windows Recycle Bin if needed.")
+                      .arg(items.front().name, formatBytes(totalBytes),
+                           QString::fromStdWString(items.front().path));
     } else {
         message = QStringLiteral(
                       "Move %1 selected items (~%2) to the Windows Recycle Bin?\n\n"
-                      "This action is safe and reversible via the Recycle Bin.")
-                      .arg(paths.size())
+                      "Note: You can restore any of these files from the Windows Recycle Bin if needed.")
+                      .arg(items.size())
                       .arg(formatBytes(totalBytes));
     }
 
@@ -1054,28 +1104,26 @@ void ZaloStorageReviewPage::onDeleteSelected()
     }
 
     std::size_t successCount = 0;
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        const int r = rows[i];
-        const auto& path = paths[i];
-        if (sendFileToRecycleBin(path)) {
+    for (const auto& item : items) {
+        if (sendFileToRecycleBin(item.path)) {
             ++successCount;
-            m_entries->removeRow(r);
-            if (static_cast<std::size_t>(r) < m_displayRows.size()) {
-                m_displayRows.erase(m_displayRows.begin() + r);
+            m_entries->removeRow(item.row);
+            if (static_cast<std::size_t>(item.row) < m_displayRows.size()) {
+                m_displayRows.erase(m_displayRows.begin() + item.row);
             }
         }
     }
 
-    if (successCount == paths.size()) {
+    if (successCount == items.size()) {
         emit statusMessage(
             QStringLiteral("Successfully moved %1 item(s) to Recycle Bin.")
                 .arg(successCount));
     } else {
         QMessageBox::warning(
             this, QStringLiteral("Partial Delete"),
-            QStringLiteral("Moved %1 of %2 items to Recycle Bin. Some files may be locked by Zalo.")
+            QStringLiteral("Moved %1 of %2 items to Recycle Bin. Some files may be open or locked by Zalo.")
                 .arg(successCount)
-                .arg(paths.size()));
+                .arg(items.size()));
     }
 
     if (m_displayRows.empty()) {
@@ -1105,6 +1153,10 @@ void ZaloStorageReviewPage::onCleanFileNoise()
             }
         }
     }
+
+    // Deduplicate paths
+    std::sort(pathsToDelete.begin(), pathsToDelete.end());
+    pathsToDelete.erase(std::unique(pathsToDelete.begin(), pathsToDelete.end()), pathsToDelete.end());
 
     if (pathsToDelete.empty()) {
         QMessageBox::information(this, QStringLiteral("Clean fileNoise"),
