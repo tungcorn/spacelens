@@ -305,6 +305,7 @@ public:
     RelativeCursor(ScanContext& context, ByteSize base, ByteSize length)
         : m_context(context), m_base(base), m_length(length)
     {
+        m_buffer.resize(kCursorChunkBytes);
     }
 
     [[nodiscard]] bool readByte(std::uint8_t& value)
@@ -371,7 +372,7 @@ private:
     ByteSize m_position = 0;
     ByteSize m_bufferStart = 0;
     std::size_t m_bufferLength = 0;
-    std::array<std::uint8_t, kCursorChunkBytes> m_buffer{};
+    std::vector<std::uint8_t> m_buffer;
 };
 
 struct Candidate final {
