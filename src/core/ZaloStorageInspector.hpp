@@ -133,6 +133,7 @@ struct ZaloEntry {
     std::optional<ByteSize> singlePathReleaseBytes;
     std::optional<ByteSize> allObservedPathReleaseBytes;
     ZaloEntryConsistency consistency = ZaloEntryConsistency::Unknown;
+    std::wstring nativePath;
 };
 
 enum class ZaloExactCopyStatus {

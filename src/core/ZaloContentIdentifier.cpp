@@ -4838,13 +4838,25 @@ ZaloHumanIdentity buildHumanIdentity(
         break;
     }
     case ZaloContentType::Zip: {
-        id.previewKind = ZaloPreviewKind::None;
-        id.contentSummary = "ZIP Archive" + (sizeStr.empty() ? "" : " · " + sizeStr);
-        if (!hasTrustedName) {
-            id.displayName = "ZIP Archive";
+        id.previewKind = ZaloPreviewKind::DocumentText;
+        if (content.semanticMetadata.has_value() &&
+            content.semanticMetadata->title.has_value() &&
+            !content.semanticMetadata->title->empty()) {
+            const std::string& title = *content.semanticMetadata->title;
+            id.displayTitle = title;
+            if (!hasTrustedName) {
+                id.displayName = title + " (ZIP)";
+            }
+            id.contentSummary = "ZIP Archive · " + title;
+            if (!sizeStr.empty()) id.contentSummary += " · " + sizeStr;
+            id.previewAvailable = true;
+        } else {
+            id.contentSummary = "ZIP Archive" + (sizeStr.empty() ? "" : " · " + sizeStr);
+            if (!hasTrustedName) {
+                id.displayName = "ZIP Archive";
+            }
         }
         id.identitySource = ZaloIdentitySource::DocumentStructure;
-        id.previewAvailable = false;
         if (content.wrapper) {
             id.contentSummary = "Wrapped " + id.contentSummary;
         }
@@ -4861,6 +4873,55 @@ ZaloHumanIdentity buildHumanIdentity(
     }
 
     return id;
+}
+
+[[nodiscard]] ZaloSemanticMetadata extractZipSemanticMetadata(ScanContext& context)
+{
+    ZaloSemanticMetadata result;
+    result.status = ZaloSemanticMetadataStatus::Available;
+    
+    // First try full zip directory if available
+    const auto zipEnd = findZipEnd(context, 0U);
+    if (zipEnd.has_value()) {
+        ZipReader reader;
+        std::vector<RawZipEntry> entries;
+        if (initializeValidatedZip(context, 0U, *zipEnd, reader, entries) && !entries.empty()) {
+            for (const auto& entry : entries) {
+                std::string name = entry.name;
+                while (!name.empty() && (name.back() == '/' || name.back() == '\\')) {
+                    name.pop_back();
+                }
+                if (!name.empty() && name != "." && name != "..") {
+                    result.title = name;
+                    return result;
+                }
+            }
+        }
+    }
+    
+    // Fallback: Read starting local header
+    if (context.view.size() >= 30U) {
+        std::array<std::uint8_t, 30> localHeader{};
+        if (context.readRange(0U, localHeader) &&
+            readLe32(localHeader.data()) == kZipLocalHeaderSignature) {
+            const std::uint16_t nameLength = readLe16(localHeader.data() + 26U);
+            if (nameLength > 0U && nameLength <= kZipNameBytes &&
+                nameLength <= context.view.size() - 30U) {
+                std::vector<std::uint8_t> nameBytes(nameLength);
+                if (context.readRange(30U, nameBytes)) {
+                    std::string rawName(reinterpret_cast<const char*>(nameBytes.data()), nameBytes.size());
+                    while (!rawName.empty() && (rawName.back() == '/' || rawName.back() == '\\')) {
+                        rawName.pop_back();
+                    }
+                    if (!rawName.empty()) {
+                        result.title = rawName;
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+    return result;
 }
 
 ZaloContentResult identifyZaloContent(const PayloadView& payload,
@@ -4899,6 +4960,7 @@ ZaloSemanticMetadata extractZaloSemanticMetadata(
         case ZaloContentType::Docx:
         case ZaloContentType::Xlsx:
         case ZaloContentType::Pptx:
+        case ZaloContentType::Zip:
             break;
         case ZaloContentType::Unknown:
         case ZaloContentType::Jpeg:
@@ -4907,7 +4969,6 @@ ZaloSemanticMetadata extractZaloSemanticMetadata(
         case ZaloContentType::Gif:
         case ZaloContentType::Mp4:
         case ZaloContentType::Mov:
-        case ZaloContentType::Zip:
             return semanticResult(ZaloSemanticMetadataStatus::NotApplicable);
         }
         if (!payload.valid() || identification.payloadLength == 0U) {
@@ -4937,6 +4998,9 @@ ZaloSemanticMetadata extractZaloSemanticMetadata(
         case ZaloContentType::Pptx:
             result = extractOoxmlSemanticMetadata(context, identification.type);
             break;
+        case ZaloContentType::Zip:
+            result = extractZipSemanticMetadata(context);
+            break;
         case ZaloContentType::Unknown:
         case ZaloContentType::Jpeg:
         case ZaloContentType::Png:
@@ -4944,7 +5008,6 @@ ZaloSemanticMetadata extractZaloSemanticMetadata(
         case ZaloContentType::Gif:
         case ZaloContentType::Mp4:
         case ZaloContentType::Mov:
-        case ZaloContentType::Zip:
             return semanticResult(ZaloSemanticMetadataStatus::NotApplicable);
         }
         if (context.terminal != TerminalState::None || context.budgetExceeded) {

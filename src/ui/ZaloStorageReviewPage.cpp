@@ -7,16 +7,26 @@
 #include "ui/UiTheme.hpp"
 
 #include <QAbstractItemView>
+#include <QApplication>
+#include <QClipboard>
 #include <QDateTime>
 #include <QFileDialog>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMenu>
+#include <QMessageBox>
+#include <QProgressBar>
 #include <QPushButton>
+#include <QShortcut>
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QTimeZone>
 #include <QVBoxLayout>
+
+#include <windows.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <optional>
@@ -73,12 +83,29 @@ QString formatFileAge(uint64_t ticks)
     return dt.toString(QStringLiteral("yyyy-MM-dd HH:mm"));
 }
 
-struct ItemDisplayRow {
-    const ZaloAccountReport* account = nullptr;
-    const ZaloEntry* entry = nullptr;
-    ByteSize physicalImpact = 0;
-    QString exactCopyLabel;
-};
+bool sendFileToRecycleBin(const std::wstring& path)
+{
+    if (path.empty()) {
+        return false;
+    }
+    std::wstring doubleNullPath = path;
+    doubleNullPath.push_back(L'\0');
+
+    SHFILEOPSTRUCTW fileOp{};
+    fileOp.wFunc = FO_DELETE;
+    fileOp.pFrom = doubleNullPath.data();
+    fileOp.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
+    return (::SHFileOperationW(&fileOp) == 0 && !fileOp.fAnyOperationsAborted);
+}
+
+void revealInExplorer(const std::wstring& path)
+{
+    if (path.empty()) {
+        return;
+    }
+    const std::wstring param = L"/select,\"" + path + L"\"";
+    ::ShellExecuteW(nullptr, L"open", L"explorer.exe", param.c_str(), nullptr, SW_SHOW);
+}
 
 }  // namespace
 
@@ -109,34 +136,62 @@ void ZaloStorageReviewPage::buildUi()
     auto* header = new PageHeader(this);
     header->setTitle(QStringLiteral("Zalo Storage Review"));
     header->setSubtitle(
-        QStringLiteral("Review bounded human-recognizable identity, physical cluster impact, and exact copies."));
+        QStringLiteral("Review human-recognizable content, visual previews, and safely manage storage."));
 
     m_chooseButton = new QPushButton(QStringLiteral("Choose Root"), header);
     m_chooseButton->setObjectName(QStringLiteral("slZaloChooseRoot"));
     markSecondaryButton(m_chooseButton);
+
     m_reviewButton = new QPushButton(QStringLiteral("Review"), header);
     m_reviewButton->setObjectName(QStringLiteral("slZaloReview"));
     m_reviewButton->setToolTip(
-        QStringLiteral("Run a read-only bounded review; no filesystem changes are made."));
+        QStringLiteral("Run bounded auto-discovery and review Zalo files."));
     markPrimaryButton(m_reviewButton);
+
+    m_cleanFileNoiseButton = new QPushButton(QStringLiteral("Clean fileNoise"), header);
+    m_cleanFileNoiseButton->setObjectName(QStringLiteral("slZaloCleanNoise"));
+    m_cleanFileNoiseButton->setToolTip(
+        QStringLiteral("Safely move ephemeral transit cache files to Recycle Bin."));
+    markSecondaryButton(m_cleanFileNoiseButton);
+    m_cleanFileNoiseButton->hide();
+
+    m_deleteButton = new QPushButton(QStringLiteral("Delete Selected"), header);
+    m_deleteButton->setObjectName(QStringLiteral("slZaloDeleteSelected"));
+    m_deleteButton->setToolTip(
+        QStringLiteral("Move selected Zalo files safely to the Windows Recycle Bin (Del)."));
+    markSecondaryButton(m_deleteButton);
+    m_deleteButton->setEnabled(false);
+    m_deleteButton->hide();
+
     m_cancelButton = new QPushButton(QStringLiteral("Cancel"), header);
     m_cancelButton->setObjectName(QStringLiteral("slZaloCancel"));
     markSecondaryButton(m_cancelButton);
     m_cancelButton->hide();
+
     header->commands()->addWidget(m_chooseButton);
     header->commands()->addWidget(m_reviewButton);
+    header->commands()->addWidget(m_cleanFileNoiseButton);
+    header->commands()->addWidget(m_deleteButton);
     header->commands()->addWidget(m_cancelButton);
     rootLayout->addWidget(header);
 
     auto* rootRow = new QHBoxLayout();
     rootRow->setSpacing(kUiSpace8);
     m_rootSummary = new QLabel(
-        QStringLiteral("Default discovery is ready. Native locations stay hidden."),
+        QStringLiteral("Auto-discovery is ready. Double-click or right-click any item to view/delete."),
         this);
     m_rootSummary->setObjectName(QStringLiteral("slZaloRootSummary"));
     m_rootSummary->setWordWrap(true);
     rootRow->addWidget(m_rootSummary, 1);
     rootLayout->addLayout(rootRow);
+
+    m_progressBar = new QProgressBar(this);
+    m_progressBar->setObjectName(QStringLiteral("slZaloProgress"));
+    m_progressBar->setTextVisible(false);
+    m_progressBar->setFixedHeight(4);
+    m_progressBar->setRange(0, 0);
+    m_progressBar->setVisible(false);
+    rootLayout->addWidget(m_progressBar);
 
     m_metrics = new MetricStrip(this);
     rootLayout->addWidget(m_metrics);
@@ -149,11 +204,11 @@ void ZaloStorageReviewPage::buildUi()
 
     m_stack = new QStackedWidget(this);
     m_empty = new EmptyStateWidget(m_stack);
-    m_empty->setTitle(QStringLiteral("Ready for read-only review"));
+    m_empty->setTitle(QStringLiteral("Ready for review"));
     m_empty->setBody(QStringLiteral(
-        "Choose an explicit root, or use Review for bounded default discovery. "
-        "Deterministic human identity, visual thumbnails, and physical cluster impact are shown."));
-    m_empty->setActionText(QStringLiteral("Choose Root"));
+        "Click Review for automatic Zalo storage discovery. "
+        "Deterministic human identity, visual previews, and safe actions will be shown."));
+    m_empty->setActionText(QStringLiteral("Review"));
     m_empty->setActionVisible(true);
 
     m_entries = new QTableWidget(0, ColCount, m_stack);
@@ -173,7 +228,7 @@ void ZaloStorageReviewPage::buildUi()
         QStringLiteral("Entry ID")});
     m_entries->setAlternatingRowColors(true);
     m_entries->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_entries->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_entries->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_entries->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_entries->setShowGrid(false);
     m_entries->setWordWrap(false);
@@ -183,7 +238,7 @@ void ZaloStorageReviewPage::buildUi()
     m_entries->horizontalHeader()->setStretchLastSection(false);
     m_entries->horizontalHeader()->setDefaultSectionSize(110);
     m_entries->setColumnWidth(ColPreview, 104);
-    m_entries->setColumnWidth(ColName, 220);
+    m_entries->setColumnWidth(ColName, 240);
     m_entries->setColumnWidth(ColSummary, 240);
     m_entries->setColumnWidth(ColPhysicalImpact, 110);
     m_entries->setColumnWidth(ColLogical, 90);
@@ -191,9 +246,21 @@ void ZaloStorageReviewPage::buildUi()
     m_entries->setColumnWidth(ColExactCopy, 110);
     m_entries->setColumnWidth(ColAge, 130);
     m_entries->setColumnWidth(ColConfidence, 90);
-    m_entries->setColumnWidth(ColCategory, 85);
+    m_entries->setColumnWidth(ColCategory, 140);
     m_entries->setColumnWidth(ColRootAccount, 110);
     m_entries->setColumnWidth(ColEntry, 80);
+
+    m_entries->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_entries, &QTableWidget::customContextMenuRequested, this,
+            &ZaloStorageReviewPage::onTableContextMenu);
+    connect(m_entries, &QTableWidget::cellDoubleClicked, this,
+            &ZaloStorageReviewPage::onCellDoubleClicked);
+    connect(m_entries, &QTableWidget::itemSelectionChanged, this,
+            &ZaloStorageReviewPage::onSelectionChanged);
+
+    auto* deleteShortcut = new QShortcut(QKeySequence::Delete, m_entries);
+    connect(deleteShortcut, &QShortcut::activated, this,
+            &ZaloStorageReviewPage::onDeleteSelected);
 
     m_stack->addWidget(m_empty);
     m_stack->addWidget(m_entries);
@@ -206,17 +273,26 @@ void ZaloStorageReviewPage::buildUi()
             &ZaloStorageReviewPage::onReview);
     connect(m_cancelButton, &QPushButton::clicked, this,
             &ZaloStorageReviewPage::onCancel);
+    connect(m_cleanFileNoiseButton, &QPushButton::clicked, this,
+            &ZaloStorageReviewPage::onCleanFileNoise);
+    connect(m_deleteButton, &QPushButton::clicked, this,
+            &ZaloStorageReviewPage::onDeleteSelected);
     connect(m_empty, &EmptyStateWidget::actionClicked, this,
-            &ZaloStorageReviewPage::onChooseRoot);
+            &ZaloStorageReviewPage::onReview);
 }
 
 void ZaloStorageReviewPage::clearReport()
 {
     m_report.reset();
+    m_displayRows.clear();
     m_entries->setRowCount(0);
     m_reportSummary->clear();
     m_reportSummary->hide();
     m_metrics->setItems({});
+    m_cleanFileNoiseButton->hide();
+    m_deleteButton->hide();
+    m_deleteButton->setEnabled(false);
+    m_deleteButton->setText(QStringLiteral("Delete Selected"));
 }
 
 void ZaloStorageReviewPage::showEmptyState(const QString& title,
@@ -236,6 +312,15 @@ void ZaloStorageReviewPage::updateActionState()
     m_reviewButton->setEnabled(!running);
     m_cancelButton->setEnabled(running);
     m_cancelButton->setVisible(running);
+    m_cleanFileNoiseButton->setEnabled(!running);
+    if (m_progressBar != nullptr) {
+        m_progressBar->setVisible(running);
+    }
+    if (running) {
+        m_deleteButton->setEnabled(false);
+    } else {
+        onSelectionChanged();
+    }
 }
 
 void ZaloStorageReviewPage::onChooseRoot()
@@ -248,40 +333,39 @@ void ZaloStorageReviewPage::onChooseRoot()
     }
 
     m_selectedRoot = root;
-    clearReport();
     m_rootSummary->setText(
-        QStringLiteral("Explicit root selected. Native location hidden."));
-    showEmptyState(QStringLiteral("Ready to review"),
-                   QStringLiteral("Press Review to inspect this exact root in read-only mode."),
-                   false);
-    updateActionState();
-    emit statusMessage(QStringLiteral("Explicit root selected. Ready to review."));
+        QStringLiteral("Selected custom root: %1").arg(m_selectedRoot));
+    onReview();
 }
 
 void ZaloStorageReviewPage::onReview()
 {
-    if (m_session == nullptr) {
+    if (m_session == nullptr || m_session->isRunning()) {
         return;
     }
+
     clearReport();
-    showEmptyState(QStringLiteral("Reviewing Zalo storage"),
-                   QStringLiteral("Reading bounded storage evidence…"), false);
-    if (!m_session->start(m_selectedRoot)) {
-        showEmptyState(QStringLiteral("Review is already running"),
-                       QStringLiteral("Wait for the current read-only review to finish."),
-                       false);
-        updateActionState();
-        return;
-    }
     updateActionState();
-    emit statusMessage(QStringLiteral("Reviewing Zalo storage…"));
+    m_rootSummary->setText(
+        QStringLiteral("Scanning Zalo storage across drives... Please wait."));
+    showEmptyState(
+        QStringLiteral("Scanning Zalo storage..."),
+        QStringLiteral("Discovering accounts, verifying file identity, and analyzing media and cache footprint. This may take a moment for large collections..."),
+        false);
+    emit statusMessage(QStringLiteral("Scanning Zalo storage..."));
+
+    m_session->start(m_selectedRoot);
 }
 
 void ZaloStorageReviewPage::onCancel()
 {
     if (m_session != nullptr && m_session->isRunning()) {
         m_session->cancel();
-        emit statusMessage(QStringLiteral("Cancelling review…"));
+        m_rootSummary->setText(QStringLiteral("Cancelling scan..."));
+        showEmptyState(QStringLiteral("Cancelling..."),
+                       QStringLiteral("Stopping Zalo storage inspection..."),
+                       false);
+        emit statusMessage(QStringLiteral("Cancelling Zalo review..."));
     }
 }
 
@@ -290,20 +374,36 @@ void ZaloStorageReviewPage::onSessionStatus(const QString& message)
     emit statusMessage(message);
 }
 
-void ZaloStorageReviewPage::onFinished(ZaloStorageStatus status)
+void ZaloStorageReviewPage::onFinished(spacelens::ZaloStorageStatus status)
 {
-    const auto report = m_session->takeReport();
     updateActionState();
+
+    if (status == ZaloStorageStatus::Cancelled) {
+        emit statusMessage(QStringLiteral("Zalo review cancelled."));
+        m_rootSummary->setText(
+            QStringLiteral("Review cancelled. Click Review to scan again."));
+        showEmptyState(QStringLiteral("Review cancelled"),
+                       QStringLiteral("Inspection was cancelled before completion. Click Review to scan again."),
+                       true);
+        return;
+    }
+
+    auto report = m_session->takeReport();
     if (!report.has_value()) {
-        emit statusMessage(
-            QStringLiteral("Review finished without a report (%1).")
-                .arg(storageStatus(status)));
+        emit statusMessage(QStringLiteral("No report available."));
+        m_rootSummary->setText(
+            QStringLiteral("Inspection incomplete. Click Review to retry."));
+        showEmptyState(
+            QStringLiteral("Inspection incomplete"),
+            QStringLiteral("The review session did not produce a report. Status: %1. Click Review to retry.")
+                .arg(storageStatus(status)),
+            true);
         return;
     }
 
     m_report = std::move(*report);
     applyReport(*m_report);
-    emit statusMessage(QStringLiteral("Zalo review: %1.")
+    emit statusMessage(QStringLiteral("Zalo review complete: %1.")
                            .arg(storageStatus(m_report->status)));
 }
 
@@ -311,6 +411,7 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
 {
     m_entries->setUpdatesEnabled(false);
     m_entries->setRowCount(0);
+    m_displayRows.clear();
 
     // Build exact copy mapping
     std::unordered_map<std::string, QString> exactCopyMap;
@@ -321,7 +422,7 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
     }
 
     // Collect all entries across accounts and compute physical impact
-    std::vector<ItemDisplayRow> rows;
+    ByteSize totalFileNoiseBytes = 0;
     for (const auto& account : report.accounts) {
         for (const auto& entry : account.entries) {
             ItemDisplayRow row;
@@ -330,29 +431,35 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
             row.physicalImpact = entry.allObservedPathReleaseBytes.value_or(
                 entry.singlePathReleaseBytes.value_or(
                     entry.allocatedBytes.value_or(entry.logicalBytes)));
-            
+            row.nativePath = entry.nativePath;
+
+            if (entry.categoryAlias == "file-noise" && !entry.hardLinkAlias) {
+                totalFileNoiseBytes += row.physicalImpact;
+            }
+
             const auto it = exactCopyMap.find(entry.entryId);
             if (it != exactCopyMap.end()) {
                 row.exactCopyLabel = it->second;
             } else {
                 row.exactCopyLabel = QStringLiteral("Unique");
             }
-            rows.push_back(std::move(row));
+            m_displayRows.push_back(std::move(row));
         }
     }
 
     // Sort by physical impact descending by default
-    std::sort(rows.begin(), rows.end(), [](const ItemDisplayRow& a, const ItemDisplayRow& b) {
-        if (a.physicalImpact != b.physicalImpact) {
-            return a.physicalImpact > b.physicalImpact;
-        }
-        if (a.entry->logicalBytes != b.entry->logicalBytes) {
-            return a.entry->logicalBytes > b.entry->logicalBytes;
-        }
-        return a.entry->entryId < b.entry->entryId;
-    });
+    std::sort(m_displayRows.begin(), m_displayRows.end(),
+              [](const ItemDisplayRow& a, const ItemDisplayRow& b) {
+                  if (a.physicalImpact != b.physicalImpact) {
+                      return a.physicalImpact > b.physicalImpact;
+                  }
+                  if (a.entry->logicalBytes != b.entry->logicalBytes) {
+                      return a.entry->logicalBytes > b.entry->logicalBytes;
+                  }
+                  return a.entry->entryId < b.entry->entryId;
+              });
 
-    for (const auto& r : rows) {
+    for (const auto& r : m_displayRows) {
         const int rowIdx = m_entries->rowCount();
         m_entries->insertRow(rowIdx);
 
@@ -374,9 +481,9 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
             const auto& hid = *entry.humanIdentity;
             displayName = QString::fromStdString(hid.displayName);
             summary = QString::fromStdString(hid.contentSummary);
-            if (hid.previewAvailable) {
+            if (hid.previewAvailable && !entry.nativePath.empty()) {
                 previewPixmap = m_previewProvider.getPreviewPixmap(
-                    QString::fromStdString(hid.previewReference),
+                    QString::fromStdWString(entry.nativePath),
                     hid, QSize(96, 60));
             }
         } else {
@@ -384,17 +491,20 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
             summary = QStringLiteral("Content could not be identified safely");
         }
 
+        const QString fullPathStr = QString::fromStdWString(entry.nativePath);
+
         // Preview item
         auto* previewItem = new QTableWidgetItem();
         if (!previewPixmap.isNull()) {
             previewItem->setIcon(QIcon(previewPixmap));
         }
         previewItem->setTextAlignment(Qt::AlignCenter);
+        previewItem->setToolTip(fullPathStr.isEmpty() ? summary : fullPathStr);
         m_entries->setItem(rowIdx, ColPreview, previewItem);
 
         // Name
         auto* nameItem = new QTableWidgetItem(displayName);
-        nameItem->setToolTip(displayName);
+        nameItem->setToolTip(fullPathStr.isEmpty() ? displayName : fullPathStr);
         m_entries->setItem(rowIdx, ColName, nameItem);
 
         // Summary
@@ -440,8 +550,21 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
         }
         m_entries->setItem(rowIdx, ColConfidence, confItem);
 
-        // Category
-        auto* catItem = new QTableWidgetItem(QString::fromStdString(entry.categoryAlias));
+        // Category with recommendation tag
+        QString categoryLabel = QString::fromStdString(entry.categoryAlias);
+        QString categoryTooltip = categoryLabel;
+        if (entry.categoryAlias == "file-noise") {
+            categoryLabel = QStringLiteral("file-noise [Cache]");
+            categoryTooltip = QStringLiteral("Transit Cache · An toan de xoa (Safe to delete)");
+        } else if (entry.categoryAlias == "resource") {
+            categoryLabel = QStringLiteral("resource [Chat Cache]");
+            categoryTooltip = QStringLiteral("Chat media cache · Xem xet xoa");
+        } else if (entry.categoryAlias == "video") {
+            categoryLabel = QStringLiteral("video [Downloads]");
+            categoryTooltip = QStringLiteral("Video download");
+        }
+        auto* catItem = new QTableWidgetItem(categoryLabel);
+        catItem->setToolTip(categoryTooltip);
         m_entries->setItem(rowIdx, ColCategory, catItem);
 
         // Root/Account
@@ -455,6 +578,14 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
     }
     m_entries->setUpdatesEnabled(true);
 
+    if (totalFileNoiseBytes > 0) {
+        m_cleanFileNoiseButton->setText(
+            QStringLiteral("Clean fileNoise (%1)").arg(formatBytes(totalFileNoiseBytes)));
+        m_cleanFileNoiseButton->show();
+    } else {
+        m_cleanFileNoiseButton->hide();
+    }
+
     const auto& accounting = report.accounting;
     const QLocale locale;
     m_metrics->setItems({
@@ -464,7 +595,7 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
         {QStringLiteral("Account aliases"),
          locale.toString(static_cast<qulonglong>(report.accounts.size())), {}},
         {QStringLiteral("Entries"),
-         locale.toString(static_cast<qulonglong>(rows.size())), {}},
+         locale.toString(static_cast<qulonglong>(m_displayRows.size())), {}},
         {QStringLiteral("Path-visible logical"),
          formatKnownBytes(accounting.pathVisibleLogicalBytes,
                           accounting.pathVisibleLogicalKnown), {}},
@@ -477,25 +608,275 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
         {QStringLiteral("Physical impact"),
          formatPartialBytes(accounting.allObservedPathReleaseBytes,
                             accounting.partialKnownReleaseBytes),
-         QStringLiteral("Physical reclaimable footprint; read-only review.")},
+         QStringLiteral("Physical footprint on disk.")},
     });
 
     m_reportSummary->setText(
-        QStringLiteral("%1 · %2 root(s) · %3 account(s) · %4 entries · Sorted by Physical Impact")
+        QStringLiteral("%1 · %2 root(s) · %3 account(s) · %4 entries · Sorted by Physical Impact · Right-click or double-click to reveal/delete.")
             .arg(storageStatus(report.status))
             .arg(report.roots.size())
             .arg(report.accounts.size())
-            .arg(rows.size()));
+            .arg(m_displayRows.size()));
     m_reportSummary->setVisible(true);
 
-    if (rows.empty()) {
+    if (m_displayRows.empty()) {
+        m_deleteButton->hide();
+        m_rootSummary->setText(
+            QStringLiteral("Scan complete: No Zalo entries found."));
         showEmptyState(
             QStringLiteral("No Zalo entries found"),
-            QStringLiteral("The review completed but found no files in the scanned directories."),
+            QStringLiteral("The review completed but found no files in the scanned directories. Click Review to scan again."),
             true);
     } else {
+        m_deleteButton->show();
+        m_rootSummary->setText(
+            QStringLiteral("Review complete. Double-click or right-click any item to view/delete."));
         m_stack->setCurrentWidget(m_entries);
     }
+    onSelectionChanged();
+}
+
+void ZaloStorageReviewPage::onSelectionChanged()
+{
+    if (m_entries == nullptr || m_deleteButton == nullptr) {
+        return;
+    }
+    const auto selected = m_entries->selectionModel() != nullptr
+                              ? m_entries->selectionModel()->selectedRows()
+                              : QModelIndexList{};
+    const bool running = m_session != nullptr && m_session->isRunning();
+    if (selected.isEmpty() || running || m_displayRows.empty()) {
+        m_deleteButton->setEnabled(false);
+        m_deleteButton->setText(QStringLiteral("Delete Selected"));
+    } else {
+        ByteSize totalBytes = 0;
+        for (const auto& index : selected) {
+            const int row = index.row();
+            if (row >= 0 && static_cast<std::size_t>(row) < m_displayRows.size()) {
+                totalBytes += m_displayRows[row].physicalImpact;
+            }
+        }
+        m_deleteButton->setEnabled(true);
+        if (selected.size() == 1) {
+            m_deleteButton->setText(
+                QStringLiteral("Delete Selected (%1)").arg(formatBytes(totalBytes)));
+        } else {
+            m_deleteButton->setText(
+                QStringLiteral("Delete Selected (%1 items · %2)")
+                    .arg(selected.size())
+                    .arg(formatBytes(totalBytes)));
+        }
+    }
+}
+
+void ZaloStorageReviewPage::onTableContextMenu(const QPoint& pos)
+{
+    const int clickedRow = m_entries->rowAt(pos.y());
+    if (clickedRow < 0 || static_cast<std::size_t>(clickedRow) >= m_displayRows.size()) {
+        return;
+    }
+
+    if (m_entries->selectionModel() == nullptr) {
+        return;
+    }
+
+    // If clicked row is not currently selected, select only this row
+    if (!m_entries->selectionModel()->isRowSelected(clickedRow, QModelIndex())) {
+        m_entries->selectRow(clickedRow);
+    }
+
+    const auto selected = m_entries->selectionModel()->selectedRows();
+    const auto& rowData = m_displayRows[clickedRow];
+    QMenu menu(this);
+    
+    QAction* revealAction = menu.addAction(QStringLiteral("📂 Reveal in File Explorer (Mở thư mục)"));
+    QAction* copyPathAction = menu.addAction(QStringLiteral("📋 Copy File Path (Sao chép đường dẫn)"));
+    menu.addSeparator();
+    
+    QString deleteLabel = QStringLiteral("🗑️ Delete to Recycle Bin (Xóa vào thùng rác)");
+    if (selected.size() > 1) {
+        deleteLabel = QStringLiteral("🗑️ Delete %1 Selected to Recycle Bin (Xóa %1 mục)").arg(selected.size());
+    }
+    QAction* deleteAction = menu.addAction(deleteLabel);
+
+    QAction* chosen = menu.exec(m_entries->viewport()->mapToGlobal(pos));
+    if (chosen == revealAction) {
+        revealInExplorer(rowData.nativePath);
+    } else if (chosen == copyPathAction) {
+        QGuiApplication::clipboard()->setText(QString::fromStdWString(rowData.nativePath));
+        emit statusMessage(QStringLiteral("Path copied to clipboard."));
+    } else if (chosen == deleteAction) {
+        onDeleteSelected();
+    }
+}
+
+void ZaloStorageReviewPage::onCellDoubleClicked(int row, int /*column*/)
+{
+    if (row >= 0 && static_cast<std::size_t>(row) < m_displayRows.size()) {
+        revealInExplorer(m_displayRows[row].nativePath);
+    }
+}
+
+void ZaloStorageReviewPage::onRevealInExplorer()
+{
+    const int row = m_entries->currentRow();
+    if (row >= 0 && static_cast<std::size_t>(row) < m_displayRows.size()) {
+        revealInExplorer(m_displayRows[row].nativePath);
+    }
+}
+
+void ZaloStorageReviewPage::onCopyPath()
+{
+    const int row = m_entries->currentRow();
+    if (row >= 0 && static_cast<std::size_t>(row) < m_displayRows.size()) {
+        QGuiApplication::clipboard()->setText(
+            QString::fromStdWString(m_displayRows[row].nativePath));
+        emit statusMessage(QStringLiteral("Path copied to clipboard."));
+    }
+}
+
+void ZaloStorageReviewPage::onDeleteSelected()
+{
+    if (m_entries == nullptr || m_entries->selectionModel() == nullptr) {
+        return;
+    }
+    const auto selectedIndices = m_entries->selectionModel()->selectedRows();
+    if (selectedIndices.isEmpty()) {
+        return;
+    }
+
+    std::vector<int> rows;
+    rows.reserve(selectedIndices.size());
+    for (const auto& idx : selectedIndices) {
+        rows.push_back(idx.row());
+    }
+    std::sort(rows.begin(), rows.end(), std::greater<int>());
+
+    ByteSize totalBytes = 0;
+    std::vector<std::wstring> paths;
+    paths.reserve(rows.size());
+    for (const int r : rows) {
+        if (r >= 0 && static_cast<std::size_t>(r) < m_displayRows.size()) {
+            totalBytes += m_displayRows[r].physicalImpact;
+            paths.push_back(m_displayRows[r].nativePath);
+        }
+    }
+
+    if (paths.empty()) {
+        return;
+    }
+
+    const QString title = QStringLiteral("Confirm Move to Recycle Bin");
+    QString message;
+    if (paths.size() == 1) {
+        const int row = rows.front();
+        const QString name = m_entries->item(row, ColName) != nullptr
+                                 ? m_entries->item(row, ColName)->text()
+                                 : QStringLiteral("Selected item");
+        message = QStringLiteral(
+                      "Move this file to the Windows Recycle Bin?\n\n%1 (%2)\n\nPath: %3")
+                      .arg(name, formatBytes(totalBytes),
+                           QString::fromStdWString(paths.front()));
+    } else {
+        message = QStringLiteral(
+                      "Move %1 selected items (~%2) to the Windows Recycle Bin?\n\n"
+                      "This action is safe and reversible via the Recycle Bin.")
+                      .arg(paths.size())
+                      .arg(formatBytes(totalBytes));
+    }
+
+    const auto reply = QMessageBox::question(
+        this, title, message, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+
+    std::size_t successCount = 0;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const int r = rows[i];
+        const auto& path = paths[i];
+        if (sendFileToRecycleBin(path)) {
+            ++successCount;
+            m_entries->removeRow(r);
+            if (static_cast<std::size_t>(r) < m_displayRows.size()) {
+                m_displayRows.erase(m_displayRows.begin() + r);
+            }
+        }
+    }
+
+    if (successCount == paths.size()) {
+        emit statusMessage(
+            QStringLiteral("Successfully moved %1 item(s) to Recycle Bin.")
+                .arg(successCount));
+    } else {
+        QMessageBox::warning(
+            this, QStringLiteral("Partial Delete"),
+            QStringLiteral("Moved %1 of %2 items to Recycle Bin. Some files may be locked by Zalo.")
+                .arg(successCount)
+                .arg(paths.size()));
+    }
+
+    if (m_displayRows.empty()) {
+        clearReport();
+        showEmptyState(
+            QStringLiteral("All items deleted"),
+            QStringLiteral("All reviewed items have been moved to the Recycle Bin. Click Review to scan again."),
+            true);
+    } else {
+        m_reportSummary->setText(
+            QStringLiteral("%1 remaining entries · Sorted by Physical Impact · Right-click or double-click to reveal/delete.")
+                .arg(m_displayRows.size()));
+        onSelectionChanged();
+    }
+}
+
+void ZaloStorageReviewPage::onCleanFileNoise()
+{
+    std::vector<std::wstring> pathsToDelete;
+    ByteSize totalBytes = 0;
+    for (const auto& row : m_displayRows) {
+        if (row.entry != nullptr && row.entry->categoryAlias == "file-noise" &&
+            !row.nativePath.empty()) {
+            pathsToDelete.push_back(row.nativePath);
+            if (!row.entry->hardLinkAlias) {
+                totalBytes += row.physicalImpact;
+            }
+        }
+    }
+
+    if (pathsToDelete.empty()) {
+        QMessageBox::information(this, QStringLiteral("Clean fileNoise"),
+                                 QStringLiteral("No fileNoise cache files found."));
+        return;
+    }
+
+    const auto reply = QMessageBox::question(
+        this, QStringLiteral("Confirm Clean fileNoise"),
+        QStringLiteral("Clean %1 ephemeral cache files (~%2)?\n\n"
+                       "All files will be moved safely to your Windows Recycle Bin.")
+            .arg(pathsToDelete.size())
+            .arg(formatBytes(totalBytes)),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+
+    std::size_t deletedCount = 0;
+    for (const auto& path : pathsToDelete) {
+        if (sendFileToRecycleBin(path)) {
+            ++deletedCount;
+        }
+    }
+
+    QMessageBox::information(
+        this, QStringLiteral("Clean Complete"),
+        QStringLiteral("Successfully moved %1 of %2 cache files to the Recycle Bin.")
+            .arg(deletedCount)
+            .arg(pathsToDelete.size()));
+
+    // Refresh review
+    onReview();
 }
 
 }  // namespace spacelens

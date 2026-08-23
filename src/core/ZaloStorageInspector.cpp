@@ -1335,6 +1335,87 @@ RootShapeResult discoverRootShape(const RootCandidate& candidate,
         }
     }
 
+    if (discoverAccounts && result.accounts.empty() && !candidate.userFacingRoot &&
+        !candidate.path.empty()) {
+        for (const auto& entry : rootListing.entries) {
+            if (cancellation.requested()) {
+                result.status = RootShapeStatus::Cancelled;
+                return result;
+            }
+            if (!entry.directory || entry.reparse ||
+                !equalInsensitive(entry.name, L"media")) {
+                continue;
+            }
+            const std::wstring mediaChildPath = joinNative(candidate.path, entry.name);
+            UniqueHandle mediaChild = openNoFollow(mediaChildPath, true);
+            if (!mediaChild.valid()) {
+                result.partialEvidence = true;
+                if (isAccessError(::GetLastError())) {
+                    result.accessDeniedEvidence = true;
+                }
+                continue;
+            }
+            const auto mediaIdentity = queryFileIdentityFromHandle(mediaChild.get());
+            if (!mediaIdentity || !mediaIdentity->observationConsistent ||
+                !mediaIdentity->isDirectory ||
+                (mediaIdentity->attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+                result.partialEvidence = true;
+                continue;
+            }
+            const RawDirectoryListing mediaListing = listImmediateChildren(
+                mediaChild.get(), *mediaIdentity, cancellation);
+            if (mediaListing.status == DirectoryReadStatus::Cancelled) {
+                result.status = RootShapeStatus::Cancelled;
+                return result;
+            }
+            if (mediaListing.status != DirectoryReadStatus::Ok) {
+                result.partialEvidence = true;
+                continue;
+            }
+            for (const auto& accEntry : mediaListing.entries) {
+                if (cancellation.requested()) {
+                    result.status = RootShapeStatus::Cancelled;
+                    return result;
+                }
+                if (!accEntry.directory || accEntry.reparse ||
+                    isGenericNonAccountDirectory(accEntry.name)) {
+                    continue;
+                }
+                const std::wstring accPath = joinNative(mediaChildPath, accEntry.name);
+                UniqueHandle accChild = openNoFollow(accPath, true);
+                if (!accChild.valid()) {
+                    result.partialEvidence = true;
+                    continue;
+                }
+                const auto accIdentity = queryFileIdentityFromHandle(accChild.get());
+                if (!accIdentity || !accIdentity->observationConsistent ||
+                    !accIdentity->isDirectory ||
+                    (accIdentity->attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+                    result.partialEvidence = true;
+                    continue;
+                }
+                const RawDirectoryListing accListing = listImmediateChildren(
+                    accChild.get(), *accIdentity, cancellation);
+                if (accListing.status == DirectoryReadStatus::Cancelled) {
+                    result.status = RootShapeStatus::Cancelled;
+                    return result;
+                }
+                if (accListing.status != DirectoryReadStatus::Ok) {
+                    result.partialEvidence = true;
+                    continue;
+                }
+                for (const auto& nested : accListing.entries) {
+                    if (nested.directory && !nested.reparse &&
+                        equalInsensitive(nested.name, kZaloDownloadsName)) {
+                        addAccountPath(result.accounts,
+                                       joinNative(accPath, nested.name));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     if (!result.accounts.empty()) {
         result.status = RootShapeStatus::Matched;
     } else if (result.accessDeniedEvidence) {
@@ -3177,6 +3258,10 @@ ZaloEntry makePublicEntry(const InternalEntry& internal, std::string id,
         entry.humanIdentity = buildHumanIdentity(
             internal.contentIdentification.value_or(ZaloContentResult{}),
             "", internal.logicalBytes, entry.categoryAlias);
+    }
+    entry.nativePath = internal.nativePath;
+    if (entry.humanIdentity.has_value()) {
+        entry.humanIdentity->previewReference = utf8FromWide(internal.nativePath);
     }
     switch (internal.consistency) {
     case EvidenceState::Consistent:

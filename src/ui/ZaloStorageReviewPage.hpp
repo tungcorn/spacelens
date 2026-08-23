@@ -9,6 +9,7 @@
 #include <optional>
 
 class QLabel;
+class QProgressBar;
 class QPushButton;
 class QStackedWidget;
 class QTableWidget;
@@ -37,6 +38,13 @@ private slots:
     void onCancel();
     void onSessionStatus(const QString& message);
     void onFinished(spacelens::ZaloStorageStatus status);
+    void onTableContextMenu(const QPoint& pos);
+    void onCellDoubleClicked(int row, int column);
+    void onRevealInExplorer();
+    void onCopyPath();
+    void onDeleteSelected();
+    void onCleanFileNoise();
+    void onSelectionChanged();
 
 private:
     enum Column {
@@ -55,6 +63,14 @@ private:
         ColCount
     };
 
+    struct ItemDisplayRow {
+        const ZaloAccountReport* account = nullptr;
+        const ZaloEntry* entry = nullptr;
+        ByteSize physicalImpact = 0;
+        QString exactCopyLabel;
+        std::wstring nativePath;
+    };
+
     void buildUi();
     void clearReport();
     void applyReport(const ZaloStorageReport& report);
@@ -66,6 +82,7 @@ private:
     ZaloStorageSession* m_session = nullptr;
     ZaloPreviewProvider m_previewProvider;
     std::optional<ZaloStorageReport> m_report;
+    std::vector<ItemDisplayRow> m_displayRows;
 
     QStackedWidget* m_stack = nullptr;
     EmptyStateWidget* m_empty = nullptr;
@@ -76,6 +93,9 @@ private:
     QPushButton* m_chooseButton = nullptr;
     QPushButton* m_reviewButton = nullptr;
     QPushButton* m_cancelButton = nullptr;
+    QPushButton* m_cleanFileNoiseButton = nullptr;
+    QPushButton* m_deleteButton = nullptr;
+    QProgressBar* m_progressBar = nullptr;
 };
 
 }  // namespace spacelens
