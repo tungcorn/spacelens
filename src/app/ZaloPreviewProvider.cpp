@@ -13,12 +13,15 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <propvarutil.h>
+#include <shlobj.h>
+#include <thumbcache.h>
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfreadwrite.lib")
 #pragma comment(lib, "mfuuid.lib")
 #pragma comment(lib, "propsys.lib")
+#pragma comment(lib, "shell32.lib")
 #endif
 
 namespace spacelens {
@@ -30,6 +33,7 @@ public:
     MfInitializer()
     {
 #ifdef _WIN32
+        ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         m_hr = ::MFStartup(MF_VERSION);
 #endif
     }
@@ -39,6 +43,7 @@ public:
         if (SUCCEEDED(m_hr)) {
             ::MFShutdown();
         }
+        ::CoUninitialize();
 #endif
     }
     [[nodiscard]] bool ok() const noexcept
@@ -55,6 +60,52 @@ private:
     HRESULT m_hr = E_FAIL;
 #endif
 };
+
+#ifdef _WIN32
+static QImage hBitmapToQImage(HBITMAP hBitmap)
+{
+    if (!hBitmap) return {};
+    BITMAP bmp{};
+    if (!::GetObjectW(hBitmap, sizeof(bmp), &bmp)) return {};
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = bmp.bmWidth;
+    bi.bmiHeader.biHeight = -bmp.bmHeight; // top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    QImage image(bmp.bmWidth, bmp.bmHeight, QImage::Format_ARGB32_Premultiplied);
+    HDC hdc = ::GetDC(nullptr);
+    if (!hdc) return {};
+    const int lines = ::GetDIBits(hdc, hBitmap, 0, bmp.bmHeight, image.bits(), &bi, DIB_RGB_COLORS);
+    ::ReleaseDC(nullptr, hdc);
+    if (lines <= 0) return {};
+    return image;
+}
+
+static QImage extractShellThumbnail(const std::wstring& widePath, int targetW, int targetH)
+{
+    if (widePath.empty()) return {};
+    ComPtr<IShellItemImageFactory> factory;
+    if (FAILED(::SHCreateItemFromParsingName(widePath.c_str(), nullptr, IID_PPV_ARGS(&factory)))) {
+        return {};
+    }
+    SIZE size{targetW, targetH};
+    HBITMAP hBmp = nullptr;
+    // SIIGBF_BIGGERSIZEOK (0x1) | SIIGBF_THUMBNAILONLY (0x2)
+    HRESULT hr = factory->GetImage(size, 0x00000001 | 0x00000002, &hBmp);
+    if (FAILED(hr) || !hBmp) {
+        hr = factory->GetImage(size, 0x00000000, &hBmp);
+    }
+    if (SUCCEEDED(hr) && hBmp) {
+        QImage result = hBitmapToQImage(hBmp);
+        ::DeleteObject(hBmp);
+        return result;
+    }
+    return {};
+}
+#endif
 
 MfInitializer& globalMf()
 {
@@ -280,7 +331,7 @@ QPixmap ZaloPreviewProvider::getVideoContactSheet(
     const ZaloVideoMetadata& videoMeta,
     const QSize& targetSize)
 {
-    const int w = std::max(targetSize.width(), 180);
+    const int w = std::max(targetSize.width(), 96);
     const int h = std::max(targetSize.height(), 54);
 
     QPixmap sheet(w, h);
@@ -302,6 +353,9 @@ QPixmap ZaloPreviewProvider::getVideoContactSheet(
     for (int i = 0; i < 3; ++i) {
         const QRect rect(2 + i * (subWidth + 2), 2, subWidth, subHeight);
         QImage frame = extractVideoFrameAtTime(filePath, timestamps[static_cast<size_t>(i)]);
+        if (frame.isNull() && i == 0) {
+            frame = extractVideoFrameAtTime(filePath, 0);
+        }
         if (!frame.isNull()) {
             anyFrameExtracted = true;
             QImage scaled = frame.scaled(rect.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
@@ -326,11 +380,35 @@ QPixmap ZaloPreviewProvider::getVideoContactSheet(
     }
 
     if (!anyFrameExtracted) {
-        // Synthesize a clean video slate card
+#ifdef _WIN32
+        QImage shellThumb = extractShellThumbnail(filePath.toStdWString(), w, h);
+        if (!shellThumb.isNull()) {
+            anyFrameExtracted = true;
+            QImage scaled = shellThumb.scaled(QSize(w, h), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+            const int cropX = (scaled.width() - w) / 2;
+            const int cropY = (scaled.height() - h) / 2;
+            painter.drawImage(QPoint(0, 0), scaled, QRect(cropX, cropY, w, h));
+
+            // Dark bottom overlay badge
+            painter.fillRect(QRect(0, h - 18, w, 18), QColor(0, 0, 0, 180));
+            painter.setPen(Qt::white);
+            painter.setFont(QFont(QStringLiteral("Segoe UI"), 8, QFont::Bold));
+            QString overlayText = QStringLiteral("▶ VIDEO");
+            if (dur > 0 && dur != 10000ULL) {
+                const uint64_t totalSec = dur / 1000ULL;
+                overlayText = QString::asprintf("▶ %02llu:%02llu", totalSec / 60ULL, totalSec % 60ULL);
+            }
+            painter.drawText(QRect(4, h - 18, w - 8, 18), Qt::AlignLeft | Qt::AlignVCenter, overlayText);
+        }
+#endif
+    }
+
+    if (!anyFrameExtracted) {
+        // Synthesize a clean, attractive video slate card
         painter.fillRect(QRect(0, 0, w, h), QColor(24, 28, 36));
         painter.setPen(QColor(60, 130, 246));
         painter.setFont(QFont(QStringLiteral("Segoe UI"), 9, QFont::Bold));
-        QString label = QStringLiteral("VIDEO");
+        QString label = QStringLiteral("🎬 VIDEO");
         if (videoMeta.width > 0 && videoMeta.height > 0) {
             label += QString::asprintf(" · %ux%u", videoMeta.width, videoMeta.height);
         }

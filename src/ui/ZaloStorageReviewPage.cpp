@@ -11,11 +11,14 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
@@ -25,6 +28,7 @@
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QTimeZone>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <windows.h>
@@ -133,6 +137,19 @@ void revealInExplorer(const std::wstring& path)
     }
     const std::wstring param = L"/select,\"" + path + L"\"";
     ::ShellExecuteW(nullptr, L"open", L"explorer.exe", param.c_str(), nullptr, SW_SHOW);
+}
+
+void openFileDefaultApp(const std::wstring& path)
+{
+    if (path.empty()) {
+        return;
+    }
+    const QString qPath = QString::fromStdWString(path);
+    if (QFileInfo::exists(qPath)) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(qPath));
+    } else {
+        revealInExplorer(path);
+    }
 }
 
 }  // namespace
@@ -287,6 +304,8 @@ void ZaloStorageReviewPage::buildUi()
             &ZaloStorageReviewPage::onCellDoubleClicked);
     connect(m_entries, &QTableWidget::itemSelectionChanged, this,
             &ZaloStorageReviewPage::onSelectionChanged);
+
+    m_entries->installEventFilter(this);
 
     auto* deleteShortcut = new QShortcut(QKeySequence::Delete, m_entries);
     connect(deleteShortcut, &QShortcut::activated, this,
@@ -762,6 +781,11 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
             content == nullptr ? ZaloContentConfidence::Unknown
                                : content->confidence;
 
+        QString actualFileName;
+        if (!entry.nativePath.empty()) {
+            actualFileName = QFileInfo(QString::fromStdWString(entry.nativePath)).fileName();
+        }
+
         QString displayName;
         QString summary;
         QPixmap previewPixmap;
@@ -773,14 +797,50 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
             if (hid.previewAvailable && !entry.nativePath.empty()) {
                 previewPixmap = m_previewProvider.getPreviewPixmap(
                     QString::fromStdWString(entry.nativePath),
-                    hid, QSize(96, 60));
+                    hid, QSize(96, 56));
             }
         } else {
             displayName = QStringLiteral("Unknown Zalo data");
             summary = QStringLiteral("Content could not be identified safely");
         }
 
+        // Display actual disk filename so users can immediately recognize their files
+        if (!actualFileName.isEmpty()) {
+            if (displayName.isEmpty() ||
+                displayName == QStringLiteral("Unknown Zalo data") ||
+                displayName.startsWith(QStringLiteral("MP4 Video")) ||
+                displayName.startsWith(QStringLiteral("MOV Video")) ||
+                displayName.startsWith(QStringLiteral("JPEG Image")) ||
+                displayName.startsWith(QStringLiteral("PNG Image")) ||
+                displayName.startsWith(QStringLiteral("WebP Image")) ||
+                displayName.startsWith(QStringLiteral("GIF Image")) ||
+                displayName.startsWith(QStringLiteral("PDF Document")) ||
+                displayName.startsWith(QStringLiteral("DOCX Document")) ||
+                displayName.startsWith(QStringLiteral("XLSX Document")) ||
+                displayName.startsWith(QStringLiteral("PPTX Document")) ||
+                displayName.startsWith(QStringLiteral("ZIP Archive")) ||
+                displayName.startsWith(QStringLiteral("Zalo item"))) {
+                displayName = actualFileName;
+            }
+        }
+
         const QString fullPathStr = QString::fromStdWString(entry.nativePath);
+
+        const QString fullTooltip =
+            QStringLiteral("<b>%1</b><br/>"
+                           "<b>Path:</b> %2<br/>"
+                           "<b>Type / Summary:</b> %3<br/>"
+                           "<b>Size:</b> %4 (Physical Impact: %5)<br/>"
+                           "<b>Modified:</b> %6<br/>"
+                           "<hr/>"
+                           "<i>• Double-click or Enter: Open / Play file<br/>"
+                           "• Right-click or Del: Delete to Recycle Bin</i>")
+                .arg((!actualFileName.isEmpty() ? actualFileName : displayName).toHtmlEscaped())
+                .arg(fullPathStr.toHtmlEscaped())
+                .arg(summary.toHtmlEscaped())
+                .arg(formatBytes(entry.logicalBytes))
+                .arg(formatBytes(r.physicalImpact))
+                .arg(formatFileAge(entry.lastWriteTicks));
 
         // Preview item
         auto* previewItem = new QTableWidgetItem();
@@ -788,19 +848,19 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
             previewItem->setIcon(QIcon(previewPixmap));
         }
         previewItem->setTextAlignment(Qt::AlignCenter);
-        previewItem->setToolTip(fullPathStr.isEmpty() ? summary : fullPathStr);
+        previewItem->setToolTip(fullTooltip);
         previewItem->setData(Qt::UserRole, fullPathStr);
         previewItem->setData(Qt::UserRole + 1, static_cast<qulonglong>(r.physicalImpact));
         m_entries->setItem(rowIdx, ColPreview, previewItem);
 
         // Name
         auto* nameItem = new QTableWidgetItem(displayName);
-        nameItem->setToolTip(fullPathStr.isEmpty() ? displayName : fullPathStr);
+        nameItem->setToolTip(fullTooltip);
         m_entries->setItem(rowIdx, ColName, nameItem);
 
         // Summary
         auto* summaryItem = new QTableWidgetItem(summary);
-        summaryItem->setToolTip(summary);
+        summaryItem->setToolTip(fullTooltip);
         m_entries->setItem(rowIdx, ColSummary, summaryItem);
 
         // Physical Impact
@@ -846,10 +906,10 @@ void ZaloStorageReviewPage::applyReport(const ZaloStorageReport& report)
         QString categoryTooltip = categoryLabel;
         if (entry.categoryAlias == "file-noise") {
             categoryLabel = QStringLiteral("file-noise [Cache]");
-            categoryTooltip = QStringLiteral("Transit Cache · An toan de xoa (Safe to delete)");
+            categoryTooltip = QStringLiteral("Transit Cache · Safe to delete");
         } else if (entry.categoryAlias == "resource") {
             categoryLabel = QStringLiteral("resource [Chat Cache]");
-            categoryTooltip = QStringLiteral("Chat media cache · Xem xet xoa");
+            categoryTooltip = QStringLiteral("Chat media cache · Review before delete");
         } else if (entry.categoryAlias == "video") {
             categoryLabel = QStringLiteral("video [Downloads]");
             categoryTooltip = QStringLiteral("Video download");
@@ -980,18 +1040,21 @@ void ZaloStorageReviewPage::onTableContextMenu(const QPoint& pos)
     const auto& rowData = m_displayRows[clickedRow];
     QMenu menu(this);
     
-    QAction* revealAction = menu.addAction(QStringLiteral("📂 Reveal in File Explorer (Mở thư mục)"));
-    QAction* copyPathAction = menu.addAction(QStringLiteral("📋 Copy File Path (Sao chép đường dẫn)"));
+    QAction* openAction = menu.addAction(QStringLiteral("▶ Open / Play File"));
+    QAction* revealAction = menu.addAction(QStringLiteral("📂 Reveal in File Explorer"));
+    QAction* copyPathAction = menu.addAction(QStringLiteral("📋 Copy File Path"));
     menu.addSeparator();
     
-    QString deleteLabel = QStringLiteral("🗑️ Delete to Recycle Bin (Xóa vào thùng rác)");
+    QString deleteLabel = QStringLiteral("🗑️ Delete to Recycle Bin");
     if (selected.size() > 1) {
-        deleteLabel = QStringLiteral("🗑️ Delete %1 Selected to Recycle Bin (Xóa %1 mục)").arg(selected.size());
+        deleteLabel = QStringLiteral("🗑️ Delete %1 Selected to Recycle Bin").arg(selected.size());
     }
     QAction* deleteAction = menu.addAction(deleteLabel);
 
     QAction* chosen = menu.exec(m_entries->viewport()->mapToGlobal(pos));
-    if (chosen == revealAction) {
+    if (chosen == openAction) {
+        onOpenFile();
+    } else if (chosen == revealAction) {
         revealInExplorer(rowData.nativePath);
     } else if (chosen == copyPathAction) {
         QGuiApplication::clipboard()->setText(QString::fromStdWString(rowData.nativePath));
@@ -1004,7 +1067,15 @@ void ZaloStorageReviewPage::onTableContextMenu(const QPoint& pos)
 void ZaloStorageReviewPage::onCellDoubleClicked(int row, int /*column*/)
 {
     if (row >= 0 && static_cast<std::size_t>(row) < m_displayRows.size()) {
-        revealInExplorer(m_displayRows[row].nativePath);
+        openFileDefaultApp(m_displayRows[row].nativePath);
+    }
+}
+
+void ZaloStorageReviewPage::onOpenFile()
+{
+    const int row = m_entries ? m_entries->currentRow() : -1;
+    if (row >= 0 && static_cast<std::size_t>(row) < m_displayRows.size()) {
+        openFileDefaultApp(m_displayRows[row].nativePath);
     }
 }
 
@@ -1024,6 +1095,23 @@ void ZaloStorageReviewPage::onCopyPath()
             QString::fromStdWString(m_displayRows[row].nativePath));
         emit statusMessage(QStringLiteral("Path copied to clipboard."));
     }
+}
+
+bool ZaloStorageReviewPage::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj == m_entries && event != nullptr && event->type() == QEvent::KeyPress) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (keyEvent->key() == Qt::Key_Delete) {
+            onDeleteSelected();
+            return true;
+        }
+        if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter ||
+            keyEvent->key() == Qt::Key_Space) {
+            onOpenFile();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(obj, event);
 }
 
 void ZaloStorageReviewPage::onDeleteSelected()

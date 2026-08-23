@@ -40,12 +40,16 @@ private slots:
     void onFinished(spacelens::ZaloStorageStatus status);
     void onTableContextMenu(const QPoint& pos);
     void onCellDoubleClicked(int row, int column);
+    void onOpenFile();
     void onRevealInExplorer();
     void onCopyPath();
     void onDeleteSelected();
     void onCleanFileNoise();
     void onSelectionChanged();
     void onProgressUpdated(const spacelens::ZaloScanProgress& progress);
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
     enum Column {
