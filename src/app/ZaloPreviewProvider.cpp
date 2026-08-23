@@ -84,19 +84,45 @@ static QImage hBitmapToQImage(HBITMAP hBitmap)
     return image;
 }
 
+static QString ensureExtensionPath(const QString& filePath, const QString& defaultExt = QStringLiteral("mp4"))
+{
+    if (filePath.isEmpty()) {
+        return {};
+    }
+    QFileInfo fi(filePath);
+    if (!fi.suffix().isEmpty()) {
+        return filePath;
+    }
+
+    const QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/SpaceLens/preview_links");
+    QDir().mkpath(tempDir);
+    const QString linkPath = tempDir + QStringLiteral("/") + fi.fileName() + QStringLiteral(".") + defaultExt;
+
+    if (!QFileInfo::exists(linkPath)) {
+        if (!::CreateHardLinkW(linkPath.toStdWString().c_str(), filePath.toStdWString().c_str(), nullptr)) {
+            ::CopyFileW(filePath.toStdWString().c_str(), linkPath.toStdWString().c_str(), FALSE);
+        }
+    }
+    return QFileInfo::exists(linkPath) ? linkPath : filePath;
+}
+
 static QImage extractShellThumbnail(const std::wstring& widePath, int targetW, int targetH)
 {
     if (widePath.empty()) return {};
+    const QString qPath = QString::fromStdWString(widePath);
+    const QString effectivePath = ensureExtensionPath(qPath, QStringLiteral("mp4"));
+    const std::wstring effectiveWide = effectivePath.toStdWString();
+
     ComPtr<IShellItemImageFactory> factory;
-    if (FAILED(::SHCreateItemFromParsingName(widePath.c_str(), nullptr, IID_PPV_ARGS(&factory)))) {
+    if (FAILED(::SHCreateItemFromParsingName(effectiveWide.c_str(), nullptr, IID_PPV_ARGS(&factory)))) {
         return {};
     }
     SIZE size{targetW, targetH};
     HBITMAP hBmp = nullptr;
-    // SIIGBF_BIGGERSIZEOK (0x1) | SIIGBF_THUMBNAILONLY (0x2)
-    HRESULT hr = factory->GetImage(size, 0x00000001 | 0x00000002, &hBmp);
+    // SIIGBF_BIGGERSIZEOK (0x1) | SIIGBF_THUMBNAILONLY (0x8)
+    HRESULT hr = factory->GetImage(size, 0x00000001 | 0x00000008, &hBmp);
     if (FAILED(hr) || !hBmp) {
-        hr = factory->GetImage(size, 0x00000000, &hBmp);
+        hr = factory->GetImage(size, 0x00000001, &hBmp);
     }
     if (SUCCEEDED(hr) && hBmp) {
         QImage result = hBitmapToQImage(hBmp);
@@ -207,7 +233,8 @@ QImage ZaloPreviewProvider::loadBoundedImage(const QString& filePath, const QSiz
         return {};
     }
 
-    QImageReader reader(filePath);
+    const QString effectivePath = ensureExtensionPath(filePath, QStringLiteral("jpg"));
+    QImageReader reader(effectivePath);
     reader.setAutoTransform(true);
     if (!reader.canRead()) {
         return {};
@@ -232,7 +259,8 @@ QImage ZaloPreviewProvider::extractVideoFrameAtTime(const QString& filePath, qin
         return {};
     }
 
-    const std::wstring widePath = filePath.toStdWString();
+    const QString effectivePath = ensureExtensionPath(filePath, QStringLiteral("mp4"));
+    const std::wstring widePath = effectivePath.toStdWString();
     ComPtr<IMFAttributes> attributes;
     if (FAILED(::MFCreateAttributes(&attributes, 1))) {
         return {};

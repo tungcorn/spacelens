@@ -12,6 +12,8 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
@@ -26,6 +28,7 @@
 #include <QPushButton>
 #include <QShortcut>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QTableWidget>
 #include <QTimeZone>
 #include <QUrl>
@@ -139,16 +142,97 @@ void revealInExplorer(const std::wstring& path)
     ::ShellExecuteW(nullptr, L"open", L"explorer.exe", param.c_str(), nullptr, SW_SHOW);
 }
 
-void openFileDefaultApp(const std::wstring& path)
+void openPlayableFile(const std::wstring& path, const ZaloEntry* entry = nullptr)
 {
     if (path.empty()) {
         return;
     }
-    const QString qPath = QString::fromStdWString(path);
-    if (QFileInfo::exists(qPath)) {
-        QDesktopServices::openUrl(QUrl::fromLocalFile(qPath));
-    } else {
+    const QString origPath = QString::fromStdWString(path);
+    if (!QFileInfo::exists(origPath)) {
         revealInExplorer(path);
+        return;
+    }
+
+    QFileInfo origFi(origPath);
+    QString ext = origFi.suffix().toLower();
+
+    // Check if wrapped payload or needs extension
+    bool isWrapped = false;
+    ByteSize offset = 0;
+    if (entry != nullptr && entry->contentIdentification.has_value()) {
+        const auto& cid = *entry->contentIdentification;
+        if (cid.wrapper && cid.payloadOffset > 0) {
+            isWrapped = true;
+            offset = cid.payloadOffset;
+        }
+        if (ext.isEmpty()) {
+            switch (cid.type) {
+            case ZaloContentType::Mp4: ext = QStringLiteral("mp4"); break;
+            case ZaloContentType::Mov: ext = QStringLiteral("mov"); break;
+            case ZaloContentType::Jpeg: ext = QStringLiteral("jpg"); break;
+            case ZaloContentType::Png: ext = QStringLiteral("png"); break;
+            case ZaloContentType::Webp: ext = QStringLiteral("webp"); break;
+            case ZaloContentType::Gif: ext = QStringLiteral("gif"); break;
+            case ZaloContentType::Zip: ext = QStringLiteral("zip"); break;
+            case ZaloContentType::Pdf: ext = QStringLiteral("pdf"); break;
+            default: break;
+            }
+        }
+    }
+
+    if (ext.isEmpty() && entry != nullptr && entry->humanIdentity.has_value()) {
+        if (entry->humanIdentity->previewKind == ZaloPreviewKind::VideoContactSheet) {
+            ext = QStringLiteral("mp4");
+        } else if (entry->humanIdentity->previewKind == ZaloPreviewKind::Image) {
+            ext = QStringLiteral("jpg");
+        }
+    }
+
+    if (ext.isEmpty() && entry != nullptr) {
+        if (entry->categoryAlias == "video") {
+            ext = QStringLiteral("mp4");
+        } else if (entry->categoryAlias == "photo") {
+            ext = QStringLiteral("jpg");
+        }
+    }
+
+    // If original file already has extension and is not wrapped, open directly
+    if (!origFi.suffix().isEmpty() && !isWrapped) {
+        if (!QDesktopServices::openUrl(QUrl::fromLocalFile(origPath))) {
+            revealInExplorer(path);
+        }
+        return;
+    }
+
+    const QString targetExt = !ext.isEmpty() ? ext : QStringLiteral("mp4");
+    const QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/SpaceLens/playable");
+    QDir().mkpath(tempDir);
+    const QString tempFilePath = tempDir + QStringLiteral("/") + origFi.fileName() + QStringLiteral(".") + targetExt;
+
+    if (!QFileInfo::exists(tempFilePath)) {
+        if (!isWrapped) {
+            // Fast hard link (instant, 0 disk cost)
+            if (!::CreateHardLinkW(tempFilePath.toStdWString().c_str(), path.c_str(), nullptr)) {
+                ::CopyFileW(path.c_str(), tempFilePath.toStdWString().c_str(), FALSE);
+            }
+        } else {
+            // Extract pure payload
+            QFile src(origPath);
+            if (src.open(QIODevice::ReadOnly)) {
+                src.seek(offset);
+                QFile dst(tempFilePath);
+                if (dst.open(QIODevice::WriteOnly)) {
+                    dst.write(src.readAll());
+                    dst.close();
+                }
+                src.close();
+            }
+        }
+    }
+
+    const QString toOpen = QFileInfo::exists(tempFilePath) ? tempFilePath : origPath;
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(toOpen))) {
+        ::ShellExecuteW(nullptr, L"open", toOpen.toStdWString().c_str(), nullptr, nullptr, SW_SHOW);
     }
 }
 
@@ -1067,7 +1151,7 @@ void ZaloStorageReviewPage::onTableContextMenu(const QPoint& pos)
 void ZaloStorageReviewPage::onCellDoubleClicked(int row, int /*column*/)
 {
     if (row >= 0 && static_cast<std::size_t>(row) < m_displayRows.size()) {
-        openFileDefaultApp(m_displayRows[row].nativePath);
+        openPlayableFile(m_displayRows[row].nativePath, m_displayRows[row].entry);
     }
 }
 
@@ -1075,7 +1159,7 @@ void ZaloStorageReviewPage::onOpenFile()
 {
     const int row = m_entries ? m_entries->currentRow() : -1;
     if (row >= 0 && static_cast<std::size_t>(row) < m_displayRows.size()) {
-        openFileDefaultApp(m_displayRows[row].nativePath);
+        openPlayableFile(m_displayRows[row].nativePath, m_displayRows[row].entry);
     }
 }
 
@@ -1230,25 +1314,25 @@ void ZaloStorageReviewPage::onDeleteSelected()
 
 void ZaloStorageReviewPage::onCleanFileNoise()
 {
-    std::vector<std::wstring> pathsToDelete;
+    // Find all rows that belong to file-noise
+    std::vector<int> candidateRows;
     ByteSize totalBytes = 0;
-    for (const auto& row : m_displayRows) {
+
+    for (int r = 0; r < static_cast<int>(m_displayRows.size()); ++r) {
+        const auto& row = m_displayRows[r];
         if (row.entry != nullptr && row.entry->categoryAlias == "file-noise" &&
             !row.nativePath.empty()) {
-            pathsToDelete.push_back(row.nativePath);
+            candidateRows.push_back(r);
             if (!row.entry->hardLinkAlias) {
                 totalBytes += row.physicalImpact;
             }
         }
     }
 
-    // Deduplicate paths
-    std::sort(pathsToDelete.begin(), pathsToDelete.end());
-    pathsToDelete.erase(std::unique(pathsToDelete.begin(), pathsToDelete.end()), pathsToDelete.end());
-
-    if (pathsToDelete.empty()) {
+    if (candidateRows.empty()) {
         QMessageBox::information(this, QStringLiteral("Clean fileNoise"),
                                  QStringLiteral("No fileNoise cache files found."));
+        m_cleanFileNoiseButton->hide();
         return;
     }
 
@@ -1256,7 +1340,7 @@ void ZaloStorageReviewPage::onCleanFileNoise()
         this, QStringLiteral("Confirm Clean fileNoise"),
         QStringLiteral("Clean %1 ephemeral cache files (~%2)?\n\n"
                        "All files will be moved safely to your Windows Recycle Bin.")
-            .arg(pathsToDelete.size())
+            .arg(candidateRows.size())
             .arg(formatBytes(totalBytes)),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
 
@@ -1264,21 +1348,68 @@ void ZaloStorageReviewPage::onCleanFileNoise()
         return;
     }
 
+    // Sort candidate row indices in descending order so removal doesn't invalidate lower indices
+    std::sort(candidateRows.begin(), candidateRows.end(), std::greater<int>());
+
     std::size_t deletedCount = 0;
-    for (const auto& path : pathsToDelete) {
-        if (sendFileToRecycleBin(path)) {
-            ++deletedCount;
+    ByteSize freedBytes = 0;
+    m_entries->setUpdatesEnabled(false);
+
+    for (const int r : candidateRows) {
+        if (r >= 0 && static_cast<std::size_t>(r) < m_displayRows.size()) {
+            const auto& row = m_displayRows[r];
+            if (sendFileToRecycleBin(row.nativePath)) {
+                ++deletedCount;
+                freedBytes += row.physicalImpact;
+                m_entries->removeRow(r);
+                m_displayRows.erase(m_displayRows.begin() + r);
+            }
         }
+    }
+
+    m_entries->setUpdatesEnabled(true);
+
+    // Calculate remaining file-noise
+    ByteSize remainingNoiseBytes = 0;
+    for (const auto& row : m_displayRows) {
+        if (row.entry != nullptr && row.entry->categoryAlias == "file-noise" &&
+            !row.nativePath.empty() && !row.entry->hardLinkAlias) {
+            remainingNoiseBytes += row.physicalImpact;
+        }
+    }
+
+    if (remainingNoiseBytes > 0) {
+        m_cleanFileNoiseButton->setText(
+            QStringLiteral("Clean fileNoise (%1)").arg(formatBytes(remainingNoiseBytes)));
+        m_cleanFileNoiseButton->show();
+    } else {
+        m_cleanFileNoiseButton->hide();
     }
 
     QMessageBox::information(
         this, QStringLiteral("Clean Complete"),
-        QStringLiteral("Successfully moved %1 of %2 cache files to the Recycle Bin.")
+        QStringLiteral("Successfully moved %1 of %2 cache files to the Recycle Bin (~%3 freed).")
             .arg(deletedCount)
-            .arg(pathsToDelete.size()));
+            .arg(candidateRows.size())
+            .arg(formatBytes(freedBytes)));
 
-    // Refresh review
-    onReview();
+    if (m_displayRows.empty()) {
+        clearReport();
+        showEmptyState(
+            QStringLiteral("All items cleaned"),
+            QStringLiteral("All reviewed items have been moved to the Recycle Bin."),
+            true);
+    } else {
+        m_reportSummary->setText(
+            QStringLiteral("%1 remaining entries · Sorted by Physical Impact · Right-click or double-click to reveal/delete.")
+                .arg(m_displayRows.size()));
+        onSelectionChanged();
+    }
+
+    emit statusMessage(
+        QStringLiteral("Cleaned %1 cache file(s) (%2 freed).")
+            .arg(deletedCount)
+            .arg(formatBytes(freedBytes)));
 }
 
 }  // namespace spacelens
