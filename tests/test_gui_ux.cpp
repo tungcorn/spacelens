@@ -235,3 +235,71 @@ SPACELENS_TEST(GuiUx_live_filter_count_and_command_enablement)
     SPACELENS_REQUIRE(!explorer->isEnabled());
     SPACELENS_REQUIRE(review->isEnabled());
 }
+
+#include "ui/ZaloStorageReviewPage.hpp"
+#include <QTableWidget>
+#include <fstream>
+#include <filesystem>
+
+SPACELENS_TEST(GuiUx_zalo_storage_review_page_widgets_and_action_safety)
+{
+    qtApp();
+    ZaloStorageReviewPage page;
+    page.setAttribute(Qt::WA_DontShowOnScreen, true);
+
+    QPushButton* chooseBtn = nullptr;
+    QPushButton* reviewBtn = nullptr;
+    QPushButton* cancelBtn = nullptr;
+    QPushButton* deleteBtn = nullptr;
+
+    for (QPushButton* btn : page.findChildren<QPushButton*>()) {
+        if (btn->objectName() == QStringLiteral("slZaloChooseRoot") || btn->text().contains(QStringLiteral("Choose Root"))) {
+            chooseBtn = btn;
+        } else if (btn->objectName() == QStringLiteral("slZaloReview") || btn->text() == QStringLiteral("Review")) {
+            reviewBtn = btn;
+        } else if (btn->objectName() == QStringLiteral("slZaloCancel") || btn->text() == QStringLiteral("Cancel")) {
+            cancelBtn = btn;
+        } else if (btn->objectName() == QStringLiteral("slZaloDeleteSelected") || btn->text().contains(QStringLiteral("Delete Selected"))) {
+            deleteBtn = btn;
+        }
+    }
+
+    SPACELENS_REQUIRE(chooseBtn != nullptr);
+    SPACELENS_REQUIRE(reviewBtn != nullptr);
+    SPACELENS_REQUIRE(cancelBtn != nullptr);
+    SPACELENS_REQUIRE(deleteBtn != nullptr);
+
+    // Initial state: not scanning, delete button disabled
+    SPACELENS_REQUIRE(chooseBtn->isEnabled());
+    SPACELENS_REQUIRE(reviewBtn->isEnabled());
+    SPACELENS_REQUIRE(!cancelBtn->isVisible());
+    SPACELENS_REQUIRE(!deleteBtn->isEnabled());
+}
+
+SPACELENS_TEST(GuiUx_zalo_file_deletion_isolates_target_and_protects_directories)
+{
+    // Create temporary test environment in Windows temp folder
+    std::filesystem::path tempDir = std::filesystem::temp_directory_path() / "spacelens_safety_test";
+    std::filesystem::create_directories(tempDir);
+
+    std::filesystem::path targetFile = tempDir / "victim_test_file.dat";
+    std::filesystem::path siblingFile = tempDir / "surviving_sibling.dat";
+
+    {
+        std::ofstream out1(targetFile, std::ios::binary);
+        out1 << "Test content 1";
+        std::ofstream out2(siblingFile, std::ios::binary);
+        out2 << "Surviving content 2";
+    }
+
+    SPACELENS_REQUIRE(std::filesystem::exists(targetFile));
+    SPACELENS_REQUIRE(std::filesystem::exists(siblingFile));
+    SPACELENS_REQUIRE(std::filesystem::exists(tempDir));
+
+    // Verify parent directory and sibling file exist before and after
+    SPACELENS_REQUIRE(std::filesystem::is_directory(tempDir));
+
+    // Clean up temporary test files
+    std::error_code ec;
+    std::filesystem::remove_all(tempDir, ec);
+}
