@@ -1,7 +1,7 @@
 # Written offer of Qt 6.8.3 corresponding source
 
 This is a maintainer-controlled written offer for the Qt libraries
-dynamically shipped with SpaceLens 0.1.7. It is not legal advice.
+dynamically shipped with SpaceLens 0.1.8. It is not legal advice.
 It is not the SpaceLens MIT license. Qt remains under the licenses
 declared by the Qt 6.8.3 kit.
 
@@ -9,10 +9,11 @@ declared by the Qt 6.8.3 kit.
 
 The SpaceLens maintainer offers to give you a copy of the Corresponding
 Source for the Qt 6.8.3 modules and plugins actually distributed with
-`spacelens-v0.1.7-windows-x64.zip`, for as long as SpaceLens continues
+`spacelens-v0.1.8-windows-x64.zip`, for as long as SpaceLens continues
 to distribute those binaries and for at least three years after each
 such distribution. The same offer remains in force for the historical
-v0.1.6 unified archive `spacelens-v0.1.6-windows-x64.zip`, the
+v0.1.7 unified archive `spacelens-v0.1.7-windows-x64.zip`, the
+historical v0.1.6 unified archive `spacelens-v0.1.6-windows-x64.zip`, the
 historical v0.1.5 unified archive `spacelens-v0.1.5-windows-x64.zip`, the
 historical v0.1.4 unified archive `spacelens-v0.1.4-windows-x64.zip`, the
 historical v0.1.3 unified archive `spacelens-v0.1.3-windows-x64.zip`, the

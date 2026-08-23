@@ -15,7 +15,7 @@
 #include <stop_token>
 
 #ifndef SPACELENS_VERSION_STRING
-#define SPACELENS_VERSION_STRING "0.1.7"
+#define SPACELENS_VERSION_STRING "0.1.8"
 #endif
 
 namespace {

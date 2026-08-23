@@ -5,6 +5,26 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-08-23
+
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.8
+
+<!-- BEGIN GENERATED CHANGELOG 0.1.8 -->
+### Added
+
+- zalo: enhance video previews, add direct open/play action, and unify English UI
+- ui: add real-time scanning progress UI and metrics for Zalo storage review
+- zalo: add interactive delete actions and scanning progress feedback
+- zalo: implement fileNoise bounded identification probe and relocated root auto-discovery
+- zalo: implement Zalo Storage Inspector and Human-Recognizable Content V1
+
+### Fixed
+
+- core: use dynamic buffer in RelativeCursor to resolve MSVC analyze C6262 stack warning
+- zalo: fix clean file noise in-place update and support raw stream playback
+- security: reinforce multi-layer safety validation and deduplication in Zalo deletion
+<!-- END GENERATED CHANGELOG 0.1.8 -->
+
 ## [0.1.7] — 2026-08-16
 
 https://github.com/tungcorn/spacelens/releases/tag/v0.1.7
