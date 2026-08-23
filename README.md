@@ -43,6 +43,9 @@ spacelens breakdown D:\ --json
 
 # Plan host-byte reclaim from physical evidence (planning only; never executes)
 spacelens reclaim-plan D:\ --json
+
+# Inspect Zalo desktop app storage, caches, and download items
+spacelens app-storage zalo --json
 ```
 
 ## Why SpaceLens?
@@ -52,6 +55,7 @@ spacelens reclaim-plan D:\ --json
 - **Optional USN Incremental Refresh**: Fast index updates using NTFS Change Journal (USN) when volume permissions allow.
 - **Exact Indexed Top-N & Overlap-Aware Aggregates**: Exact Top-K rankings and non-overlapping logical size metrics calculated on published snapshot evidence.
 - **Deterministic Storage Classification**: Classifies files and folders (e.g., BuildArtifact, PackageCache, Media, Logs) with transparent confidence scoring.
+- **App Storage Intelligence (Zalo Inspector)**: High-speed, privacy-safe inspection for specialized app trees (e.g., Zalo PC). Discovers accounts, identifies obfuscated media/transit cache (`fileNoise`), renders video contact sheets, and supports interactive review with safe Recycle Bin cleanup.
 - **SHA-256 Verified Duplicate Detection**: Identifies exact file content copies with identity collapse for hard links and persistent hash caching.
 - **Read-Only CLI & Native MCP Server**: Built-in safe interfaces for command lines, scripts, and Model Context Protocol (MCP) clients.
 
@@ -68,6 +72,7 @@ index list  ──>  overview  ──>  opportunities  ──>  breakdown  ─�
 - **`reclaim-plan`**: Rank overlap-free host-byte reclaim evidence (actionable vs review-only). Planning only; never executes cleanup.
 - **`query`**: Filter specific files or directories by size, age, pattern, or classification.
 - **`duplicates`**: Locate identical content files verified by SHA-256 hashing.
+- **`app-storage zalo`**: Safely inspects Zalo PC data, categorizes transit noise vs chat media, and isolates cleanup targets.
 
 ## AI Agents / MCP
 
@@ -135,6 +140,7 @@ For CLI-only headless builds and developer presets, refer to [`CONTRIBUTING.md`]
 | [CLI](docs/CLI.md) | Command-line interface usage, flags, and JSON schemas |
 | [Agent Interface](docs/AGENT_INTERFACE.md) | Guidance for integrating SpaceLens with AI agents |
 | [MCP](docs/MCP.md) | Model Context Protocol server usage and tool declarations |
+| [Zalo Inspector](docs/ZALO_INSPECTOR.md) | Zalo PC storage inspection, content identification, and safe review |
 | [Index](docs/INDEX.md) | SQLite persistent index architecture, USN refresh, and SQL schemas |
 | [Duplicates](docs/DUPLICATES.md) | Content hashing, identity collapse, and persistent hash cache |
 | [Safety](docs/SAFETY.md) | Read-only security contract, classification rules, and location safety |
