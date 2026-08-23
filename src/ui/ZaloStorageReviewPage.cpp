@@ -11,6 +11,7 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QFileDialog>
+#include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -116,6 +117,8 @@ ZaloStorageReviewPage::ZaloStorageReviewPage(QWidget* parent)
     buildUi();
     connect(m_session, &ZaloStorageSession::statusMessage, this,
             &ZaloStorageReviewPage::onSessionStatus);
+    connect(m_session, &ZaloStorageSession::progressUpdated, this,
+            &ZaloStorageReviewPage::onProgressUpdated);
     connect(m_session, &ZaloStorageSession::finished, this,
             &ZaloStorageReviewPage::onFinished);
     updateActionState();
@@ -262,7 +265,10 @@ void ZaloStorageReviewPage::buildUi()
     connect(deleteShortcut, &QShortcut::activated, this,
             &ZaloStorageReviewPage::onDeleteSelected);
 
+    m_scanningWidget = buildScanningWidget();
+
     m_stack->addWidget(m_empty);
+    m_stack->addWidget(m_scanningWidget);
     m_stack->addWidget(m_entries);
     m_stack->setCurrentWidget(m_empty);
     rootLayout->addWidget(m_stack, 1);
@@ -279,6 +285,261 @@ void ZaloStorageReviewPage::buildUi()
             &ZaloStorageReviewPage::onDeleteSelected);
     connect(m_empty, &EmptyStateWidget::actionClicked, this,
             &ZaloStorageReviewPage::onReview);
+}
+
+QWidget* ZaloStorageReviewPage::buildScanningWidget()
+{
+    auto* container = new QWidget(this);
+    auto* outerLayout = new QVBoxLayout(container);
+    outerLayout->setContentsMargins(kUiSpace24, kUiSpace24, kUiSpace24, kUiSpace24);
+    outerLayout->setAlignment(Qt::AlignCenter);
+
+    auto* card = new QFrame(container);
+    card->setObjectName(QStringLiteral("slZaloScanCard"));
+    card->setMaximumWidth(720);
+    card->setMinimumWidth(540);
+
+    auto* cardLayout = new QVBoxLayout(card);
+    cardLayout->setSpacing(kUiSpace16);
+    cardLayout->setContentsMargins(kUiSpace24, kUiSpace24, kUiSpace24, kUiSpace24);
+
+    // 1. Header: Icon + Title + Subtitle
+    auto* headerRow = new QHBoxLayout();
+    headerRow->setSpacing(kUiSpace12);
+
+    auto* iconLabel = new QLabel(QStringLiteral("🔍"), card);
+    QFont iconFont = iconLabel->font();
+    iconFont.setPixelSize(28);
+    iconLabel->setFont(iconFont);
+    headerRow->addWidget(iconLabel);
+
+    auto* titleLayout = new QVBoxLayout();
+    titleLayout->setSpacing(2);
+    m_scanTitleLabel = new QLabel(QStringLiteral("Scanning Zalo Storage..."), card);
+    QFont titleFont = m_scanTitleLabel->font();
+    titleFont.setPixelSize(16);
+    titleFont.setBold(true);
+    m_scanTitleLabel->setFont(titleFont);
+    titleLayout->addWidget(m_scanTitleLabel);
+
+    m_scanSubtitleLabel = new QLabel(
+        QStringLiteral("Discovering accounts, verifying file identity, and analyzing media and cache footprint..."),
+        card);
+    m_scanSubtitleLabel->setWordWrap(true);
+    titleLayout->addWidget(m_scanSubtitleLabel);
+    headerRow->addLayout(titleLayout, 1);
+    cardLayout->addLayout(headerRow);
+
+    // 2. Progress Bar
+    m_scanProgressBar = new QProgressBar(card);
+    m_scanProgressBar->setObjectName(QStringLiteral("slZaloScanProgressBar"));
+    m_scanProgressBar->setFixedHeight(6);
+    m_scanProgressBar->setTextVisible(false);
+    m_scanProgressBar->setRange(0, 0);
+    cardLayout->addWidget(m_scanProgressBar);
+
+    // 3. Stats Strip (3 column stat blocks)
+    auto* statsGrid = new QHBoxLayout();
+    statsGrid->setSpacing(kUiSpace12);
+
+    auto createStatCard = [card](const QString& title, QLabel*& valueLabel) -> QWidget* {
+        auto* box = new QFrame(card);
+        box->setObjectName(QStringLiteral("slZaloStatBox"));
+        box->setAutoFillBackground(true);
+        auto* lay = new QVBoxLayout(box);
+        lay->setContentsMargins(kUiSpace12, kUiSpace8, kUiSpace12, kUiSpace8);
+        lay->setSpacing(2);
+
+        auto* t = new QLabel(title, box);
+        QFont tf = t->font();
+        tf.setPixelSize(10);
+        tf.setWeight(QFont::DemiBold);
+        t->setFont(tf);
+        t->setObjectName(QStringLiteral("slZaloStatTitle"));
+        lay->addWidget(t);
+
+        valueLabel = new QLabel(QStringLiteral("0"), box);
+        QFont vf = valueLabel->font();
+        vf.setPixelSize(17);
+        vf.setBold(true);
+        valueLabel->setFont(vf);
+        valueLabel->setObjectName(QStringLiteral("slZaloStatValue"));
+        lay->addWidget(valueLabel);
+
+        return box;
+    };
+
+    statsGrid->addWidget(createStatCard(QStringLiteral("FILES SCANNED"), m_scanFilesValue), 1);
+    statsGrid->addWidget(createStatCard(QStringLiteral("DATA ANALYZED"), m_scanBytesValue), 1);
+    statsGrid->addWidget(createStatCard(QStringLiteral("CURRENT PHASE"), m_scanPhaseValue), 1);
+    cardLayout->addLayout(statsGrid);
+
+    // 4. Discovered Categories Breakdown
+    auto* catSection = new QVBoxLayout();
+    catSection->setSpacing(kUiSpace8);
+
+    auto* catTitle = new QLabel(QStringLiteral("Discovered Content Breakdown:"), card);
+    QFont catTitleFont = catTitle->font();
+    catTitleFont.setPixelSize(12);
+    catTitleFont.setWeight(QFont::Medium);
+    catTitle->setFont(catTitleFont);
+    catSection->addWidget(catTitle);
+
+    auto* chipsRow = new QHBoxLayout();
+    chipsRow->setSpacing(kUiSpace8);
+
+    auto createChip = [card](const QString& icon, const QString& name, QLabel*& badge) -> QWidget* {
+        auto* chip = new QFrame(card);
+        chip->setObjectName(QStringLiteral("slZaloChip"));
+        auto* lay = new QHBoxLayout(chip);
+        lay->setContentsMargins(kUiSpace8, kUiSpace4, kUiSpace8, kUiSpace4);
+        lay->setSpacing(4);
+
+        auto* lbl = new QLabel(QStringLiteral("%1 %2:").arg(icon, name), chip);
+        QFont lf = lbl->font();
+        lf.setPixelSize(11);
+        lbl->setFont(lf);
+        lay->addWidget(lbl);
+
+        badge = new QLabel(QStringLiteral("0"), chip);
+        QFont bf = badge->font();
+        bf.setPixelSize(11);
+        bf.setBold(true);
+        badge->setFont(bf);
+        lay->addWidget(badge);
+
+        return chip;
+    };
+
+    chipsRow->addWidget(createChip(QStringLiteral("🖼️"), QStringLiteral("Photos"), m_scanPhotoBadge));
+    chipsRow->addWidget(createChip(QStringLiteral("🎬"), QStringLiteral("Videos"), m_scanVideoBadge));
+    chipsRow->addWidget(createChip(QStringLiteral("🗑️"), QStringLiteral("fileNoise"), m_scanNoiseBadge));
+    chipsRow->addWidget(createChip(QStringLiteral("📦"), QStringLiteral("Cache"), m_scanCacheBadge));
+    chipsRow->addWidget(createChip(QStringLiteral("📄"), QStringLiteral("Docs"), m_scanDocBadge));
+    catSection->addLayout(chipsRow);
+    cardLayout->addLayout(catSection);
+
+    // 5. Current File Path Indicator
+    auto* pathRow = new QHBoxLayout();
+    pathRow->setSpacing(kUiSpace8);
+    auto* pathIcon = new QLabel(QStringLiteral("📂"), card);
+    pathRow->addWidget(pathIcon);
+
+    m_scanCurrentPath = new QLabel(QStringLiteral("Discovering storage roots..."), card);
+    QFont pathFont = m_scanCurrentPath->font();
+    pathFont.setPixelSize(11);
+    m_scanCurrentPath->setFont(pathFont);
+    m_scanCurrentPath->setObjectName(QStringLiteral("slZaloPathIndicator"));
+    pathRow->addWidget(m_scanCurrentPath, 1);
+    cardLayout->addLayout(pathRow);
+
+    // 6. Action Button (Cancel)
+    auto* bottomRow = new QHBoxLayout();
+    bottomRow->addStretch();
+    auto* cancelScanBtn = new QPushButton(QStringLiteral("Cancel Scan"), card);
+    cancelScanBtn->setObjectName(QStringLiteral("slZaloCardCancel"));
+    markSecondaryButton(cancelScanBtn);
+    connect(cancelScanBtn, &QPushButton::clicked, this, &ZaloStorageReviewPage::onCancel);
+    bottomRow->addWidget(cancelScanBtn);
+    bottomRow->addStretch();
+    cardLayout->addLayout(bottomRow);
+
+    outerLayout->addWidget(card);
+    return container;
+}
+
+void ZaloStorageReviewPage::resetScanningWidget()
+{
+    if (m_scanTitleLabel != nullptr) {
+        m_scanTitleLabel->setText(QStringLiteral("Scanning Zalo Storage..."));
+    }
+    if (m_scanSubtitleLabel != nullptr) {
+        m_scanSubtitleLabel->setText(
+            QStringLiteral("Discovering accounts, verifying file identity, and analyzing media and cache footprint..."));
+    }
+    if (m_scanProgressBar != nullptr) {
+        m_scanProgressBar->setRange(0, 0);
+        m_scanProgressBar->setTextVisible(false);
+    }
+    if (m_scanFilesValue != nullptr) {
+        m_scanFilesValue->setText(QStringLiteral("0"));
+    }
+    if (m_scanBytesValue != nullptr) {
+        m_scanBytesValue->setText(QStringLiteral("0 B"));
+    }
+    if (m_scanPhaseValue != nullptr) {
+        m_scanPhaseValue->setText(QStringLiteral("Discovering roots..."));
+    }
+    if (m_scanPhotoBadge != nullptr) {
+        m_scanPhotoBadge->setText(QStringLiteral("0"));
+    }
+    if (m_scanVideoBadge != nullptr) {
+        m_scanVideoBadge->setText(QStringLiteral("0"));
+    }
+    if (m_scanNoiseBadge != nullptr) {
+        m_scanNoiseBadge->setText(QStringLiteral("0"));
+    }
+    if (m_scanCacheBadge != nullptr) {
+        m_scanCacheBadge->setText(QStringLiteral("0"));
+    }
+    if (m_scanDocBadge != nullptr) {
+        m_scanDocBadge->setText(QStringLiteral("0"));
+    }
+    if (m_scanCurrentPath != nullptr) {
+        m_scanCurrentPath->setText(QStringLiteral("Discovering storage roots..."));
+    }
+}
+
+void ZaloStorageReviewPage::onProgressUpdated(const spacelens::ZaloScanProgress& progress)
+{
+    const QLocale locale;
+    if (m_scanFilesValue != nullptr) {
+        m_scanFilesValue->setText(locale.toString(static_cast<qulonglong>(progress.filesScanned)));
+    }
+    if (m_scanBytesValue != nullptr) {
+        m_scanBytesValue->setText(formatBytes(progress.bytesScanned));
+    }
+    if (m_scanPhaseValue != nullptr && !progress.phase.empty()) {
+        m_scanPhaseValue->setText(QString::fromUtf8(progress.phase));
+    }
+    if (m_scanPhotoBadge != nullptr) {
+        m_scanPhotoBadge->setText(locale.toString(static_cast<qulonglong>(progress.photoCount)));
+    }
+    if (m_scanVideoBadge != nullptr) {
+        m_scanVideoBadge->setText(locale.toString(static_cast<qulonglong>(progress.videoCount)));
+    }
+    if (m_scanNoiseBadge != nullptr) {
+        m_scanNoiseBadge->setText(locale.toString(static_cast<qulonglong>(progress.fileNoiseCount)));
+    }
+    if (m_scanCacheBadge != nullptr) {
+        m_scanCacheBadge->setText(locale.toString(static_cast<qulonglong>(progress.cacheCount)));
+    }
+    if (m_scanDocBadge != nullptr) {
+        m_scanDocBadge->setText(locale.toString(static_cast<qulonglong>(progress.documentCount)));
+    }
+    if (m_scanProgressBar != nullptr) {
+        if (progress.totalFilesToIdentify > 0) {
+            m_scanProgressBar->setRange(0, static_cast<int>(progress.totalFilesToIdentify));
+            m_scanProgressBar->setValue(static_cast<int>(progress.filesIdentified));
+            m_scanProgressBar->setTextVisible(true);
+        } else {
+            m_scanProgressBar->setRange(0, 0);
+            m_scanProgressBar->setTextVisible(false);
+        }
+    }
+    if (m_scanCurrentPath != nullptr && !progress.currentPath.empty()) {
+        const QString pathStr = QString::fromStdWString(progress.currentPath);
+        m_scanCurrentPath->setText(
+            m_scanCurrentPath->fontMetrics().elidedText(pathStr, Qt::ElideMiddle, 500));
+        m_scanCurrentPath->setToolTip(pathStr);
+    }
+    if (m_rootSummary != nullptr) {
+        m_rootSummary->setText(
+            QStringLiteral("Scanning: %1 files · %2 · %3")
+                .arg(locale.toString(static_cast<qulonglong>(progress.filesScanned)),
+                     formatBytes(progress.bytesScanned),
+                     QString::fromUtf8(progress.phase)));
+    }
 }
 
 void ZaloStorageReviewPage::clearReport()
@@ -346,12 +607,10 @@ void ZaloStorageReviewPage::onReview()
 
     clearReport();
     updateActionState();
+    resetScanningWidget();
+    m_stack->setCurrentWidget(m_scanningWidget);
     m_rootSummary->setText(
         QStringLiteral("Scanning Zalo storage across drives... Please wait."));
-    showEmptyState(
-        QStringLiteral("Scanning Zalo storage..."),
-        QStringLiteral("Discovering accounts, verifying file identity, and analyzing media and cache footprint. This may take a moment for large collections..."),
-        false);
     emit statusMessage(QStringLiteral("Scanning Zalo storage..."));
 
     m_session->start(m_selectedRoot);
@@ -362,9 +621,12 @@ void ZaloStorageReviewPage::onCancel()
     if (m_session != nullptr && m_session->isRunning()) {
         m_session->cancel();
         m_rootSummary->setText(QStringLiteral("Cancelling scan..."));
-        showEmptyState(QStringLiteral("Cancelling..."),
-                       QStringLiteral("Stopping Zalo storage inspection..."),
-                       false);
+        if (m_scanTitleLabel != nullptr) {
+            m_scanTitleLabel->setText(QStringLiteral("Cancelling scan..."));
+        }
+        if (m_scanSubtitleLabel != nullptr) {
+            m_scanSubtitleLabel->setText(QStringLiteral("Stopping Zalo storage inspection... Please wait."));
+        }
         emit statusMessage(QStringLiteral("Cancelling Zalo review..."));
     }
 }

@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cwctype>
@@ -2231,13 +2232,85 @@ void appendUnreadableFile(InternalAccount& account, const std::wstring& path,
     }
 }
 
+class ProgressReporter {
+public:
+    explicit ProgressReporter(ZaloProgressCallback callback)
+        : m_callback(std::move(callback))
+    {
+    }
+
+    void report(const ZaloScanProgress& prog, bool force = false)
+    {
+        if (!m_callback) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (force || now - m_lastReport >= std::chrono::milliseconds(50)) {
+            m_lastReport = now;
+            m_callback(prog);
+        }
+    }
+
+    [[nodiscard]] bool hasCallback() const noexcept { return static_cast<bool>(m_callback); }
+
+private:
+    ZaloProgressCallback m_callback;
+    std::chrono::steady_clock::time_point m_lastReport{};
+};
+
+struct ScanProgressContext {
+    ZaloScanProgress progress;
+    ProgressReporter reporter;
+
+    explicit ScanProgressContext(ZaloProgressCallback cb)
+        : reporter(std::move(cb))
+    {
+    }
+
+    void recordFile(const std::wstring& path, const std::wstring& categoryKey,
+                    const std::optional<ByteSize>& logicalBytes)
+    {
+        ++progress.filesScanned;
+        if (logicalBytes.has_value()) {
+            progress.bytesScanned += *logicalBytes;
+        }
+        progress.currentPath = path;
+        if (equalInsensitive(categoryKey, L"picture") ||
+            equalInsensitive(categoryKey, L"richThumb") ||
+            equalInsensitive(categoryKey, L"fileThumb")) {
+            ++progress.photoCount;
+        } else if (equalInsensitive(categoryKey, L"video")) {
+            ++progress.videoCount;
+        } else if (equalInsensitive(categoryKey, L"fileNoise")) {
+            ++progress.fileNoiseCount;
+        } else if (equalInsensitive(categoryKey, L"cache") ||
+                   equalInsensitive(categoryKey, L"resource") ||
+                   equalInsensitive(categoryKey, L"zinstant")) {
+            ++progress.cacheCount;
+        } else if (equalInsensitive(categoryKey, L"file")) {
+            ++progress.documentCount;
+        } else {
+            ++progress.otherCount;
+        }
+        reporter.report(progress);
+    }
+
+    void recordDirectory(const std::wstring& path)
+    {
+        ++progress.directoriesScanned;
+        progress.currentPath = path;
+        reporter.report(progress);
+    }
+};
+
 void scanDirectory(InternalAccount& account, UniqueHandle directory,
                    const FileIdentity& before,
                    const std::wstring& expectedFinalPath,
                    const std::wstring& nativePath,
                    const std::wstring& nativeRelative,
                    const std::wstring& categoryKey, std::size_t directoryEntryIndex,
-                   std::size_t depth, const Cancellation& cancellation)
+                   std::size_t depth, const Cancellation& cancellation,
+                   ScanProgressContext* progressCtx = nullptr)
 {
     if (cancellation.requested()) {
         account.cancelled = true;
@@ -2247,6 +2320,10 @@ void scanDirectory(InternalAccount& account, UniqueHandle directory,
         account.report.complete = false;
         ++account.report.otherErrors;
         return;
+    }
+
+    if (progressCtx != nullptr) {
+        progressCtx->recordDirectory(nativePath);
     }
 
     const std::size_t subtreeStart =
@@ -2412,7 +2489,7 @@ void scanDirectory(InternalAccount& account, UniqueHandle directory,
             stored.linkCountKnown = childIdentity->linkCountKnown;
             scanDirectory(account, std::move(child), *childIdentity,
                           childFinalPath, childPath, relative, childCategory,
-                          childEntryIndex, depth + 1U, cancellation);
+                          childEntryIndex, depth + 1U, cancellation, progressCtx);
             if (account.cancelled) {
                 return;
             }
@@ -2536,6 +2613,11 @@ void scanDirectory(InternalAccount& account, UniqueHandle directory,
         if (state != EvidenceState::Consistent) {
             account.report.complete = false;
         }
+
+        if (progressCtx != nullptr) {
+            progressCtx->recordFile(childPath, account.entries[entryIndex].categoryKey,
+                                    raw.listedLogicalBytes);
+        }
     }
 
     if (cancellation.requested()) {
@@ -2550,7 +2632,8 @@ void scanDirectory(InternalAccount& account, UniqueHandle directory,
     }
 }
 
-void scanAccount(InternalAccount& account, const Cancellation& cancellation)
+void scanAccount(InternalAccount& account, const Cancellation& cancellation,
+                 ScanProgressContext* progressCtx = nullptr)
 {
     if (cancellation.requested()) {
         account.cancelled = true;
@@ -2600,7 +2683,7 @@ void scanAccount(InternalAccount& account, const Cancellation& cancellation)
         return;
     }
     scanDirectory(account, std::move(validated.finalHandle), identity, finalPath,
-                  account.path.path, {}, {}, kNoIndex, 0, cancellation);
+                  account.path.path, {}, {}, kNoIndex, 0, cancellation, progressCtx);
 }
 
 void addSaturatingTracked(ByteSize& total, ByteSize value, bool& overflow)
@@ -3032,7 +3115,8 @@ void markContentGroupChanged(IdentityGroup& group)
 }
 
 bool identifyContentGroups(std::vector<ObservationRef>& refs,
-                          const Cancellation& cancellation)
+                           const Cancellation& cancellation,
+                           ScanProgressContext* progressCtx = nullptr)
 {
     try {
         std::vector<IdentityGroup> groups;
@@ -3058,9 +3142,25 @@ bool identifyContentGroups(std::vector<ObservationRef>& refs,
             }
         }
 
+        if (progressCtx != nullptr) {
+            progressCtx->progress.phase = "Extracting visual previews & media metadata...";
+            progressCtx->progress.totalFilesToIdentify = groups.size();
+            progressCtx->progress.filesIdentified = 0;
+            progressCtx->reporter.report(progressCtx->progress, true);
+        }
+
         const PayloadCancellation payloadCancellation =
             [&cancellation]() noexcept { return cancellation.requested(); };
         for (IdentityGroup& group : groups) {
+            if (progressCtx != nullptr) {
+                ++progressCtx->progress.filesIdentified;
+                if (!group.refs.empty() && group.refs.front() != nullptr &&
+                    group.refs.front()->entry != nullptr) {
+                    progressCtx->progress.currentPath =
+                        group.refs.front()->entry->nativePath;
+                }
+                progressCtx->reporter.report(progressCtx->progress);
+            }
             throwIfPostScanCancelled(cancellation);
             ObservationRef* candidate = nullptr;
             for (ObservationRef* ref : group.refs) {
@@ -4243,6 +4343,13 @@ ZaloStorageReport inspectZaloStorage(const ZaloInspectionOptions& options,
                                      std::stop_token stop)
 {
     const Cancellation cancellation{stop, options.stopToken};
+    std::unique_ptr<ScanProgressContext> progressCtx;
+    if (options.onProgress) {
+        progressCtx = std::make_unique<ScanProgressContext>(options.onProgress);
+        progressCtx->progress.phase = "Discovering Zalo storage roots...";
+        progressCtx->reporter.report(progressCtx->progress, true);
+    }
+
     InternalDiscovery discovered = discoverInternal(options, cancellation);
     ZaloStorageReport result;
     result.discovery = discovered.report;
@@ -4253,6 +4360,11 @@ ZaloStorageReport inspectZaloStorage(const ZaloInspectionOptions& options,
     if (discovered.cancelled || cancellation.requested()) {
         resetCancelledInspectionResult(result);
         return result;
+    }
+
+    if (progressCtx != nullptr) {
+        progressCtx->progress.phase = "Scanning Zalo data folders...";
+        progressCtx->reporter.report(progressCtx->progress, true);
     }
 
     std::vector<InternalAccount> accounts;
@@ -4289,7 +4401,7 @@ ZaloStorageReport inspectZaloStorage(const ZaloInspectionOptions& options,
                 accountAliasAt(discovered.report, rootIndex, accountIndex);
             account.report.rootAlias = account.rootAlias;
             account.report.accountAlias = account.accountAlias;
-            scanAccount(account, cancellation);
+            scanAccount(account, cancellation, progressCtx.get());
             if (account.cancelled || cancellation.requested()) {
                 resetCancelledInspectionResult(result);
                 return result;
@@ -4314,10 +4426,15 @@ ZaloStorageReport inspectZaloStorage(const ZaloInspectionOptions& options,
                                &account});
         }
     }
-    if (!identifyContentGroups(allRefs, cancellation) ||
+    if (!identifyContentGroups(allRefs, cancellation, progressCtx.get()) ||
         cancellation.requested()) {
         resetCancelledInspectionResult(result);
         return result;
+    }
+
+    if (progressCtx != nullptr) {
+        progressCtx->progress.phase = "Computing physical disk footprint...";
+        progressCtx->reporter.report(progressCtx->progress, true);
     }
 
     bool incomplete = false;

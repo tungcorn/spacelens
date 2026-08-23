@@ -5,6 +5,7 @@
 #include "core/ZaloContentIdentifier.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <stop_token>
 #include <string>
@@ -12,6 +13,25 @@
 #include <vector>
 
 namespace spacelens {
+
+/// Live scanning and inspection progress information.
+struct ZaloScanProgress {
+    std::string phase;
+    std::wstring currentPath;
+    std::uint64_t filesScanned = 0;
+    std::uint64_t directoriesScanned = 0;
+    ByteSize bytesScanned = 0;
+    std::uint64_t photoCount = 0;
+    std::uint64_t videoCount = 0;
+    std::uint64_t fileNoiseCount = 0;
+    std::uint64_t cacheCount = 0;
+    std::uint64_t documentCount = 0;
+    std::uint64_t otherCount = 0;
+    std::uint64_t filesIdentified = 0;
+    std::uint64_t totalFilesToIdentify = 0;
+};
+
+using ZaloProgressCallback = std::function<void(const ZaloScanProgress&)>;
 
 /// Inspection/discovery status. ConfigUnavailable is non-fatal when usable
 /// explicit or exact default roots were found, but records that configuration
@@ -86,6 +106,9 @@ struct ZaloDiscoveryOptions {
     /// retained as a compatibility switch; false only disables media-root
     /// account expansion and never enables generic-directory discovery.
     bool discoverAccounts = true;
+
+    /// Optional progress callback for real-time scanning feedback.
+    ZaloProgressCallback onProgress;
 
     /// A caller may put its stop token here; overloads also accept one
     /// explicitly. Cancellation returns a typed Cancelled result.

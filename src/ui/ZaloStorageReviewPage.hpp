@@ -45,6 +45,7 @@ private slots:
     void onDeleteSelected();
     void onCleanFileNoise();
     void onSelectionChanged();
+    void onProgressUpdated(const spacelens::ZaloScanProgress& progress);
 
 private:
     enum Column {
@@ -72,6 +73,8 @@ private:
     };
 
     void buildUi();
+    QWidget* buildScanningWidget();
+    void resetScanningWidget();
     void clearReport();
     void applyReport(const ZaloStorageReport& report);
     void updateActionState();
@@ -86,6 +89,20 @@ private:
 
     QStackedWidget* m_stack = nullptr;
     EmptyStateWidget* m_empty = nullptr;
+    QWidget* m_scanningWidget = nullptr;
+    QLabel* m_scanTitleLabel = nullptr;
+    QLabel* m_scanSubtitleLabel = nullptr;
+    QProgressBar* m_scanProgressBar = nullptr;
+    QLabel* m_scanPhaseValue = nullptr;
+    QLabel* m_scanFilesValue = nullptr;
+    QLabel* m_scanBytesValue = nullptr;
+    QLabel* m_scanCurrentPath = nullptr;
+    QLabel* m_scanPhotoBadge = nullptr;
+    QLabel* m_scanVideoBadge = nullptr;
+    QLabel* m_scanNoiseBadge = nullptr;
+    QLabel* m_scanCacheBadge = nullptr;
+    QLabel* m_scanDocBadge = nullptr;
+
     QTableWidget* m_entries = nullptr;
     MetricStrip* m_metrics = nullptr;
     QLabel* m_rootSummary = nullptr;

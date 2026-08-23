@@ -19,6 +19,8 @@ ZaloStorageSession::ZaloStorageSession(QObject* parent)
 {
     qRegisterMetaType<spacelens::ZaloStorageStatus>(
         "spacelens::ZaloStorageStatus");
+    qRegisterMetaType<spacelens::ZaloScanProgress>(
+        "spacelens::ZaloScanProgress");
 }
 
 ZaloStorageSession::~ZaloStorageSession()
@@ -50,6 +52,15 @@ bool ZaloStorageSession::start(const QString& rootPath)
         options.explicitRoots.push_back(toWide(selectedRoot));
         options.includeDefaultRoots = false;
     }
+
+    options.onProgress = [this](const ZaloScanProgress& prog) {
+        QMetaObject::invokeMethod(
+            this,
+            [this, prog]() {
+                emit progressUpdated(prog);
+            },
+            Qt::QueuedConnection);
+    };
 
     {
         std::lock_guard lock(m_mutex);

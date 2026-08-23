@@ -37,6 +37,7 @@ public:
 
 signals:
     void statusMessage(const QString& message);
+    void progressUpdated(const spacelens::ZaloScanProgress& progress);
     void finished(spacelens::ZaloStorageStatus status);
 
 private:
