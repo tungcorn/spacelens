@@ -48,10 +48,7 @@ $prepareNeeded = $false
 $commits = @(Get-SpaceLensCommitsSinceTag -Tag $latest.Tag -Head $HeadSha -RepoRoot $RepoRoot)
 $releaseDecision = Get-SpaceLensReleaseDecision -Commits $commits -LatestVersion $latest
 
-if ($EventName -eq "workflow_dispatch") {
-    if (-not $RequestedVersion) {
-        throw "workflow_dispatch requires a version input"
-    }
+if ($EventName -eq "workflow_dispatch" -and $RequestedVersion) {
     $requested = ConvertTo-SpaceLensVersion $RequestedVersion
     if (-not $requested) { throw "version '$RequestedVersion' is not X.Y.Z" }
     if ($requested.Text -ne $cmake.Text) {
