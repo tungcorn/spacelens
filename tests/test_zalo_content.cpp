@@ -75,6 +75,44 @@ void writeBytes(const fs::path& path, const std::vector<std::uint8_t>& bytes)
     }
 }
 
+void mutateFileWithTimestamp(const fs::path& path,
+                             const std::vector<std::uint8_t>& bytes,
+                             const FileIdentity& baseline)
+{
+    const HANDLE raw = ::CreateFileW(
+        path.wstring().c_str(), GENERIC_WRITE | FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
+    if (raw != INVALID_HANDLE_VALUE) {
+        LARGE_INTEGER position{};
+        ::SetFilePointerEx(raw, position, nullptr, FILE_BEGIN);
+        DWORD written = 0;
+        if (!bytes.empty()) {
+            ::WriteFile(raw, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr);
+        }
+        ::SetEndOfFile(raw);
+        
+        constexpr std::uint64_t kTenSeconds = 10'000'000ULL;
+        constexpr std::uint64_t kTimestampDelta = 6ULL * kTenSeconds;
+        std::uint64_t timestamp = baseline.lastWriteTicks;
+        if (timestamp <= std::numeric_limits<std::uint64_t>::max() - kTimestampDelta) {
+            timestamp += kTimestampDelta;
+        } else if (timestamp > kTimestampDelta) {
+            timestamp -= kTimestampDelta;
+        } else {
+            timestamp = 1;
+        }
+        FILETIME lastWrite{};
+        lastWrite.dwLowDateTime = static_cast<DWORD>(timestamp & 0xffffffffULL);
+        lastWrite.dwHighDateTime = static_cast<DWORD>(timestamp >> 32U);
+        ::SetFileTime(raw, nullptr, nullptr, &lastWrite);
+        ::FlushFileBuffers(raw);
+        ::CloseHandle(raw);
+    } else {
+        writeBytes(path, bytes);
+    }
+}
+
 std::vector<std::uint8_t> bytesOf(std::string_view text)
 {
     return std::vector<std::uint8_t>(
@@ -1219,7 +1257,7 @@ SPACELENS_TEST(ZaloContent_stop_token_and_mid_scan_change_are_typed)
             if (!changed) {
                 auto replacement = jpeg;
                 replacement[6] ^= 0x01U;
-                writeBytes(path, replacement);
+                mutateFileWithTimestamp(path, replacement, identity);
                 changed = true;
             }
             return false;
@@ -1239,7 +1277,7 @@ SPACELENS_TEST(ZaloContent_stop_token_and_mid_scan_change_are_typed)
     const ZaloContentResult truncatedResult = identifyZaloContent(
         truncateOpened.payload->view(), [&]() {
             if (!truncated) {
-                writeBytes(truncatedPath, {0xffU});
+                mutateFileWithTimestamp(truncatedPath, {0xffU}, truncateIdentity);
                 truncated = true;
             }
             return false;
