@@ -253,6 +253,11 @@ DROP TABLE sl_identity_obs;
         }
     }
 
+    SqliteStmt upd(
+        db,
+        "UPDATE entries SET allocated_bytes=?1, allocation_known=?2, "
+        "hard_link_coverage=?3, sparse=?4, compressed=?5 WHERE id=?6 AND kind=1;");
+
     // Post-order: children first (reverse of preorder stack walk).
     for (auto it = order.rbegin(); it != order.rend(); ++it) {
         if (stop.stop_requested()) {
@@ -274,23 +279,15 @@ DROP TABLE sl_identity_obs;
             }
             maps.erase(childIt);
         }
-    }
 
-    SqliteStmt upd(
-        db,
-        "UPDATE entries SET allocated_bytes=?1, allocation_known=?2, "
-        "hard_link_coverage=?3, sparse=?4, compressed=?5 WHERE id=?6 AND kind=1;");
-    for (const auto& [id, rec] : dirs) {
-        (void)rec;
-        if (stop.stop_requested()) {
-            return false;
-        }
         std::vector<IdentityAllocation> items;
-        if (auto mit = maps.find(id); mit != maps.end()) {
-            items.reserve(mit->second.size());
-            for (const auto& [ident, agg] : mit->second) {
-                items.push_back(toAllocation(ident, agg));
-            }
+        items.reserve(mine.size());
+        bool sparse = false;
+        bool compressed = false;
+        for (const auto& [ident, agg] : mine) {
+            items.push_back(toAllocation(ident, agg));
+            sparse = sparse || agg.sparse;
+            compressed = compressed || agg.compressed;
         }
         const UniqueAllocation sum = summarizeIdentities(items);
         upd.reset();
@@ -302,15 +299,6 @@ DROP TABLE sl_identity_obs;
         }
         upd.bindInt64(2, sum.allAllocationKnown ? 1 : 0);
         upd.bindText(3, toString(sum.coverage));
-        bool sparse = false;
-        bool compressed = false;
-        if (auto mit = maps.find(id); mit != maps.end()) {
-            for (const auto& [ident, agg] : mit->second) {
-                (void)ident;
-                sparse = sparse || agg.sparse;
-                compressed = compressed || agg.compressed;
-            }
-        }
         upd.bindInt64(4, sparse ? 1 : 0);
         upd.bindInt64(5, compressed ? 1 : 0);
         upd.bindInt64(6, id);

@@ -89,7 +89,7 @@ add_test(NAME spacelens_maintenance_tests COMMAND spacelens_maintenance_tests)
 
 if(SPACELENS_BUILD_GUI)
     set(SPACELENS_GUI_TEST_SOURCES
-        main.cpp
+        gui_main.cpp
         test_gui_ux.cpp
         TestRunner.hpp
     )

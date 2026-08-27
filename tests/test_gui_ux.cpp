@@ -23,12 +23,15 @@ namespace {
 
 QApplication& qtApp()
 {
+    if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance())) {
+        return *app;
+    }
     static int argc = 1;
     static char arg0[] = "spacelens_gui_tests";
     static char* argv[] = {arg0, nullptr};
-    static QApplication app(argc, argv);
-    applyApplicationChrome(app);
-    return app;
+    static auto* fallback = new QApplication(argc, argv);
+    applyApplicationChrome(*fallback);
+    return *fallback;
 }
 
 QPushButton* navButton(QWidget& root, const char* id)
