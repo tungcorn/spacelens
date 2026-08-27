@@ -21,17 +21,16 @@ namespace {
 struct TopFileRecord {
     FileIndex index = InvalidFileIndex;
     ByteSize size = 0;
-    std::wstring path;
 };
 
 struct TopFileCompare {
     bool operator()(const TopFileRecord& a, const TopFileRecord& b) const
     {
-        // "Worse than": smaller size ranks worse. Equal size → larger path worse.
+        // "Worse than": smaller size ranks worse. Equal size → larger index worse.
         if (a.size != b.size) {
             return a.size < b.size;
         }
-        return a.path > b.path;
+        return a.index > b.index;
     }
 };
 
@@ -46,10 +45,10 @@ struct ScanTopFiles {
     {
     }
 
-    void consider(FileIndex index, ByteSize size, std::wstring path)
+    void consider(FileIndex index, ByteSize size)
     {
-        TopFileRecord rec{index, size, std::move(path)};
-        collector.consider(std::move(rec));
+        TopFileRecord rec{index, size};
+        collector.consider(rec);
     }
 
     // Uses types from this translation unit; compare is defined above.
@@ -112,11 +111,11 @@ ScanResult ScanEngine::scan(const std::wstring& rootPath,
 #endif
     result.tree.recomputeAggregates(nowTicks);
 
-    for (auto& item : topFiles.collector.sortedDescending()) {
+    for (const auto& item : topFiles.collector.sortedDescending()) {
         LargestFileItem out;
         out.fileIndex = item.index;
         out.size = item.size;
-        out.path = std::move(item.path);
+        out.path = result.tree.pathOfFile(item.index);
         result.largestFiles.push_back(std::move(out));
     }
 
@@ -180,8 +179,7 @@ void ScanEngine::scanDirectory(DirectoryTree& tree,
                                               entry.lastWriteTime,
                                               entry.attributes,
                                               entry.lastAccessTime);
-            const std::wstring filePath = tree.pathOfFile(fi);
-            topFiles.consider(fi, entry.size, filePath);
+            topFiles.consider(fi, entry.size);
             progress.filesSeen += 1;
             progress.bytesSeen += entry.size;
             break;
