@@ -289,10 +289,7 @@ if(SPACELENS_BUILD_CLI)
             # Force console subsystem even if a global flag tries to set windows.
             target_link_options(spacelens PRIVATE "/SUBSYSTEM:CONSOLE")
             set_target_properties(spacelens PROPERTIES WIN32_EXECUTABLE FALSE)
-            if(MSVC)
-                target_link_options(spacelens PRIVATE
-                    "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/app.manifest")
-            endif()
+            target_sources(spacelens PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/app.manifest")
         endif()
         spacelens_apply_first_party_warnings(spacelens)
     else()
@@ -322,10 +319,7 @@ if(SPACELENS_BUILD_MCP)
     if(WIN32)
         target_link_options(spacelens-mcp PRIVATE "/SUBSYSTEM:CONSOLE")
         set_target_properties(spacelens-mcp PROPERTIES WIN32_EXECUTABLE FALSE)
-        if(MSVC)
-            target_link_options(spacelens-mcp PRIVATE
-                "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/app.manifest")
-        endif()
+        target_sources(spacelens-mcp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/app.manifest")
     endif()
     spacelens_apply_first_party_warnings(spacelens-mcp)
 endif()
@@ -424,10 +418,7 @@ if(SPACELENS_BUILD_GUI)
         # rc.exe treats "/manifest.res" as a switch (RC1109). Release is
         # already /INCREMENTAL:NO. Keep the GUI non-incremental in Debug too.
         target_link_options(SpaceLens PRIVATE "/INCREMENTAL:NO")
-        if(MSVC)
-            target_link_options(SpaceLens PRIVATE
-                "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/app.manifest")
-        endif()
+        target_sources(SpaceLens PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/app.manifest")
     endif()
     # Do not apply /WX or /analyze to the GUI: Qt headers and moc/uic are
     # outside the first-party warning gate.
