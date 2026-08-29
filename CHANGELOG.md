@@ -5,6 +5,29 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-08-29
+
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.9
+
+<!-- BEGIN GENERATED CHANGELOG 0.1.9 -->
+### Added
+
+- platform/windows: embed application manifest with longPathAware and PerMonitorV2 dpiAwareness
+
+### Fixed
+
+- build: attach app.manifest via target_sources for compatibility with Debug incremental linking
+- core,tests: fix physical accounting subdirectory rollup and GUI test teardown segfault
+
+### Performance
+
+- core: eliminate per-file path string allocation during live scan Top-K collection
+
+### Other
+
+- core,cli: consolidate UTF-8 string conversion across RecycleAdapter and Commands
+<!-- END GENERATED CHANGELOG 0.1.9 -->
+
 ## [0.1.8] — 2026-08-23
 
 https://github.com/tungcorn/spacelens/releases/tag/v0.1.8

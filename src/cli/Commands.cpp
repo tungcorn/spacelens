@@ -42,7 +42,7 @@
 #include <vector>
 
 #ifndef SPACELENS_VERSION_STRING
-#define SPACELENS_VERSION_STRING "0.1.8"
+#define SPACELENS_VERSION_STRING "0.1.9"
 #endif
 
 namespace spacelens::cli {

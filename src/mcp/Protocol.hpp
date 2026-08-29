@@ -18,7 +18,7 @@ inline constexpr std::size_t kMaxIncomingMessageBytes = 1024U * 1024U;
 inline constexpr const char* kServerName = "spacelens-mcp";
 
 #ifndef SPACELENS_VERSION_STRING
-#define SPACELENS_MCP_VERSION "0.1.8"
+#define SPACELENS_MCP_VERSION "0.1.9"
 #else
 #define SPACELENS_MCP_VERSION SPACELENS_VERSION_STRING
 #endif
