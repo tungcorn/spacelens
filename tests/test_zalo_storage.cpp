@@ -1166,11 +1166,11 @@ SPACELENS_TEST(Zalo_high_cardinality_overlaps_keep_deterministic_owners)
             (void)::SwitchToThread();
         }
     });
-    for (std::size_t attempt = 0;
-         attempt < 100000U &&
-         !churned.load(std::memory_order_acquire);
-         ++attempt) {
-        (void)::SwitchToThread();
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!churned.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     SPACELENS_REQUIRE(churned.load(std::memory_order_acquire));
     const auto report = inspectZaloStorage(options);
