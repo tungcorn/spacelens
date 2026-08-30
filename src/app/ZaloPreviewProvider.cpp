@@ -100,7 +100,12 @@ static QString ensureExtensionPath(const QString& filePath, const QString& defau
 
     if (!QFileInfo::exists(linkPath)) {
         if (!::CreateHardLinkW(linkPath.toStdWString().c_str(), filePath.toStdWString().c_str(), nullptr)) {
-            ::CopyFileW(filePath.toStdWString().c_str(), linkPath.toStdWString().c_str(), FALSE);
+            // Only fallback to file copy for small files (<= 32 MB) to prevent freezing
+            // and disk exhaustion when analyzing large multi-gigabyte video archives.
+            constexpr qint64 kMaxCopyForPreview = 32LL * 1024LL * 1024LL;
+            if (fi.size() <= kMaxCopyForPreview) {
+                ::CopyFileW(filePath.toStdWString().c_str(), linkPath.toStdWString().c_str(), FALSE);
+            }
         }
     }
     return QFileInfo::exists(linkPath) ? linkPath : filePath;
@@ -259,8 +264,6 @@ QImage ZaloPreviewProvider::extractVideoFrameAtTime(const QString& filePath, qin
         return {};
     }
 
-    const QString effectivePath = ensureExtensionPath(filePath, QStringLiteral("mp4"));
-    const std::wstring widePath = effectivePath.toStdWString();
     ComPtr<IMFAttributes> attributes;
     if (FAILED(::MFCreateAttributes(&attributes, 1))) {
         return {};
@@ -268,8 +271,13 @@ QImage ZaloPreviewProvider::extractVideoFrameAtTime(const QString& filePath, qin
     attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
 
     ComPtr<IMFSourceReader> reader;
-    if (FAILED(::MFCreateSourceReaderFromURL(widePath.c_str(), attributes.Get(), &reader))) {
-        return {};
+    const std::wstring directWide = filePath.toStdWString();
+    if (FAILED(::MFCreateSourceReaderFromURL(directWide.c_str(), attributes.Get(), &reader))) {
+        const QString effectivePath = ensureExtensionPath(filePath, QStringLiteral("mp4"));
+        const std::wstring widePath = effectivePath.toStdWString();
+        if (FAILED(::MFCreateSourceReaderFromURL(widePath.c_str(), attributes.Get(), &reader))) {
+            return {};
+        }
     }
 
     ComPtr<IMFMediaType> mediaType;

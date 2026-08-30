@@ -56,6 +56,7 @@
 #include <Windows.h>
 
 #include <chrono>
+#include <filesystem>
 
 namespace spacelens {
 namespace {
@@ -729,6 +730,10 @@ void IndexBrowserPage::buildUi()
             &IndexBrowserPage::onTreemapItemClicked);
     connect(m_treemap, &TreemapWidget::itemDoubleClicked, this,
             &IndexBrowserPage::onTreemapItemDoubleClicked);
+    connect(m_treemap, &TreemapWidget::itemContextMenuRequested, this,
+            &IndexBrowserPage::onTreemapItemContextMenu);
+    connect(m_treemap, &TreemapWidget::navigateUpRequested, this,
+            &IndexBrowserPage::onTreemapNavigateUp);
 
     auto* findSc = new QShortcut(QKeySequence::Find, this);
     connect(findSc, &QShortcut::activated, this, [this]() { focusSearch(); });
@@ -1876,6 +1881,58 @@ void IndexBrowserPage::onTreemapItemDoubleClicked(const TreemapDisplayItem& item
     }
     if (item.kind == IndexEntryKind::Directory) {
         browseInto(item.path);
+    } else {
+        onOpenSelected();
+    }
+}
+
+void IndexBrowserPage::onTreemapItemContextMenu(const TreemapDisplayItem& item,
+                                                const QPoint& globalPos)
+{
+    if (item.isOther) {
+        return;
+    }
+    selectTablePath(item.path);
+
+    QMenu menu(this);
+    menu.addAction(QStringLiteral("Open"), this,
+                   &IndexBrowserPage::onOpenSelected);
+    menu.addAction(QStringLiteral("Open Folder"), this,
+                   &IndexBrowserPage::onOpenFolderSelected);
+    menu.addAction(QStringLiteral("Show in Explorer"), this,
+                   &IndexBrowserPage::onRevealSelected);
+    menu.addSeparator();
+    menu.addAction(QStringLiteral("Copy Path"), this,
+                   &IndexBrowserPage::onCopyPath);
+    menu.addAction(QStringLiteral("Copy Details"), this,
+                   &IndexBrowserPage::onCopyDetails);
+    menu.addSeparator();
+    menu.addAction(QStringLiteral("Add to Cleanup Review"), this,
+                   &IndexBrowserPage::onAddToReview);
+    if (item.kind == IndexEntryKind::Directory) {
+        menu.addSeparator();
+        menu.addAction(QStringLiteral("Browse in Index"), this, [this, path = item.path]() {
+            browseInto(path);
+        });
+    }
+    menu.exec(globalPos);
+}
+
+void IndexBrowserPage::onTreemapNavigateUp()
+{
+    if (!m_browsePath.empty() && m_activeRoot) {
+        if (m_browsePath == m_activeRoot->rootPath) {
+            return;
+        }
+        std::error_code ec;
+        const std::filesystem::path curPath(m_browsePath);
+        const std::filesystem::path parent = curPath.parent_path();
+        const std::wstring parentWide = parent.wstring();
+        if (!parentWide.empty() && parentWide.size() >= m_activeRoot->rootPath.size()) {
+            browseInto(parentWide);
+        } else {
+            browseInto(m_activeRoot->rootPath);
+        }
     }
 }
 

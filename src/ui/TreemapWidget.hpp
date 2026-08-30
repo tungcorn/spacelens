@@ -48,6 +48,9 @@ public:
 signals:
     void itemClicked(const TreemapDisplayItem& item);
     void itemDoubleClicked(const TreemapDisplayItem& item);
+    void itemContextMenuRequested(const TreemapDisplayItem& item, const QPoint& globalPos);
+    void contextMenuRequested(const QPoint& globalPos);
+    void navigateUpRequested();
     void selectionCleared();
 
 protected:
@@ -58,6 +61,10 @@ protected:
     void leaveEvent(QEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
 
 private:
     struct PaintedNode {

@@ -4,7 +4,10 @@
 #include "core/index/IndexOverview.hpp"
 #include "ui/UiTheme.hpp"
 
+#include <QContextMenuEvent>
 #include <QEvent>
+#include <QFocusEvent>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -35,6 +38,7 @@ TreemapWidget::TreemapWidget(QWidget* parent)
     : QWidget(parent)
 {
     setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
     setMinimumHeight(140);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(true);
@@ -296,6 +300,7 @@ void TreemapWidget::updateTooltip(int index)
                   .arg(n.item.otherItemCount)
                   .arg(QString::fromStdString(
                       SizeFormatter::format(n.item.sizeBytes)));
+        tip += QStringLiteral("\n(Click to inspect grouped items in table)");
     } else {
         tip = fromWide(n.item.name.empty() ? n.item.path : n.item.name);
         tip += QLatin1Char('\n');
@@ -310,6 +315,11 @@ void TreemapWidget::updateTooltip(int index)
             tip += QLatin1Char('\n');
             tip += QString::fromStdString(n.item.classification);
         }
+        if (n.item.kind == IndexEntryKind::Directory) {
+            tip += QStringLiteral("\n(Double-click to browse · Right-click for menu)");
+        } else {
+            tip += QStringLiteral("\n(Double-click to open · Right-click for menu)");
+        }
     }
     setToolTip(tip);
 }
@@ -322,6 +332,7 @@ void TreemapWidget::paintEvent(QPaintEvent*)
 
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, false);
+    p.setRenderHint(QPainter::TextAntialiasing, true);
     const QPalette pal = palette();
     const QColor surface = pal.color(QPalette::Base);
     p.fillRect(rect(), surface);
@@ -353,8 +364,8 @@ void TreemapWidget::paintEvent(QPaintEvent*)
         }
         p.fillRect(r, fill);
 
-        QPen border(static_cast<int>(i) == m_selectedIndex ? highlight : gutter);
-        border.setWidth(static_cast<int>(i) == m_selectedIndex ? 2 : 1);
+        QPen border(gutter);
+        border.setWidth(1);
         p.setPen(border);
         p.drawRect(r);
 
@@ -385,6 +396,19 @@ void TreemapWidget::paintEvent(QPaintEvent*)
                 p.setPen(secondary);
                 p.drawText(textRect, Qt::AlignBottom | Qt::AlignLeft, size);
             }
+        }
+    }
+
+    // Paint crisp selection highlight border on top in a separate pass.
+    if (m_selectedIndex >= 0 &&
+        static_cast<std::size_t>(m_selectedIndex) < m_nodes.size()) {
+        const auto& n = m_nodes[static_cast<std::size_t>(m_selectedIndex)];
+        QRectF r = n.rect.adjusted(0.5, 0.5, -0.5, -0.5);
+        if (r.width() >= 1.0 && r.height() >= 1.0) {
+            QPen selBorder(highlight);
+            selBorder.setWidth(2);
+            p.setPen(selBorder);
+            p.drawRect(r);
         }
     }
 }
@@ -459,6 +483,95 @@ void TreemapWidget::mouseDoubleClickEvent(QMouseEvent* event)
         }
     }
     QWidget::mouseDoubleClickEvent(event);
+}
+
+void TreemapWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    const int idx = hitIndex(event->pos());
+    if (idx >= 0) {
+        m_selectedIndex = idx;
+        const auto& item = m_nodes[static_cast<std::size_t>(idx)].item;
+        if (!item.isOther) {
+            m_selectedPath = item.path;
+        } else {
+            m_selectedPath.clear();
+        }
+        update();
+        emit itemClicked(item);
+        emit itemContextMenuRequested(item, event->globalPos());
+    } else {
+        emit contextMenuRequested(event->globalPos());
+    }
+    event->accept();
+}
+
+void TreemapWidget::keyPressEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if (m_selectedIndex >= 0 &&
+            static_cast<std::size_t>(m_selectedIndex) < m_nodes.size()) {
+            emit itemDoubleClicked(
+                m_nodes[static_cast<std::size_t>(m_selectedIndex)].item);
+            event->accept();
+            return;
+        }
+    } else if (event->key() == Qt::Key_Backspace ||
+               (event->key() == Qt::Key_Up &&
+                (event->modifiers() & Qt::AltModifier))) {
+        emit navigateUpRequested();
+        event->accept();
+        return;
+    } else if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Up) {
+        if (!m_nodes.empty()) {
+            if (m_selectedIndex > 0) {
+                --m_selectedIndex;
+            } else {
+                m_selectedIndex = static_cast<int>(m_nodes.size() - 1);
+            }
+            const auto& item =
+                m_nodes[static_cast<std::size_t>(m_selectedIndex)].item;
+            m_selectedPath = item.isOther ? std::wstring{} : item.path;
+            update();
+            emit itemClicked(item);
+            event->accept();
+            return;
+        }
+    } else if (event->key() == Qt::Key_Right || event->key() == Qt::Key_Down) {
+        if (!m_nodes.empty()) {
+            if (m_selectedIndex >= 0 &&
+                static_cast<std::size_t>(m_selectedIndex + 1) < m_nodes.size()) {
+                ++m_selectedIndex;
+            } else {
+                m_selectedIndex = 0;
+            }
+            const auto& item =
+                m_nodes[static_cast<std::size_t>(m_selectedIndex)].item;
+            m_selectedPath = item.isOther ? std::wstring{} : item.path;
+            update();
+            emit itemClicked(item);
+            event->accept();
+            return;
+        }
+    }
+    QWidget::keyPressEvent(event);
+}
+
+void TreemapWidget::focusInEvent(QFocusEvent* event)
+{
+    if (m_selectedIndex < 0 && !m_nodes.empty()) {
+        m_selectedIndex = 0;
+        const auto& item = m_nodes[0].item;
+        m_selectedPath = item.isOther ? std::wstring{} : item.path;
+        emit itemClicked(item);
+    }
+    update();
+    QWidget::focusInEvent(event);
+}
+
+void TreemapWidget::focusOutEvent(QFocusEvent* event)
+{
+    update();
+    QWidget::focusOutEvent(event);
 }
 
 }  // namespace spacelens

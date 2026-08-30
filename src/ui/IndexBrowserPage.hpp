@@ -118,6 +118,9 @@ private slots:
     void onQueryFinished(quint64 generation);
     void onTreemapItemClicked(const TreemapDisplayItem& item);
     void onTreemapItemDoubleClicked(const TreemapDisplayItem& item);
+    void onTreemapItemContextMenu(const TreemapDisplayItem& item,
+                                  const QPoint& globalPos);
+    void onTreemapNavigateUp();
 
 private:
     struct PendingBrowsePayload {

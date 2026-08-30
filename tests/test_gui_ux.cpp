@@ -8,6 +8,8 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QContextMenuEvent>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QStackedWidget>
@@ -306,3 +308,66 @@ SPACELENS_TEST(GuiUx_zalo_file_deletion_isolates_target_and_protects_directories
     std::error_code ec;
     std::filesystem::remove_all(tempDir, ec);
 }
+
+SPACELENS_TEST(GuiUx_treemap_context_menu_and_keyboard_navigation)
+{
+    qtApp();
+    TreemapWidget treemap;
+    treemap.resize(400, 300);
+
+    std::vector<TreemapDisplayItem> items;
+    TreemapDisplayItem d1;
+    d1.name = L"docs";
+    d1.path = L"C:\\data\\docs";
+    d1.sizeBytes = 1000;
+    d1.kind = IndexEntryKind::Directory;
+    items.push_back(d1);
+
+    TreemapDisplayItem f1;
+    f1.name = L"report.pdf";
+    f1.path = L"C:\\data\\report.pdf";
+    f1.sizeBytes = 500;
+    f1.kind = IndexEntryKind::File;
+    items.push_back(f1);
+
+    treemap.setItems(items, 1500);
+
+    bool contextMenuFired = false;
+    std::wstring contextPath;
+    QObject::connect(&treemap, &TreemapWidget::itemContextMenuRequested,
+                     [&](const TreemapDisplayItem& item, const QPoint&) {
+                         contextMenuFired = true;
+                         contextPath = item.path;
+                     });
+
+    bool navUpFired = false;
+    QObject::connect(&treemap, &TreemapWidget::navigateUpRequested,
+                     [&]() { navUpFired = true; });
+
+    bool doubleClickedFired = false;
+    std::wstring doubleClickedPath;
+    QObject::connect(&treemap, &TreemapWidget::itemDoubleClicked,
+                     [&](const TreemapDisplayItem& item) {
+                         doubleClickedFired = true;
+                         doubleClickedPath = item.path;
+                     });
+
+    // Test context menu event
+    QContextMenuEvent contextEv(QContextMenuEvent::Mouse, QPoint(10, 10),
+                                QPoint(100, 100));
+    QCoreApplication::sendEvent(&treemap, &contextEv);
+    SPACELENS_REQUIRE(contextMenuFired);
+    SPACELENS_REQUIRE(!contextPath.empty());
+
+    // Test key navigation: Enter on selected item triggers doubleClicked
+    QKeyEvent enterEv(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QCoreApplication::sendEvent(&treemap, &enterEv);
+    SPACELENS_REQUIRE(doubleClickedFired);
+    SPACELENS_REQUIRE_EQ(doubleClickedPath, contextPath);
+
+    // Test key navigation: Backspace triggers navigateUp
+    QKeyEvent backspaceEv(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
+    QCoreApplication::sendEvent(&treemap, &backspaceEv);
+    SPACELENS_REQUIRE(navUpFired);
+}
+

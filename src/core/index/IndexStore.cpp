@@ -318,6 +318,7 @@ IndexStore IndexStore::createStaging(const IndexLocation& loc)
     discardStagingDatabase(loc);
     ::DeleteFileW(loc.stagingDbPath.c_str());
     SqliteDb db(loc.stagingDbPath, SqliteOpen::ReadWrite | SqliteOpen::Create);
+    db.exec("PRAGMA synchronous = OFF; PRAGMA journal_mode = OFF; PRAGMA temp_store = MEMORY;");
     IndexStore store(loc, std::move(db));
     store.applySchema();
     return store;
