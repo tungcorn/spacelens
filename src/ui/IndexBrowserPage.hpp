@@ -133,6 +133,11 @@ private:
     void clearHits();
     void updateInspector();
     void updateRootHeader();
+    void openPath(const std::wstring& path);
+    void openParentFolderPath(const std::wstring& path);
+    void revealPath(const std::wstring& path);
+    void addHitsToReview(const std::vector<IndexHit>& hits);
+    void addTreemapItemToReview(const TreemapDisplayItem& item);
     void updateBreadcrumb();
     void updateOverviewLabel(const StorageOverview& overview);
     void applyHierarchyResult(const HierarchyChildrenResult& hierarchy);

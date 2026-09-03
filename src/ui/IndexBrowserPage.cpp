@@ -1882,7 +1882,7 @@ void IndexBrowserPage::onTreemapItemDoubleClicked(const TreemapDisplayItem& item
     if (item.kind == IndexEntryKind::Directory) {
         browseInto(item.path);
     } else {
-        onOpenSelected();
+        openPath(item.path);
     }
 }
 
@@ -1895,20 +1895,26 @@ void IndexBrowserPage::onTreemapItemContextMenu(const TreemapDisplayItem& item,
     selectTablePath(item.path);
 
     QMenu menu(this);
-    menu.addAction(QStringLiteral("Open"), this,
-                   &IndexBrowserPage::onOpenSelected);
-    menu.addAction(QStringLiteral("Open Folder"), this,
-                   &IndexBrowserPage::onOpenFolderSelected);
-    menu.addAction(QStringLiteral("Show in Explorer"), this,
-                   &IndexBrowserPage::onRevealSelected);
+    menu.addAction(QStringLiteral("Open"), this, [this, path = item.path]() {
+        openPath(path);
+    });
+    menu.addAction(QStringLiteral("Open Folder"), this, [this, path = item.path]() {
+        openParentFolderPath(path);
+    });
+    menu.addAction(QStringLiteral("Show in Explorer"), this, [this, path = item.path]() {
+        revealPath(path);
+    });
     menu.addSeparator();
-    menu.addAction(QStringLiteral("Copy Path"), this,
-                   &IndexBrowserPage::onCopyPath);
+    menu.addAction(QStringLiteral("Copy Path"), this, [this, path = item.path]() {
+        QApplication::clipboard()->setText(fromWide(path));
+        emit statusMessage(QStringLiteral("Copied 1 path."));
+    });
     menu.addAction(QStringLiteral("Copy Details"), this,
                    &IndexBrowserPage::onCopyDetails);
     menu.addSeparator();
-    menu.addAction(QStringLiteral("Add to Cleanup Review"), this,
-                   &IndexBrowserPage::onAddToReview);
+    menu.addAction(QStringLiteral("Add to Cleanup Review"), this, [this, item]() {
+        addTreemapItemToReview(item);
+    });
     if (item.kind == IndexEntryKind::Directory) {
         menu.addSeparator();
         menu.addAction(QStringLiteral("Browse in Index"), this, [this, path = item.path]() {
@@ -2078,21 +2084,54 @@ void IndexBrowserPage::onHitsContextMenu(const QPoint& pos)
     menu.exec(m_hitsView->viewport()->mapToGlobal(pos));
 }
 
+void IndexBrowserPage::openPath(const std::wstring& path)
+{
+    QString msg;
+    if (!ensurePathExists(path, &msg)) {
+        QMessageBox::warning(this, QStringLiteral("Path unavailable"), msg);
+        return;
+    }
+    if (!openWithDefaultApp(path)) {
+        QMessageBox::warning(this, QStringLiteral("SpaceLens"),
+                             QStringLiteral("Could not open the selected item."));
+    }
+}
+
+void IndexBrowserPage::openParentFolderPath(const std::wstring& path)
+{
+    QString msg;
+    if (!ensurePathExists(path, &msg)) {
+        QMessageBox::warning(this, QStringLiteral("Path unavailable"), msg);
+        return;
+    }
+    if (!openParentFolder(path)) {
+        QMessageBox::warning(
+            this, QStringLiteral("SpaceLens"),
+            QStringLiteral("Could not open the parent folder."));
+    }
+}
+
+void IndexBrowserPage::revealPath(const std::wstring& path)
+{
+    QString msg;
+    if (!ensurePathExists(path, &msg)) {
+        QMessageBox::warning(this, QStringLiteral("Path unavailable"), msg);
+        return;
+    }
+    if (!revealInExplorer(path)) {
+        QMessageBox::warning(
+            this, QStringLiteral("SpaceLens"),
+            QStringLiteral("Could not reveal the item in Explorer."));
+    }
+}
+
 void IndexBrowserPage::onOpenSelected()
 {
     const auto hits = selectedHits();
     if (hits.size() != 1) {
         return;
     }
-    QString msg;
-    if (!ensurePathExists(hits.front().path, &msg)) {
-        QMessageBox::warning(this, QStringLiteral("Path unavailable"), msg);
-        return;
-    }
-    if (!openWithDefaultApp(hits.front().path)) {
-        QMessageBox::warning(this, QStringLiteral("SpaceLens"),
-                             QStringLiteral("Could not open the selected item."));
-    }
+    openPath(hits.front().path);
 }
 
 void IndexBrowserPage::onOpenFolderSelected()
@@ -2101,16 +2140,7 @@ void IndexBrowserPage::onOpenFolderSelected()
     if (hits.size() != 1) {
         return;
     }
-    QString msg;
-    if (!ensurePathExists(hits.front().path, &msg)) {
-        QMessageBox::warning(this, QStringLiteral("Path unavailable"), msg);
-        return;
-    }
-    if (!openParentFolder(hits.front().path)) {
-        QMessageBox::warning(
-            this, QStringLiteral("SpaceLens"),
-            QStringLiteral("Could not open the parent folder."));
-    }
+    openParentFolderPath(hits.front().path);
 }
 
 void IndexBrowserPage::onRevealSelected()
@@ -2119,16 +2149,7 @@ void IndexBrowserPage::onRevealSelected()
     if (hits.size() != 1) {
         return;
     }
-    QString msg;
-    if (!ensurePathExists(hits.front().path, &msg)) {
-        QMessageBox::warning(this, QStringLiteral("Path unavailable"), msg);
-        return;
-    }
-    if (!revealInExplorer(hits.front().path)) {
-        QMessageBox::warning(
-            this, QStringLiteral("SpaceLens"),
-            QStringLiteral("Could not reveal the item in Explorer."));
-    }
+    revealPath(hits.front().path);
 }
 
 void IndexBrowserPage::onCopyPath()
@@ -2174,14 +2195,11 @@ void IndexBrowserPage::onFindDuplicates()
     dialog.exec();
 }
 
-void IndexBrowserPage::onAddToReview()
+void IndexBrowserPage::addHitsToReview(const std::vector<IndexHit>& hits)
 {
-    const auto selected = selectedHits();
-    if (selected.empty()) {
+    if (hits.empty()) {
         return;
     }
-    // Validate existence best-effort; still allow adding stale snapshot rows
-    // with a note — review is planning-only.
     int missing = 0;
     int added = 0;
     int already = 0;
@@ -2195,7 +2213,7 @@ void IndexBrowserPage::onAddToReview()
     const FileTimeTicks addedAt = now.QuadPart;
     const auto root = selectedRoot();
 
-    for (const auto& hit : selected) {
+    for (const auto& hit : hits) {
         QString msg;
         if (!ensurePathExists(hit.path, &msg)) {
             ++missing;
@@ -2215,8 +2233,8 @@ void IndexBrowserPage::onAddToReview()
         c.reasonAdded = "Added from Index Browser V2";
         c.source = "persistent_index";
         c.sourceRoot = root ? root->rootPath : std::wstring{};
-        c.indexAgeMs = m_hitModel->indexAgeMs();
-        c.indexIndexedAtIso = m_hitModel->indexedAtIso();
+        c.indexAgeMs = m_hitModel ? m_hitModel->indexAgeMs() : m_overview.snapshotAgeMs;
+        c.indexIndexedAtIso = m_hitModel ? m_hitModel->indexedAtIso() : std::string{};
         const auto policy = m_review.ordinaryLocationPolicy();
         c.capturedSafety = effectiveLocationSafety(c.path, policy);
         c.capturedReclaimability = parseReclaimabilityLabel(hit.reclaimability);
@@ -2258,6 +2276,34 @@ void IndexBrowserPage::onAddToReview()
                 .arg(missing));
     }
     emit statusMessage(status);
+}
+
+void IndexBrowserPage::addTreemapItemToReview(const TreemapDisplayItem& item)
+{
+    const auto selected = selectedHits();
+    if (!selected.empty()) {
+        addHitsToReview(selected);
+        return;
+    }
+    // Fallback when item is visible in treemap hierarchy but filtered out of the discovery table.
+    IndexHit synthetic{};
+    synthetic.path = item.path;
+    synthetic.name = item.name;
+    synthetic.kind = item.kind;
+    synthetic.size_bytes = item.sizeBytes;
+    synthetic.classification = item.classification;
+    for (const auto& h : m_hierarchyChildren) {
+        if (h.path == item.path) {
+            synthetic = h;
+            break;
+        }
+    }
+    addHitsToReview({synthetic});
+}
+
+void IndexBrowserPage::onAddToReview()
+{
+    addHitsToReview(selectedHits());
 }
 
 }  // namespace spacelens
