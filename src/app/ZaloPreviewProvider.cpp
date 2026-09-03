@@ -152,7 +152,11 @@ ZaloPreviewProvider::ZaloPreviewProvider(QObject* parent)
     globalMf();
 }
 
-ZaloPreviewProvider::~ZaloPreviewProvider() = default;
+ZaloPreviewProvider::~ZaloPreviewProvider()
+{
+    const QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/SpaceLens/preview_links");
+    QDir(tempDir).removeRecursively();
+}
 
 QString ZaloPreviewProvider::cacheDirectory()
 {
@@ -169,6 +173,8 @@ void ZaloPreviewProvider::clearCache()
     const QString dir = cacheDirectory();
     QDir(dir).removeRecursively();
     QDir().mkpath(dir);
+    const QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/SpaceLens/preview_links");
+    QDir(tempDir).removeRecursively();
 }
 
 QPixmap ZaloPreviewProvider::getPreviewPixmap(

@@ -1142,13 +1142,25 @@ void IndexBrowserPage::updateBreadcrumb()
         }
     }
 
+    const bool canGoUp = (!m_browsePath.empty() && m_activeRoot &&
+                          m_browsePath != m_activeRoot->rootPath);
+    auto* upBtn = new QToolButton(m_breadcrumbBar);
+    upBtn->setObjectName(QStringLiteral("slBreadcrumbUp"));
+    upBtn->setText(QStringLiteral("↑"));
+    upBtn->setToolTip(canGoUp ? QStringLiteral("Up to parent folder (Backspace)")
+                              : QStringLiteral("At index root"));
+    upBtn->setEnabled(canGoUp);
+    upBtn->setAutoRaise(true);
+    upBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    connect(upBtn, &QToolButton::clicked, this,
+            &IndexBrowserPage::onTreemapNavigateUp);
+    m_breadcrumbLayout->addWidget(upBtn);
+
     for (std::size_t i = 0; i < segments.size(); ++i) {
-        if (i > 0) {
-            auto* sep = new QLabel(QStringLiteral(">"), m_breadcrumbBar);
-            sep->setObjectName(QStringLiteral("slHint"));
-            sep->setContentsMargins(kUiSpace4, 0, kUiSpace4, 0);
-            m_breadcrumbLayout->addWidget(sep);
-        }
+        auto* sep = new QLabel(QStringLiteral(">"), m_breadcrumbBar);
+        sep->setObjectName(QStringLiteral("slHint"));
+        sep->setContentsMargins(kUiSpace4, 0, kUiSpace4, 0);
+        m_breadcrumbLayout->addWidget(sep);
         auto* btn = new QToolButton(m_breadcrumbBar);
         btn->setText(segments[i].first);
         btn->setAutoRaise(true);
@@ -1912,9 +1924,13 @@ void IndexBrowserPage::onTreemapItemContextMenu(const TreemapDisplayItem& item,
     menu.addAction(QStringLiteral("Copy Details"), this,
                    &IndexBrowserPage::onCopyDetails);
     menu.addSeparator();
+    menu.addAction(QStringLiteral("Find Duplicates"), this,
+                   &IndexBrowserPage::onFindDuplicates);
     menu.addAction(QStringLiteral("Add to Cleanup Review"), this, [this, item]() {
         addTreemapItemToReview(item);
     });
+    menu.addAction(QStringLiteral("Open Cleanup Review"), this,
+                   &IndexBrowserPage::onShowReview);
     if (item.kind == IndexEntryKind::Directory) {
         menu.addSeparator();
         menu.addAction(QStringLiteral("Browse in Index"), this, [this, path = item.path]() {

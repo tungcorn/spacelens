@@ -376,8 +376,15 @@ void TreemapWidget::paintEvent(QPaintEvent*)
             if (name.isEmpty()) {
                 name = fromWide(n.item.path);
             }
-            const QString size =
+            QString size =
                 QString::fromStdString(SizeFormatter::format(n.item.sizeBytes));
+            if (m_parentTotal > 0 && r.width() >= 90.0) {
+                const double pct = 100.0 * static_cast<double>(n.item.sizeBytes) /
+                                   static_cast<double>(m_parentTotal);
+                if (pct >= 1.0) {
+                    size += QStringLiteral(" (%1%)").arg(pct, 0, 'f', 1);
+                }
+            }
             const QColor label = contrastingTextColor(fill);
             p.setPen(label);
             QFont f = font();
