@@ -5,6 +5,21 @@ is `project(VERSION …)` in the root `CMakeLists.txt`.
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-09-04
+
+https://github.com/tungcorn/spacelens/releases/tag/v0.1.10
+
+<!-- BEGIN GENERATED CHANGELOG 0.1.10 -->
+### Added
+
+- ui: add breadcrumb up button, treemap percentage display, and full context menu parity
+- ui: add treemap context menu and keyboard navigation, optimize video preview and index staging
+
+### Fixed
+
+- ui: decouple treemap context actions from discovery table filtering
+<!-- END GENERATED CHANGELOG 0.1.10 -->
+
 ## [0.1.9] — 2026-08-29
 
 https://github.com/tungcorn/spacelens/releases/tag/v0.1.9
