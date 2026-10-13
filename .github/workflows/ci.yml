@@ -165,7 +165,7 @@ jobs:
           .\scripts\package-release.ps1 -BuildDir .\build-release -OutDir .\dist
 
       - name: Upload staged archives
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-x64-release-archives
           path: dist/*
@@ -248,7 +248,7 @@ jobs:
           .\scripts\stress-v01.ps1 -Entries 2000 -CliPath .\build-cli-release\cli\spacelens.exe -QueryRepeats 3 -ReportPath .\stress-smoke.json
 
       - name: Upload stress smoke report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: stress-smoke
           path: stress-smoke.json
@@ -293,7 +293,7 @@ jobs:
 
       - name: Upload analyze log
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: msvc-analyze-log
           path: analyze.log
@@ -394,7 +394,7 @@ jobs:
 
       - name: Upload npm tarball
         if: steps.npm_pack.outputs.packed == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-tarball
           path: dist/*.tgz
